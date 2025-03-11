@@ -1,7 +1,9 @@
-name: ci
+name: continuous-integration
+on: 
+  push:
 
 jobs:
-  uv-example:
+  continuous-integration:
     name: python
     runs-on: ubuntu-latest
 

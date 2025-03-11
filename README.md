@@ -7,5 +7,5 @@
 ...
 
 ## Installation
-- install uv
-- uv run hcnn
+- install [uv](https://docs.astral.sh/uv/) python project manager
+- `uv pip install .` *or* `uv pip install .[cuda12]`

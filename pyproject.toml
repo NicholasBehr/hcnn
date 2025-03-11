@@ -4,7 +4,12 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "jax>=0.5.2",
+]
+
+[project.optional-dependencies]
+cuda12 = ["jax[cuda12]>=0.5.2"]
 
 [project.scripts]
 hcnn = "hcnn:main"
@@ -15,13 +20,14 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
+    "jupyterlab>=4.3.5",
     "pyright>=1.1.396",
     "ruff>=0.9.10",
 ]
 
 [tool.ruff]
 exclude = [".venv"]
-line-length = 88  # Adjust if needed
+line-length = 100
 target-version = "py313"
 
 [tool.ruff.lint]

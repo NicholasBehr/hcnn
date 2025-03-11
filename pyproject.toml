@@ -1,0 +1,41 @@
+[project]
+name = "hcnn"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
+
+[project.scripts]
+hcnn = "hcnn:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.396",
+    "ruff>=0.9.10",
+]
+
+[tool.ruff]
+exclude = [".venv"]
+line-length = 88  # Adjust if needed
+target-version = "py313"
+
+[tool.ruff.lint]
+select = [
+    "E",  # Pycodestyle (formatting errors)
+    "W",  # Pycodestyle (warnings)
+    "F",  # Pyflakes (static errors)
+    "I",  # isort (import sorting)
+    "N",  # Naming conventions
+    "B",  # Bugbear (security and performance issues)
+    "C90", # McCabe (complexity checks)
+    "PL",  # Pylint rules (optional)
+]
+ignore = ["D"]  # Ignore docstring warnings
+
+[tool.pyright]
+typeCheckingMode = 'strict'

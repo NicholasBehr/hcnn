@@ -38,4 +38,4 @@ select = [
 ignore = ["D"]  # Ignore docstring warnings
 
 [tool.pyright]
-typeCheckingMode = 'strict'
+typeCheckingMode = "strict"

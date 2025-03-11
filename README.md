@@ -8,4 +8,5 @@
 
 ## Installation
 - install [uv](https://docs.astral.sh/uv/) python project manager
-- `uv pip install .` *or* `uv pip install .[cuda12]`
+- initialize venv `uv sync`
+- switch to gpu version `uv pip install .[cuda12]` (optional)

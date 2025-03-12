@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "flax>=0.10.4",
     "jax>=0.5.2",
 ]
 
@@ -23,6 +24,7 @@ dev = [
     "jupyterlab>=4.3.5",
     "pyright>=1.1.396",
     "ruff>=0.9.10",
+    "matplotlib>=3.10.1",
 ]
 
 [tool.ruff]
@@ -44,4 +46,4 @@ select = [
 ignore = ["D"]  # Ignore docstring warnings
 
 [tool.pyright]
-typeCheckingMode = "strict"
+strict = ["./src"]

@@ -5,12 +5,13 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "flax>=0.10.4",
-    "jax>=0.5.2",
+    "brax>=0.12.3",
+    "flax>=0.10.5",
+    "jax>=0.5.3",
 ]
 
 [project.optional-dependencies]
-cuda12 = ["jax[cuda12]>=0.5.2"]
+cuda12 = ["jax[cuda12]>=0.5.3"]
 
 [project.scripts]
 hcnn = "hcnn:main"
@@ -21,10 +22,14 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
-    "jupyterlab>=4.3.5",
-    "pyright>=1.1.396",
-    "ruff>=0.9.10",
+    "jupyterlab>=4.4.0",
+    "pyright>=1.1.398",
+    "pytest>=8.3.5",
+    "ruff>=0.11.4",
+]
+plot = [
     "matplotlib>=3.10.1",
+    "networkx>=3.4.2",
 ]
 
 [tool.ruff]

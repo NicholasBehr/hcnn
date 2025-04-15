@@ -26,3 +26,6 @@ jobs:
 
       - name: Run typecheck
         run: uv run pyright
+
+      - name: Run pytest
+        run: uv run pytest

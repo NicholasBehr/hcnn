@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 import jax
 import jax.numpy as jnp
 
@@ -5,21 +7,30 @@ from hcnn.policy.policy import Policy
 from hcnn.system.system_linear import SystemLinear
 
 
+@dataclass(frozen=True)
 class PolicyLQR(Policy):
     state_cost: jax.Array  # PSD
     input_cost: jax.Array  # PD
     riccati_matrix: jax.Array
     gain_matrix: jax.Array
 
-    def __init__(self, system_linear: SystemLinear, state_cost: jax.Array, input_cost: jax.Array):
-        # (1) verify cost input
+    def __new__(cls, *args, **kwargs):
+        raise TypeError("Direct instantiation is not allowed. Use `PolicyLQR.factory()` instead.")
+
+    @classmethod
+    def factory(
+        cls, system_linear: SystemLinear, state_cost: jax.Array, input_cost: jax.Array
+    ) -> "PolicyLQR":
+        tol: float = 1e-8
+
+        # (1) verify cost matrices
         tol: float = 1e-8
         if state_cost.ndim != 2 or input_cost.ndim != 2:  # noqa: PLR2004
-            raise ValueError("Input and state cost matrices must be two dimensional!")
+            raise ValueError("Cost matrix must be two dimensional!")
         if not jnp.allclose(state_cost, state_cost.T, atol=tol):
-            raise ValueError("State cost matrix is not symmetric!")
+            raise ValueError("State cost matrix must be symmetric!")
         if not jnp.allclose(input_cost, input_cost.T, atol=tol):
-            raise ValueError("Input cost matrix is not symmetric!")
+            raise ValueError("Input cost matrix must be symmetric!")
         if state_cost.shape[0] != system_linear.state_dim:
             raise ValueError("State dimension missmatch!")
         if input_cost.shape[0] != system_linear.input_dim:
@@ -34,25 +45,29 @@ class PolicyLQR(Policy):
             raise ValueError("Input cost matrix is not PD!")
 
         # (2) verify existence of solution
-        # 1. R is PD
+        # 1. R is PD (done)
         # 2. (A, B) is stabilizable
-        if not self.is_stabilizable(system_linear.state_matrix, system_linear.input_matrix):
+        if not cls.is_stabilizable(system_linear.state_matrix, system_linear.input_matrix):
             raise ValueError("(A, B) is not stabilizable!")
         # 3. (A, Q^{1/2}) is detectable
-        u, s, vt = jnp.linalg.svd(system_linear.state_matrix, hermitian=True)
+        u, s, vt = jnp.linalg.svd(state_cost, hermitian=True)
         matrix_q_sqrt = u @ jnp.diag(jnp.power(s, 0.5)) @ vt
-        if not self.is_stabilizable(system_linear.state_matrix.T, matrix_q_sqrt.T):
+        if not cls.is_stabilizable(system_linear.state_matrix.T, matrix_q_sqrt.T):
             raise ValueError("(A, Q^{1/2}) is not detectable!")
 
-        self.state_cost = state_cost
-        self.input_cost = input_cost
-
         # (3) solve DARE using the system matrices
-        state_matrix = system_linear.state_matrix
-        input_matrix = system_linear.input_matrix
-        self.riccati_matrix, self.gain_matrix = self.dare_solver(
-            state_matrix, input_matrix, state_cost, input_cost
+        riccati_matrix, gain_matrix = cls.dare_solver(
+            system_linear.state_matrix, system_linear.input_matrix, state_cost, input_cost
         )
+
+        # (4) create instance
+        # Bypass __new__ using object.__new__
+        obj = object.__new__(cls)
+        object.__setattr__(obj, "state_cost", state_cost)
+        object.__setattr__(obj, "input_cost", input_cost)
+        object.__setattr__(obj, "riccati_matrix", riccati_matrix)
+        object.__setattr__(obj, "gain_matrix", gain_matrix)
+        return obj
 
     @staticmethod
     def is_stabilizable(
@@ -103,5 +118,5 @@ class PolicyLQR(Policy):
 
         return riccati_matrix, gain_matrix
 
-    def next_action(self, state: jax.Array) -> jax.Array:
+    def get_action(self, state: jax.Array) -> jax.Array:
         return -self.gain_matrix @ state

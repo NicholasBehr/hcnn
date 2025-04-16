@@ -4,53 +4,56 @@ import pytest
 from hcnn.system.system_linear import SystemLinear
 
 
+### Test cases for SystemLinearConfig
+def test_valid_config_creation():
+    state_matrix = jnp.array([[1.0, 2.0], [3.0, 4.0]])
+    input_matrix = jnp.array([[5.0], [6.0]])
+    config = SystemLinear(state_matrix, input_matrix)
+
+    assert config.state_matrix.shape == (2, 2)
+    assert config.input_matrix.shape == (2, 1)
+    assert config.state_dim == 2  # noqa: PLR2004
+    assert config.input_dim == 1
+
+
 def test_state_matrix_not_2d():
-    state_matrix = jnp.array([1])
-    input_matrix = jnp.array([[1]])
-    with pytest.raises(ValueError, match="Inout and state matrices must be two dimensional!"):
+    state_matrix = jnp.array([1.0, 2.0])  # 1D array
+    input_matrix = jnp.array([[1.0], [2.0]])
+    with pytest.raises(ValueError, match="State matrix must be two dimensional"):
         SystemLinear(state_matrix, input_matrix)
 
 
 def test_input_matrix_not_2d():
-    state_matrix = jnp.array([[1]])
-    input_matrix = jnp.array([1])
-    with pytest.raises(ValueError, match="Inout and state matrices must be two dimensional!"):
+    state_matrix = jnp.array([[1.0, 2.0], [3.0, 4.0]])
+    input_matrix = jnp.array([1.0, 2.0])  # 1D array
+    with pytest.raises(ValueError, match="Input matrix must be two dimensional"):
         SystemLinear(state_matrix, input_matrix)
 
 
 def test_state_matrix_not_square():
-    state_matrix = jnp.array([[1, 0]])
-    input_matrix = jnp.array([[1]])
-    with pytest.raises(ValueError, match="Input matrix must be square!"):
+    state_matrix = jnp.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])  # 2x3, not square
+    input_matrix = jnp.array([[1.0], [2.0]])
+    with pytest.raises(ValueError, match="Input matrix must be square"):
         SystemLinear(state_matrix, input_matrix)
 
 
-def test_state_and_input_dim_mismatch():
-    state_matrix = jnp.array([[1, 0], [0, 1]])
-    input_matrix = jnp.array([[1]])
-    with pytest.raises(ValueError, match="State dimensions must agree!"):
+def test_dimension_mismatch_between_state_and_input():
+    state_matrix = jnp.array([[1.0, 2.0], [3.0, 4.0]])  # shape (2, 2)
+    input_matrix = jnp.array([[1.0], [2.0], [3.0]])  # shape (3, 1)
+    with pytest.raises(ValueError, match="State dimensions must agree"):
         SystemLinear(state_matrix, input_matrix)
 
 
-def test_step_valid():
-    state_matrix = jnp.array([[1, 2], [3, 4]])
-    input_matrix = jnp.array([[5], [6]])
+### Test cases for SystemLinear
+def test_step_basic_case():
+    state_matrix = jnp.array([[1.0, 0.0], [0.0, 1.0]])
+    input_matrix = jnp.array([[1.0], [1.0]])
+    config = SystemLinear(state_matrix, input_matrix)
 
-    system = SystemLinear(state_matrix, input_matrix)
-    state = jnp.array([7, 8])
-    action = jnp.array([9])
+    state = jnp.array([1.0, 2.0])  # shape (2,)
+    action = jnp.array([3.0])  # shape (1,)
 
-    assert jnp.allclose(jnp.array([68, 107]), system.step(state, action))
+    next_state = SystemLinear.step(config, state, action)
 
-
-STATE_DIM = 2
-INPUT_DIM = 1
-
-
-def test_state_and_input_dim_properties():
-    state_matrix = jnp.array([[1, 2], [3, 4]])
-    input_matrix = jnp.array([[5], [6]])
-
-    system = SystemLinear(state_matrix, input_matrix)
-    assert system.state_dim == STATE_DIM
-    assert system.input_dim == INPUT_DIM
+    expected = jnp.array([1.0 + 3.0, 2.0 + 3.0])  # [4.0, 5.0]
+    assert jnp.allclose(next_state, expected)

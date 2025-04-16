@@ -1,24 +1,24 @@
+from dataclasses import dataclass
+
 import jax
 
 from .system import System
 
 
+@dataclass(frozen=True)
 class SystemLinear(System):
     state_matrix: jax.Array
     input_matrix: jax.Array
 
-    def __init__(self, state_matrix: jax.Array, input_matrix: jax.Array):
-        # (1) verify input
-        if state_matrix.ndim != 2 or input_matrix.ndim != 2:  # noqa: PLR2004
-            raise ValueError("Inout and state matrices must be two dimensional!")
-        if state_matrix.shape[0] != state_matrix.shape[1]:
+    def __post_init__(self):
+        if self.state_matrix.ndim != 2:  # noqa: PLR2004
+            raise ValueError("State matrix must be two dimensional!")
+        if self.input_matrix.ndim != 2:  # noqa: PLR2004
+            raise ValueError("Input matrix must be two dimensional!")
+        if self.state_matrix.shape[0] != self.state_matrix.shape[1]:
             raise ValueError("Input matrix must be square!")
-        if state_matrix.shape[0] != input_matrix.shape[0]:
+        if self.state_matrix.shape[0] != self.input_matrix.shape[0]:
             raise ValueError("State dimensions must agree!")
-
-        # (2) assign input
-        self.state_matrix = state_matrix
-        self.input_matrix = input_matrix
 
     @property
     def state_dim(self) -> int:

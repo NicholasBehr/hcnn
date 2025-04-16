@@ -106,7 +106,6 @@ def test_input_cost_shape_mismatch_raises(stable_system):
         PolicyLQR.factory(stable_system, state_cost, input_cost)
 
 
-# -- dare_solver --
 def test_dare_solver_outputs_valid_riccati_and_gain():
     # Simple stable system
     state_matrix = jnp.array([[1.0, 1.0], [0.0, 1.0]])
@@ -114,9 +113,10 @@ def test_dare_solver_outputs_valid_riccati_and_gain():
     state_cost = jnp.eye(2)
     input_cost = jnp.array([[1.0]])
 
-    riccati_matrix, gain_matrix = PolicyLQR.dare_solver(
-        state_matrix, input_matrix, state_cost, input_cost
-    )
+    system = SystemLinear(state_matrix=state_matrix, input_matrix=input_matrix)
+    policy = PolicyLQR.factory(system, state_cost, input_cost)
+    riccati_matrix = policy.riccati_matrix
+    gain_matrix = policy.gain_matrix
 
     # 1. Riccati matrix should be symmetric
     assert jnp.allclose(riccati_matrix, riccati_matrix.T, atol=1e-6)
@@ -150,9 +150,10 @@ def test_dare_solver_reference_case():
     x_expected = jnp.array([[4.7687, 0.9438], [0.9438, 3.2369]])
     k_expected = jnp.array([[-0.2216, -0.1297]])
 
-    x_computed, k_computed = PolicyLQR.dare_solver(
-        state_matrix, input_matrix, state_cost, input_cost
-    )
+    system = SystemLinear(state_matrix=state_matrix, input_matrix=input_matrix)
+    policy = PolicyLQR.factory(system, state_cost, input_cost)
+    x_computed = policy.riccati_matrix
+    k_computed = policy.gain_matrix
 
     assert jnp.allclose(x_computed, x_expected, atol=1e-3), "Riccati matrix X mismatch"
     assert jnp.allclose(k_computed, k_expected, atol=1e-3), "LQR gain K mismatch"

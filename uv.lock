@@ -602,6 +602,7 @@ dependencies = [
     { name = "brax" },
     { name = "flax" },
     { name = "jax" },
+    { name = "scipy" },
 ]
 
 [package.optional-dependencies]
@@ -626,6 +627,7 @@ requires-dist = [
     { name = "flax", specifier = ">=0.10.5" },
     { name = "jax", specifier = ">=0.5.3" },
     { name = "jax", extras = ["cuda12"], marker = "extra == 'cuda12'", specifier = ">=0.5.3" },
+    { name = "scipy", specifier = ">=1.15.2" },
 ]
 provides-extras = ["cuda12"]
 

@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 import jax
 import jax.numpy as jnp
+import scipy
 
 from hcnn.policy.policy import Policy
 from hcnn.system.system_linear import SystemLinear
@@ -56,8 +57,12 @@ class PolicyLQR(Policy):
             raise ValueError("(A, Q^{1/2}) is not detectable!")
 
         # (3) solve DARE using the system matrices
-        riccati_matrix, gain_matrix = cls.dare_solver(
+        riccati_matrix = scipy.linalg.solve_discrete_are(
             system_linear.state_matrix, system_linear.input_matrix, state_cost, input_cost
+        )
+        gain_matrix = jnp.linalg.solve(
+            input_cost + system_linear.input_matrix.T @ riccati_matrix @ system_linear.input_matrix,
+            system_linear.input_matrix.T @ riccati_matrix @ system_linear.state_matrix,
         )
 
         # (4) create instance
@@ -83,40 +88,6 @@ class PolicyLQR(Policy):
                 if jnp.linalg.matrix_rank(test_matrix, rtol=tol) < n:
                     return False
         return True
-
-    @staticmethod
-    def dare_solver(
-        state_matrix: jax.Array,
-        input_matrix: jax.Array,
-        state_cost: jax.Array,
-        input_cost: jax.Array,
-        tol: float = 1e-8,
-    ):
-        max_iter = 500
-
-        @jax.jit
-        def riccati_iteration(matrix_x):
-            input_t_x_input = input_matrix.T @ matrix_x @ input_matrix
-            gain_term = state_matrix.T @ matrix_x @ input_matrix
-            mid_term = input_cost + input_t_x_input
-            mid_solve = jnp.linalg.solve(mid_term, gain_term.T)
-            return state_matrix.T @ matrix_x @ state_matrix - gain_term @ mid_solve + state_cost
-
-        riccati_matrix = state_cost
-        for _ in range(max_iter):
-            riccati_matrix_next = riccati_iteration(riccati_matrix)
-            if jnp.linalg.norm(riccati_matrix_next - riccati_matrix) < tol:
-                riccati_matrix = riccati_matrix_next
-                break
-            riccati_matrix = riccati_matrix_next
-
-        # Compute LQR gain: K = (R + Bᵀ X B)⁻¹ Bᵀ X A
-        gain_matrix = jnp.linalg.solve(
-            input_cost + input_matrix.T @ riccati_matrix @ input_matrix,
-            input_matrix.T @ riccati_matrix @ state_matrix,
-        )
-
-        return riccati_matrix, gain_matrix
 
     def get_action(self, state: jax.Array) -> jax.Array:
         return -self.gain_matrix @ state

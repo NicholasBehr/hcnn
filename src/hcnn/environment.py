@@ -19,6 +19,3 @@ class Environment:
         # Apply the action to the system
         next_state = self.system.step(state, action)
         return next_state
-
-    def vector_field(self):
-        pass

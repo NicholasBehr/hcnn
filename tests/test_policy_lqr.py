@@ -139,7 +139,7 @@ def test_dare_solver_outputs_valid_riccati_and_gain():
     assert jnp.allclose(dare_lhs, dare_rhs, atol=1e-6), "DARE equation not satisfied"
 
 
-def test_dare_solver_reference_case():
+def test_dare_solver_reference_case_1():
     # Matrices from the MATLAB example
     state_matrix = jnp.array([[-0.9, -0.3], [0.7, 0.1]])
     input_matrix = jnp.array([[1.0], [1.0]])
@@ -149,6 +149,26 @@ def test_dare_solver_reference_case():
     # Expected results (from MATLAB idare)
     x_expected = jnp.array([[4.7687, 0.9438], [0.9438, 3.2369]])
     k_expected = jnp.array([[-0.2216, -0.1297]])
+
+    system = SystemLinear(state_matrix=state_matrix, input_matrix=input_matrix)
+    policy = PolicyLQR.factory(system, state_cost, input_cost)
+    x_computed = policy.riccati_matrix
+    k_computed = policy.gain_matrix
+
+    assert jnp.allclose(x_computed, x_expected, atol=1e-3), "Riccati matrix X mismatch"
+    assert jnp.allclose(k_computed, k_expected, atol=1e-3), "LQR gain K mismatch"
+
+
+def test_dare_solver_reference_case_2():
+    # Matrices from the MATLAB example
+    state_matrix = jnp.array([[1.2, 0.5], [0, 1.1]])
+    input_matrix = jnp.array([[0], [1]])
+    state_cost = jnp.eye(2)
+    input_cost = jnp.eye(1)
+
+    # Expected results (from MATLAB idare)
+    x_expected = jnp.array([[8.1493, 4.0236], [4.0236, 4.0838]])
+    k_expected = jnp.array([[0.949749, 1.2793549]])
 
     system = SystemLinear(state_matrix=state_matrix, input_matrix=input_matrix)
     policy = PolicyLQR.factory(system, state_cost, input_cost)

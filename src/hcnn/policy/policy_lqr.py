@@ -2,7 +2,6 @@ from dataclasses import dataclass
 
 import jax
 import jax.numpy as jnp
-import scipy
 
 from hcnn.policy.policy import Policy
 from hcnn.system.system_linear import SystemLinear
@@ -57,12 +56,18 @@ class PolicyLQR(Policy):
             raise ValueError("(A, Q^{1/2}) is not detectable!")
 
         # (3) solve DARE using the system matrices
-        riccati_matrix = scipy.linalg.solve_discrete_are(
-            system_linear.state_matrix, system_linear.input_matrix, state_cost, input_cost
-        )
-        gain_matrix = jnp.linalg.solve(
-            input_cost + system_linear.input_matrix.T @ riccati_matrix @ system_linear.input_matrix,
-            system_linear.input_matrix.T @ riccati_matrix @ system_linear.state_matrix,
+        # riccati_matrix = scipy.linalg.solve_discrete_are(
+        #     system_linear.state_matrix, system_linear.input_matrix, state_cost, input_cost
+        # )
+        # gain_matrix = jnp.linalg.solve(
+        #     input_cost + system_linear.input_matrix.T @ riccati_matrix @ system_linear.input_matrix,
+        #     system_linear.input_matrix.T @ riccati_matrix @ system_linear.state_matrix,
+        # )
+        riccati_matrix, gain_matrix = cls.solve_discreate_are(
+            system_linear.state_matrix,
+            system_linear.input_matrix,
+            state_cost,
+            input_cost,
         )
 
         # (4) create instance
@@ -88,6 +93,50 @@ class PolicyLQR(Policy):
                 if jnp.linalg.matrix_rank(test_matrix, rtol=tol) < n:
                     return False
         return True
+
+    @staticmethod
+    def solve_discreate_are(
+        state_matrix: jax.Array,
+        input_matrix: jax.Array,
+        state_cost: jax.Array,
+        input_cost: jax.Array,
+        tol: float = 1e-8,
+    ) -> tuple[jax.Array, jax.Array]:
+        """
+        Solve the discrete algebraic Riccati equation (DARE) using policy iteration.
+        The DARE is given by:
+        X = A^T * X * A - (A^T * X * B) * (R + B^T * X * B)^(-1) * (B^T * X * A) + Q
+        where:
+        - A is the state transition matrix
+        - B is the input matrix
+        - Q is the state cost matrix
+        - R is the input cost matrix
+        - X is the solution to the DARE
+        """
+
+        @jax.jit
+        def policy_improvement(riccati_matrix):
+            return jnp.linalg.solve(
+                input_cost + input_matrix.T @ riccati_matrix @ input_matrix,
+                input_matrix.T @ riccati_matrix @ state_matrix,
+            )
+
+        @jax.jit
+        def policy_evaluation(riccati_matrix, gain_matrix):
+            return (
+                state_cost
+                + state_matrix.T @ riccati_matrix @ state_matrix
+                - state_matrix.T @ riccati_matrix @ input_matrix @ gain_matrix
+            )
+
+        riccati_matrix = state_cost
+        for _ in range(500):
+            gain_matrix = policy_improvement(riccati_matrix)
+            new_riccati_matrix = policy_evaluation(riccati_matrix, gain_matrix)
+            if jnp.linalg.norm(new_riccati_matrix - riccati_matrix) < tol:
+                break
+            riccati_matrix = new_riccati_matrix
+        return riccati_matrix, gain_matrix
 
     def get_action(self, state: jax.Array) -> jax.Array:
         return -self.gain_matrix @ state

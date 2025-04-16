@@ -602,7 +602,6 @@ dependencies = [
     { name = "brax" },
     { name = "flax" },
     { name = "jax" },
-    { name = "scipy" },
 ]
 
 [package.optional-dependencies]
@@ -613,12 +612,10 @@ cuda12 = [
 [package.dev-dependencies]
 dev = [
     { name = "jupyterlab" },
+    { name = "matplotlib" },
     { name = "pyright" },
     { name = "pytest" },
     { name = "ruff" },
-]
-plot = [
-    { name = "matplotlib" },
 ]
 
 [package.metadata]
@@ -627,18 +624,17 @@ requires-dist = [
     { name = "flax", specifier = ">=0.10.5" },
     { name = "jax", specifier = ">=0.5.3" },
     { name = "jax", extras = ["cuda12"], marker = "extra == 'cuda12'", specifier = ">=0.5.3" },
-    { name = "scipy", specifier = ">=1.15.2" },
 ]
 provides-extras = ["cuda12"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "jupyterlab", specifier = ">=4.4.0" },
+    { name = "matplotlib", specifier = ">=3.10.1" },
     { name = "pyright", specifier = ">=1.1.398" },
     { name = "pytest", specifier = ">=8.3.5" },
     { name = "ruff", specifier = ">=0.11.4" },
 ]
-plot = [{ name = "matplotlib", specifier = ">=3.10.1" }]
 
 [[package]]
 name = "httpcore"

@@ -9,8 +9,8 @@ from hcnn.system.system_linear import SystemLinear
 
 @dataclass(frozen=True)
 class PolicyLQR(Policy):
-    state_cost: jax.Array  # PSD
-    input_cost: jax.Array  # PD
+    state_cost: jax.Array
+    input_cost: jax.Array
     riccati_matrix: jax.Array
     gain_matrix: jax.Array
 

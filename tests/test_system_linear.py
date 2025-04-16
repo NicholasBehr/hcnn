@@ -4,7 +4,6 @@ import pytest
 from hcnn.system.system_linear import SystemLinear
 
 
-### Test cases for SystemLinearConfig
 def test_valid_config_creation():
     state_matrix = jnp.array([[1.0, 2.0], [3.0, 4.0]])
     input_matrix = jnp.array([[5.0], [6.0]])
@@ -44,7 +43,6 @@ def test_dimension_mismatch_between_state_and_input():
         SystemLinear(state_matrix, input_matrix)
 
 
-### Test cases for SystemLinear
 def test_step_basic_case():
     state_matrix = jnp.array([[1.0, 0.0], [0.0, 1.0]])
     input_matrix = jnp.array([[1.0], [1.0]])

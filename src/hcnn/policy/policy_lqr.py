@@ -56,13 +56,6 @@ class PolicyLQR(Policy):
             raise ValueError("(A, Q^{1/2}) is not detectable!")
 
         # (3) solve DARE using the system matrices
-        # riccati_matrix = scipy.linalg.solve_discrete_are(
-        #     system_linear.state_matrix, system_linear.input_matrix, state_cost, input_cost
-        # )
-        # gain_matrix = jnp.linalg.solve(
-        #     input_cost + system_linear.input_matrix.T @ riccati_matrix @ system_linear.input_matrix,
-        #     system_linear.input_matrix.T @ riccati_matrix @ system_linear.state_matrix,
-        # )
         riccati_matrix, gain_matrix = cls.solve_discreate_are(
             system_linear.state_matrix,
             system_linear.input_matrix,
@@ -129,6 +122,7 @@ class PolicyLQR(Policy):
                 - state_matrix.T @ riccati_matrix @ input_matrix @ gain_matrix
             )
 
+        gain_matrix = jnp.zeros((input_matrix.shape[1], state_matrix.shape[0]))
         riccati_matrix = state_cost
         for _ in range(500):
             gain_matrix = policy_improvement(riccati_matrix)

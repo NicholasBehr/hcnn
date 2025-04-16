@@ -49,6 +49,3 @@ select = [
     "PL",  # Pylint rules (optional)
 ]
 ignore = ["D"]  # Ignore docstring warnings
-
-[tool.pyright]
-strict = ["./src"]

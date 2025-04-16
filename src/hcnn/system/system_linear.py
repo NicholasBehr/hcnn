@@ -4,20 +4,29 @@ from .system import System
 
 
 class SystemLinear(System):
-    _matrix_a: jax.Array
-    _matrix_b: jax.Array
+    state_matrix: jax.Array
+    input_matrix: jax.Array
 
-    def __init__(self, matrix_a: jax.Array, matrix_b: jax.Array):
-        if matrix_a.ndim != 2 or matrix_b.ndim != 2:  # noqa: PLR2004
-            raise ValueError("Matrices A and B must be two dimensional!")
-        if matrix_a.shape[0] != matrix_a.shape[1]:
-            raise ValueError("A matrix must be square!")
-        if matrix_a.shape[0] != matrix_b.shape[0]:
-            raise ValueError("State dimensions of matrix A and matrix B must agree!")
+    def __init__(self, state_matrix: jax.Array, input_matrix: jax.Array):
+        # (1) verify input
+        if state_matrix.ndim != 2 or input_matrix.ndim != 2:  # noqa: PLR2004
+            raise ValueError("Inout and state matrices must be two dimensional!")
+        if state_matrix.shape[0] != state_matrix.shape[1]:
+            raise ValueError("Input matrix must be square!")
+        if state_matrix.shape[0] != input_matrix.shape[0]:
+            raise ValueError("State dimensions must agree!")
 
-        # assign input
-        self._matrix_a = matrix_a
-        self._matrix_b = matrix_b
+        # (2) assign input
+        self.state_matrix = state_matrix
+        self.input_matrix = input_matrix
+
+    @property
+    def state_dim(self) -> int:
+        return self.state_matrix.shape[0]
+
+    @property
+    def input_dim(self) -> int:
+        return self.input_matrix.shape[1]
 
     def step(self, state: jax.Array, action: jax.Array) -> jax.Array:
-        return self._matrix_a @ state + self._matrix_b @ action
+        return self.state_matrix @ state + self.input_matrix @ action

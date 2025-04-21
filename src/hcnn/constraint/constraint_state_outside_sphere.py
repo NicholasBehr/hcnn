@@ -22,7 +22,7 @@ class ConstraintStateOutsideSphere(Constraint):
         Factory method to create a ConstraintStateOutsideSphere instance.
         """
         obj = object.__new__(cls)
-        object.__setattr__(obj, "lower_bound", jnp.array(radius ^ 2))
+        object.__setattr__(obj, "lower_bound", jnp.array(radius**2))
         object.__setattr__(obj, "upper_bound", jnp.array(jnp.inf))
         object.__setattr__(obj, "center", center)
         return obj

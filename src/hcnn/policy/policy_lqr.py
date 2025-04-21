@@ -136,4 +136,4 @@ class PolicyLQR(Policy):
         return -self.gain_matrix @ state
 
     def get_value(self, state: jax.Array) -> float:
-        return jnp.squeeze(state.T @ self.riccati_matrix @ state) / 2
+        return float(state.T @ self.riccati_matrix @ state / 2)

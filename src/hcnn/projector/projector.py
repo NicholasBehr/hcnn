@@ -79,64 +79,62 @@ class Projector:
             rho=0.0,
         )
 
-    ### CONSTRAINT FUNCTIONS ###
+    ### EQUALITY CONSTRAINT FUNCTIONS h(x) = 0 ###
     # (1) Initial state constraint
-    def bounds_initial(self):
-        lower_initial = jnp.zeros(self.system.state_dim)
-        upper_initial = jnp.zeros(self.system.state_dim)
-        return (lower_initial, upper_initial)
-
     @staticmethod
     def constraint_initial(x: OptimizationVariable, initial_state: jax.Array) -> jax.Array:
         return x.states[0] - initial_state
 
     # (2) Dynamics constraints
-    def bounds_dynamics(self):
-        lower_dynamics = jax.numpy.zeros((self.horizon - 1, self.system.state_dim))
-        upper_dynamics = jax.numpy.zeros((self.horizon - 1, self.system.state_dim))
-        return (lower_dynamics, upper_dynamics)
-
     def constraint_dynamics(self, x: OptimizationVariable) -> jax.Array:
         return jax.vmap(
             lambda state, action, next_state: next_state - self.system.step(state, action)
-        )(x.states[:-1], x.actions[:-1], x.states[1:])
+        )(x.states[:-1], x.actions[:-1], x.states[1:]).ravel()
 
     # (3) Policy constraints
-    def bounds_policy(self):
-        lower_policy = jax.numpy.zeros((self.horizon, self.system.action_dim))
-        upper_policy = jax.numpy.zeros((self.horizon, self.system.action_dim))
-        return (lower_policy, upper_policy)
-
     def constraint_policy(self, x: OptimizationVariable) -> jax.Array:
         return jax.vmap(lambda state, policy_action: policy_action - self.policy.get_action(state))(
             x.states, x.policy_actions
-        )
+        ).ravel()
 
-    # (4) State & action constraints
+    # (4) Combination of all equality constraints
+    def bounds_equality(self, x: OptimizationVariable):
+        out = self.constraint_equality(x, x.states[0])
+        return (jnp.zeros_like(out), jnp.zeros_like(out))
+
+    def constraint_equality(self, x: OptimizationVariable, initial_state: jax.Array) -> jax.Array:
+        constraint_initial = self.constraint_initial(x, initial_state)
+        constraint_dynamics = self.constraint_dynamics(x)
+        constraint_policy = self.constraint_policy(x)
+
+        return jnp.concatenate((constraint_initial, constraint_dynamics, constraint_policy))
+
+    ### INEQUALITY CONSTRAINT FUNCTIONS l <= g(x) <= u ###
+    # (1) State & action constraints
     def bounds_state_action(self):
-        lower_sa = jax.numpy.tile(jnp.atleast_2d(self.constraint.lower_bound), self.horizon)
-        upper_sa = jax.numpy.tile(jnp.atleast_2d(self.constraint.upper_bound), self.horizon)
+        lower_sa = jnp.tile(self.constraint.lower_bound, self.horizon)
+        upper_sa = jnp.tile(self.constraint.upper_bound, self.horizon)
         return (lower_sa, upper_sa)
 
     def constraint_state_action(self, x: OptimizationVariable) -> jax.Array:
         return jax.vmap(lambda state, action: self.constraint.function(state, action))(
             x.states, x.actions
-        )
+        ).ravel()
 
-    # (5) Max relaxation constraints
+    # (2) Max relaxation constraints
     def bounds_relaxation(self):
         lower_relaxation = jnp.concatenate(
             (
                 -jnp.inf * jnp.ones((self.horizon * self.constraint.lower_bound.shape[0],)),
                 jnp.zeros((self.horizon * self.constraint.lower_bound.shape[0],)),
-                0,
+                jnp.zeros((1,)),
             )
         )
         upper_relaxation = jnp.concatenate(
             (
                 jnp.zeros((self.horizon * self.constraint.upper_bound.shape[0],)),
-                jnp.inf * jnp.zeros((self.horizon * self.constraint.upper_bound.shape[0],)),
-                jnp.inf,
+                jnp.inf * jnp.ones((self.horizon * self.constraint.upper_bound.shape[0],)),
+                jnp.inf * jnp.ones((1,)),
             )
         )
         return (lower_relaxation, upper_relaxation)
@@ -144,5 +142,21 @@ class Projector:
     def constraint_relaxation(self, x: OptimizationVariable) -> jax.Array:
         relax_positive = jax.vmap(lambda relaxation: relaxation - x.max_relaxation)(x.relaxations)
         relax_negative = jax.vmap(lambda relaxation: relaxation + x.max_relaxation)(x.relaxations)
-        relax_max = x.max_relaxation
-        return jnp.concatenate((relax_positive.flatten(), relax_negative.flatten(), relax_max))
+        relax_max = jnp.array(x.max_relaxation)
+        return jnp.concatenate((relax_positive.ravel(), relax_negative.ravel(), relax_max.ravel()))
+
+    # (3) Combination of all inequality constraints
+    def bounds_inequality(self):
+        lower_sa, upper_sa = self.bounds_state_action()
+        lower_relaxation, upper_relaxation = self.bounds_relaxation()
+
+        return (
+            jnp.concatenate((lower_sa, lower_relaxation)),
+            jnp.concatenate((upper_sa, upper_relaxation)),
+        )
+
+    def constraint_inequality(self, x: OptimizationVariable) -> jax.Array:
+        constraint_state_action = self.constraint_state_action(x)
+        constraint_relaxation = self.constraint_relaxation(x)
+
+        return jnp.concatenate((constraint_state_action, constraint_relaxation))

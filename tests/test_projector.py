@@ -10,14 +10,14 @@ from hcnn.system.system_linear import SystemLinear
 @pytest.fixture
 def linear_system():
     state_matrix = jnp.array([[1, -1], [1, 0]])
-    input_matrix = jnp.array([[1.0], [0.0]])
+    input_matrix = jnp.array([[1.0, 0.0], [0.0, 0.0]])
     return SystemLinear.factory(state_matrix=state_matrix, input_matrix=input_matrix)
 
 
 @pytest.fixture
 def linear_policy(linear_system):
     state_cost = jnp.eye(2)
-    input_cost = jnp.eye(1)
+    input_cost = jnp.eye(2)
     return PolicyLQR.factory(linear_system, state_cost, input_cost)
 
 
@@ -75,10 +75,15 @@ def test_constraint_initial(projector):
     # Perform warmstart
     warmstart_x = projector.warm_start(initial_state)
 
-    assert jnp.allclose(projector.constraint_initial(warmstart_x, initial_state), 0)
+    assert projector.constraint_initial(warmstart_x, initial_state).shape == (2,), (
+        "Constraint should be vector"
+    )
+    assert jnp.allclose(projector.constraint_initial(warmstart_x, initial_state), 0), (
+        "Constraint should be satisfied"
+    )
     assert not jnp.allclose(
         projector.constraint_initial(warmstart_x, initial_state=jnp.array([2, -1])), 0
-    )
+    ), "Constraint should not be satisfied"
 
 
 def test_constraint_dynamics(projector):
@@ -88,13 +93,16 @@ def test_constraint_dynamics(projector):
     # Perform warmstart
     warmstart_x = projector.warm_start(initial_state)
 
-    assert jnp.allclose(projector.constraint_dynamics(warmstart_x), 0)
+    assert projector.constraint_dynamics(warmstart_x).shape == (6,), "Constraint should be vector"
+    assert jnp.allclose(projector.constraint_dynamics(warmstart_x), 0), (
+        "Constraint should be satisfied"
+    )
     assert not jnp.allclose(
         projector.constraint_dynamics(
             warmstart_x.replace(states=warmstart_x.states.at[2].set(jnp.array([2, -1])))
         ),
         0,
-    )
+    ), "Constraint should not be satisfied"
 
 
 def test_constraint_policy(projector):
@@ -104,15 +112,46 @@ def test_constraint_policy(projector):
     # Perform warmstart
     warmstart_x = projector.warm_start(initial_state)
 
+    assert projector.constraint_policy(warmstart_x).shape == (8,), "Constraint should be vector"
     assert jnp.allclose(
         projector.constraint_policy(warmstart_x),
         0,
         atol=1e-8,
-    )
+    ), "Constraint should be satisfied"
     assert not jnp.allclose(
         projector.constraint_policy(
             warmstart_x.replace(policy_actions=warmstart_x.policy_actions.at[2].set(jnp.array([2])))
         ),
         0,
         atol=1e-8,
+    ), "Constraint should not be satisfied"
+
+
+def test_constraint_state_action(projector):
+    # Create a dummy optimization variable
+    initial_state = jnp.array([2, -2])
+
+    # Perform warmstart
+    warmstart_x = projector.warm_start(initial_state)
+
+    assert projector.constraint_state_action(warmstart_x).shape == (4,), (
+        "Constraint should be vector"
     )
+
+    lower_bound, upper_bound = projector.bounds_state_action()
+    assert lower_bound.shape == (4,)
+    assert upper_bound.shape == (4,)
+
+
+def test_constraint_relaxation(projector):
+    # Create a dummy optimization variable
+    initial_state = jnp.array([2, -2])
+
+    # Perform warmstart
+    warmstart_x = projector.warm_start(initial_state)
+
+    assert projector.constraint_relaxation(warmstart_x).shape == (9,), "Constraint should be vector"
+
+    lower_bound, upper_bound = projector.bounds_relaxation()
+    assert lower_bound.shape == (9,)
+    assert upper_bound.shape == (9,)

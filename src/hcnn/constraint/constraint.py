@@ -1,10 +1,10 @@
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 
 import jax
+from flax import struct
 
 
-@dataclass(frozen=True)
+@struct.dataclass
 class Constraint(ABC):
     lower_bound: jax.Array
     upper_bound: jax.Array

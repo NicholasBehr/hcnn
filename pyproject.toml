@@ -8,6 +8,7 @@ dependencies = [
     "brax>=0.12.3",
     "flax>=0.10.5",
     "jax>=0.5.3",
+    "jaxopt>=0.8.5",
 ]
 
 [project.optional-dependencies]

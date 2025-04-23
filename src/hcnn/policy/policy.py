@@ -1,15 +1,15 @@
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 
 import jax
+from flax import struct
 
 
-@dataclass(frozen=True)
+@struct.dataclass
 class Policy(ABC):
     @abstractmethod
     def get_action(self, state: jax.Array) -> jax.Array:
         pass
 
     @abstractmethod
-    def get_value(self, state: jax.Array) -> float:
+    def get_value(self, state: jax.Array) -> jax.Array:
         pass

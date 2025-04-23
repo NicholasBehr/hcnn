@@ -9,7 +9,7 @@ from hcnn.system.system_linear import SystemLinear
 def stable_system():
     state_matrix = jnp.array([[0.9, 0.0], [0.0, 0.95]])
     input_matrix = jnp.array([[0.1], [0.05]])
-    return SystemLinear(state_matrix=state_matrix, input_matrix=input_matrix)
+    return SystemLinear.factory(state_matrix=state_matrix, input_matrix=input_matrix)
 
 
 def test_factory_valid(stable_system):
@@ -60,7 +60,7 @@ def test_non_pd_input_cost_raises(stable_system):
 def test_unstabilizable_system_raises():
     state_matrix = jnp.array([[1.2, 0.0], [0.0, 1.1]])
     input_matrix = jnp.zeros((2, 1))
-    system = SystemLinear(state_matrix=state_matrix, input_matrix=input_matrix)
+    system = SystemLinear.factory(state_matrix=state_matrix, input_matrix=input_matrix)
 
     state_cost = jnp.eye(2)
     input_cost = jnp.eye(1)
@@ -72,22 +72,13 @@ def test_unstabilizable_system_raises():
 def test_undetectable_system_raises():
     state_matrix = jnp.array([[1.2, 0.0], [0.0, 1.1]])
     input_matrix = jnp.eye(2)  # stabilizable, but Q will cause detectability to fail
-    system = SystemLinear(state_matrix=state_matrix, input_matrix=input_matrix)
+    system = SystemLinear.factory(state_matrix=state_matrix, input_matrix=input_matrix)
 
     state_cost = jnp.array([[1.0, 0.0], [0.0, 0.0]])  # makes Q sqrt only affect one state
     input_cost = jnp.eye(2)
 
     with pytest.raises(ValueError, match="is not detectable"):
         PolicyLQR.factory(system, state_cost, input_cost)
-
-
-def test_direct_instantiation_raises():
-    state_cost = jnp.zeros((2, 2))
-    input_cost = jnp.zeros((2, 2))
-    riccati_matrix = jnp.zeros((2, 2))
-    gain_matrix = jnp.zeros((2, 2))
-    with pytest.raises(TypeError, match="Direct instantiation is not allowed"):
-        PolicyLQR(state_cost, input_cost, riccati_matrix, gain_matrix)
 
 
 def test_state_cost_shape_mismatch_raises(stable_system):
@@ -113,7 +104,7 @@ def test_dare_solver_outputs_valid_riccati_and_gain():
     state_cost = jnp.eye(2)
     input_cost = jnp.array([[1.0]])
 
-    system = SystemLinear(state_matrix=state_matrix, input_matrix=input_matrix)
+    system = SystemLinear.factory(state_matrix=state_matrix, input_matrix=input_matrix)
     policy = PolicyLQR.factory(system, state_cost, input_cost)
     riccati_matrix = policy.riccati_matrix
     gain_matrix = policy.gain_matrix
@@ -150,7 +141,7 @@ def test_dare_solver_reference_case_1():
     x_expected = jnp.array([[4.7687, 0.9438], [0.9438, 3.2369]])
     k_expected = jnp.array([[-0.2216, -0.1297]])
 
-    system = SystemLinear(state_matrix=state_matrix, input_matrix=input_matrix)
+    system = SystemLinear.factory(state_matrix=state_matrix, input_matrix=input_matrix)
     policy = PolicyLQR.factory(system, state_cost, input_cost)
     x_computed = policy.riccati_matrix
     k_computed = policy.gain_matrix
@@ -170,7 +161,7 @@ def test_dare_solver_reference_case_2():
     x_expected = jnp.array([[8.1493, 4.0236], [4.0236, 4.0838]])
     k_expected = jnp.array([[0.949749, 1.2793549]])
 
-    system = SystemLinear(state_matrix=state_matrix, input_matrix=input_matrix)
+    system = SystemLinear.factory(state_matrix=state_matrix, input_matrix=input_matrix)
     policy = PolicyLQR.factory(system, state_cost, input_cost)
     x_computed = policy.riccati_matrix
     k_computed = policy.gain_matrix

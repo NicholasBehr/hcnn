@@ -3,7 +3,7 @@ import pytest
 
 from hcnn.constraint.constraint_state_outside_sphere import ConstraintStateOutsideSphere
 from hcnn.policy.policy_lqr import PolicyLQR
-from hcnn.projector.projector import Projector
+from hcnn.qcnc.projector import Projector
 from hcnn.system.system_linear import SystemLinear
 
 

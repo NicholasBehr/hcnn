@@ -2,8 +2,8 @@ import jax.numpy as jnp
 import pytest
 
 from hcnn.constraint.constraint_state_outside_sphere import ConstraintStateOutsideSphere
+from hcnn.optimization.projector import Projector
 from hcnn.policy.policy_lqr import PolicyLQR
-from hcnn.qcnc.projector import Projector
 from hcnn.system.system_linear import SystemLinear
 
 

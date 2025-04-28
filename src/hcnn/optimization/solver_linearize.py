@@ -31,7 +31,7 @@ class SolverLinearize(OptimizationSolver):
             osqp = BoxOSQP(
                 matvec_Q=lambda problem, x: problem.cost_qvp(x),
                 matvec_A=lambda grad_hx, x: grad_hx(x),
-                tol=1e-3,
+                tol=1e-4,
             )
 
             # solve QP
@@ -43,5 +43,5 @@ class SolverLinearize(OptimizationSolver):
             init_val=problem.x0,
             body_fun=body_fun,
             lower=0,
-            upper=25,
+            upper=5,
         )

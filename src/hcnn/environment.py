@@ -23,7 +23,7 @@ class Environment:
             policy=policy,
             constraint=constraint,
             horizon=5,
-            rho=200,
+            rho=250,
         )
         return Environment(system=system, policy=policy, constraint=constraint, problem=problem)
 

@@ -66,5 +66,5 @@ class OptimizationSolver(ABC):
 
     @staticmethod
     @abstractmethod
-    def solve(problem: OptimizationProblem, verbose: bool = False) -> jax.Array:
+    def solve(problem: OptimizationProblem) -> jax.Array:
         pass

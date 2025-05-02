@@ -11,7 +11,7 @@ from hcnn.optimization.optimization import (
 @struct.dataclass
 class SolverLinearize(OptimizationSolver):
     @staticmethod
-    def solve(problem: OptimizationProblem, verbose: bool = False) -> jax.Array:
+    def solve(problem: OptimizationProblem) -> jax.Array:
         def body_fun(i, x):
             # linearize constraints at current x
             hx, grad_hx = jax.linearize(problem.constraints, x)

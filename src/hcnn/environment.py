@@ -1,7 +1,7 @@
 import jax
 from flax import struct
 
-from hcnn.optimization.solver_linearize import SolverLinearize
+from hcnn.optimization.solver_qsqp import SolverQSQP
 
 from .constraint.constraint import Constraint
 from .optimization.problem_policy_deviation import ProblemPolicyDeviation
@@ -22,8 +22,8 @@ class Environment:
             system=system,
             policy=policy,
             constraint=constraint,
-            horizon=5,
-            rho=250,
+            horizon=15,
+            rho=20,
         )
         return Environment(system=system, policy=policy, constraint=constraint, problem=problem)
 
@@ -32,7 +32,7 @@ class Environment:
         problem = self.problem.copy_with(initial_state=state)
 
         # Get the action from projection
-        x_star = SolverLinearize.solve(problem)
+        x_star = SolverQSQP.solve(problem)
         action = problem.get_action(x_star)
 
         # Apply the action to the system

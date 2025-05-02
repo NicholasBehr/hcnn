@@ -1,0 +1,168 @@
+import jax
+import jax.numpy as jnp
+import pytest
+from flax import struct
+
+from hcnn.optimization.optimization import OptimizationProblem
+from hcnn.optimization.solver_qsqp import SolverQSQP
+
+
+@struct.dataclass
+class TestProblem(OptimizationProblem):
+    _x0: jax.Array
+
+    @property
+    def x0(self) -> jax.Array:
+        return self._x0
+
+    @staticmethod
+    def factory(x0: jax.Array) -> "TestProblem":
+        return TestProblem(
+            cost_linear=jnp.array([0.0, 0.0]),
+            lower_bound=jnp.array([1.0, -jnp.inf]),
+            upper_bound=jnp.array([jnp.inf, 2.0]),
+            _x0=x0,
+        )
+
+    ## cost
+    def cost_qvp(self, x: jax.Array) -> jax.Array:
+        # Q = jnp.eye(2)
+        return x
+
+    ## constraints
+    def constraints(self, x: jax.Array) -> jax.Array:
+        test_constraints = jnp.dot(x, x)
+        return jnp.tile(test_constraints, 2)
+
+
+@pytest.fixture
+def problem():
+    return TestProblem.factory(jnp.array([2.0, 2.0]))
+
+
+@pytest.fixture
+def variables(problem):
+    return SolverQSQP.initialize_variables(problem)
+
+
+def randomize_variables(rng, variables) -> SolverQSQP.Variables:
+    # Flatten the structure into leaves
+    leaves, treedef = jax.tree_util.tree_flatten(variables)
+
+    # Split RNG for each leaf
+    keys = jax.random.split(rng, len(leaves))
+
+    # Randomize each leaf, preserving shape
+    new_leaves = [jax.random.normal(k, v.shape) for k, v in zip(keys, leaves, strict=False)]
+
+    # Rebuild the struct with randomized leaves
+    new_variables = jax.tree_util.tree_unflatten(treedef, new_leaves)
+    return new_variables
+
+
+def check_shapes_match(tree_a, tree_b):
+    leaves_a, treedef_a = jax.tree_util.tree_flatten(tree_a)
+    leaves_b, treedef_b = jax.tree_util.tree_flatten(tree_b)
+
+    if treedef_a != treedef_b:
+        return False
+
+    for _, (a, b) in enumerate(zip(leaves_a, leaves_b, strict=False)):
+        if a.shape != b.shape:
+            return False
+
+    return True
+
+
+def test_step_variables(problem: TestProblem, variables: SolverQSQP.Variables):
+    absolute_tolerance = 1e-5
+
+    ## jit compilable
+    jit_step = jax.jit(SolverQSQP.update_primal_dual)
+
+    for i in range(25):
+        # radomize variables
+        rng = jax.random.PRNGKey(i)
+        variables = randomize_variables(rng, variables)
+
+        # ensure valid variables
+        variables.replace(
+            alpha=jnp.clip(variables.alpha, 1e-8, 2 - 1e-8),  # (0, 2)
+            sigma=jnp.abs(variables.sigma) + 1e-8,  # >0
+            rho_vec=jnp.abs(variables.rho_vec) + 1e-8,  # > 0
+        )
+
+        h, f_jvp, f_vjp = SolverQSQP.linearize_constrains(variables=variables, problem=problem)
+        new_variables = jit_step(
+            variables=variables,
+            problem=problem,
+            h=h,
+            f_jvp=f_jvp,
+            f_vjp=f_vjp,
+        )
+
+        ## check shapes and types
+        assert check_shapes_match(variables, new_variables)
+
+        Q = jnp.eye(2)
+        R = jnp.diag(variables.rho_vec)
+        J = jax.jacobian(problem.constraints)(variables.x_lin)
+
+        ## check x_tilde
+        lhs = (Q + variables.sigma * jnp.eye(2) + J.T @ R @ J) @ new_variables.x_tilde
+        rhs = (
+            variables.sigma * variables.x
+            - problem.cost_linear
+            + J.T @ (R @ (variables.z - h + J @ variables.x_lin) - variables.y)
+        )
+        assert jnp.allclose(lhs, rhs, atol=absolute_tolerance)
+
+        ## check z_tilde
+        lhs = new_variables.z_tilde
+        rhs = h + J @ (new_variables.x_tilde - variables.x_lin)
+        assert jnp.allclose(lhs, rhs, atol=absolute_tolerance)
+
+        ## check x
+        lhs = new_variables.x
+        rhs = variables.alpha * new_variables.x_tilde + (1 - variables.alpha) * variables.x
+        assert jnp.allclose(lhs, rhs, atol=absolute_tolerance)
+
+        ## check z
+        R_inv = jnp.linalg.inv(R)
+        lhs = new_variables.z
+        rhs = jnp.clip(
+            (
+                variables.alpha * new_variables.z_tilde
+                + (1 - variables.alpha) * variables.z
+                + R_inv @ variables.y
+            ),
+            problem.lower_bound,
+            problem.upper_bound,
+        )
+        assert jnp.allclose(lhs, rhs, atol=absolute_tolerance)
+
+        ## check y
+        lhs = new_variables.y
+        rhs = variables.y + R @ (
+            variables.alpha * new_variables.z_tilde
+            + (1 - variables.alpha) * variables.z
+            - new_variables.z
+        )
+        assert jnp.allclose(lhs, rhs, atol=absolute_tolerance)
+
+
+def test_solve_start_feasible():
+    problem = TestProblem.factory(jnp.array([2.0, 2.0]))
+    x = SolverQSQP.solve(problem)
+    constraints = problem.constraints(x)
+
+    assert jnp.all(problem.lower_bound - 1e-5 <= constraints)
+    assert jnp.all(constraints <= problem.upper_bound + 1e-5)
+
+
+def test_solve_start_infeasible():
+    problem = TestProblem.factory(jnp.array([0.5, 0.5]))
+    x = SolverQSQP.solve(problem)
+
+    assert jnp.all(problem.lower_bound - 1e-5 <= problem.constraints(x))
+    assert jnp.all(problem.constraints(x) <= problem.upper_bound + 1e-5)

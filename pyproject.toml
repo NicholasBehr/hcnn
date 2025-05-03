@@ -45,3 +45,8 @@ select = [
     "PL",  # Pylint rules (optional)
 ]
 ignore = ["D"]  # Ignore docstring warnings
+
+[tool.pytest.ini_options]
+filterwarnings = [
+  "ignore::DeprecationWarning:jaxopt.*"
+]

@@ -15,8 +15,6 @@ from hcnn.optimization.optimization import (
 class SolverQSQP(OptimizationSolver):
     @struct.dataclass
     class Variables:
-        # linearization
-        x_lin: jax.Array
         # primal
         x: jax.Array
         x_tilde: jax.Array
@@ -30,15 +28,19 @@ class SolverQSQP(OptimizationSolver):
         alpha: jax.Array
         sigma: jax.Array
         rho_vec: jax.Array
-        max_major_iter: int
+        max_iter: jax.Array
+
+        def replace(self, **kwargs) -> Self:
+            """
+            Placeholder for typing, will get overridden by @struct.dataclass
+            """
+            return self
 
         @staticmethod
-        def factory(problem: OptimizationProblem) -> Self:
+        def factory(problem: OptimizationProblem) -> "SolverQSQP.Variables":
             x = problem.x0
             z = problem.constraints(x)
             return SolverQSQP.Variables(
-                # linearization
-                x_lin=x,
                 # primal
                 x=x,
                 x_tilde=x,
@@ -49,19 +51,16 @@ class SolverQSQP(OptimizationSolver):
                 y=jnp.zeros_like(z),
                 dual_residuals=problem.cost_qvp(x) + problem.cost_linear,
                 # parameters
-                alpha=jnp.atleast_1d(1.6),
-                sigma=jnp.atleast_1d(1e-6),
+                alpha=jnp.array(1.6, dtype=float),
+                sigma=jnp.array(1e-6, dtype=float),
                 rho_vec=0.1 * jnp.where(problem.lower_bound == problem.upper_bound, 1e3, 1.0),
-                max_major_iter=15,
+                max_iter=jnp.array(200, dtype=int),
             )
-
-        def update_linearization(self) -> Self:
-            return self.replace(x_lin=self.x_tilde)
 
         def update_primal_dual(self, problem: OptimizationProblem) -> Self:
             ## form linearization
-            h, h_jvp = jax.linearize(problem.constraints, self.x_lin)
-            _, h_vjp = jax.vjp(problem.constraints, self.x_lin)
+            h, h_jvp = jax.linearize(problem.constraints, self.x_tilde)
+            _, h_vjp = jax.vjp(problem.constraints, self.x_tilde)
 
             ## x_tilde ##
             def cg_preconditioner(v: jax.Array) -> jax.Array:
@@ -82,16 +81,20 @@ class SolverQSQP(OptimizationSolver):
                 c = h_vjp(c)[0]
                 return a + b + c
 
-            zhjx = self.z - h + h_jvp(self.x_lin)
+            zhjx = self.z - h + h_jvp(self.x_tilde)
             r_zhjx_y = self.rho_vec * zhjx - self.y
             cg_rhs = self.sigma * self.x - problem.cost_linear + h_vjp(r_zhjx_y)[0]
 
             new_x_tilde = jax.scipy.sparse.linalg.cg(
-                A=cg_lhs, b=cg_rhs, x0=self.x_tilde, M=cg_preconditioner
+                A=cg_lhs,
+                b=cg_rhs,
+                x0=self.x_tilde,
+                M=cg_preconditioner,
+                tol=1e-5,
             )[0]
 
             ## z_tilde ##
-            new_z_tilde = h + h_jvp(new_x_tilde - self.x_lin)
+            new_z_tilde = h + h_jvp(new_x_tilde - self.x_tilde)
 
             ## x ##
             new_x = self.alpha * new_x_tilde + (1 - self.alpha) * self.x
@@ -106,8 +109,8 @@ class SolverQSQP(OptimizationSolver):
             )
 
             ## residuals ##
-            primal_residuals = h + h_jvp(self.x - self.x_lin) - self.z
-            dual_residuals = problem.cost_qvp(self.x) + problem.cost_linear + h_vjp(self.y)[0]
+            primal_residuals = h + h_jvp(new_x - self.x_tilde) - new_z
+            dual_residuals = problem.cost_qvp(new_x) + problem.cost_linear + h_vjp(new_y)[0]
 
             return self.replace(
                 x_tilde=new_x_tilde,
@@ -142,44 +145,43 @@ class SolverQSQP(OptimizationSolver):
             return self.replace(rho_vec=rho_vec)
 
     @staticmethod
-    def minor_iteration(
-        i, variables: "SolverQSQP.Variables", problem: OptimizationProblem
-    ) -> "SolverQSQP.Variables":
-        return variables.update_primal_dual(problem).update_rho()
+    def cond_fun(variables: "SolverQSQP.Variables", atol: float) -> jax.Array:
+        # return true if we should enter a new iteration
 
-    @staticmethod
-    def major_cond_fun(variables: "SolverQSQP.Variables", atol: float) -> bool:
-        # are we not yet converged?
+        # are we not converged?
         primal_check = jnp.max(jnp.abs(variables.primal_residuals)) > atol
         dual_check = jnp.max(jnp.abs(variables.dual_residuals)) > atol
-        not_converged_check = jnp.logical_or(primal_check, dual_check)
-        # and do we have major iters left?
-        max_major_iter_check = variables.max_major_iter > 0
-        # return true if both and we should enter a new major iteration
-        return jnp.logical_and(not_converged_check, max_major_iter_check)
+        x_tilde_check = jnp.max(jnp.abs(variables.x - variables.x_tilde)) > atol
+        z_tilde_check = jnp.max(jnp.abs(variables.z - variables.z_tilde)) > atol
+        not_converged_check = jnp.logical_or(
+            jnp.logical_or(primal_check, dual_check),
+            jnp.logical_or(x_tilde_check, z_tilde_check),
+        )
+        # AND do we have iterations left?
+        max_iter_check = variables.max_iter > 0
+
+        return jnp.logical_and(not_converged_check, max_iter_check)
 
     @staticmethod
-    def major_iteration(
+    def body_fun(
         variables: "SolverQSQP.Variables", problem: OptimizationProblem
     ) -> "SolverQSQP.Variables":
-        variables = variables.update_linearization()
-        variables = jax.lax.fori_loop(
-            lower=0,
-            upper=1,
-            body_fun=partial(SolverQSQP.minor_iteration, problem=problem),
-            init_val=variables,
-            unroll=True,
+        return (
+            variables.replace(max_iter=variables.max_iter - 1)
+            .update_primal_dual(problem)
+            .update_rho()
         )
-        variables = variables.replace(max_major_iter=variables.max_major_iter - 1)
+
+    @staticmethod
+    def _solve_full(problem: OptimizationProblem) -> "SolverQSQP.Variables":
+        variables = SolverQSQP.Variables.factory(problem)
+        variables = jax.lax.while_loop(
+            cond_fun=partial(SolverQSQP.cond_fun, atol=1e-5),  # do not set smaller than cg tol!
+            body_fun=partial(SolverQSQP.body_fun, problem=problem),
+            init_val=variables,
+        )
         return variables
 
     @staticmethod
     def solve(problem: OptimizationProblem) -> jax.Array:
-        variables = SolverQSQP.Variables.factory(problem)
-        variables = jax.lax.while_loop(
-            cond_fun=partial(SolverQSQP.major_cond_fun, atol=1e-5),
-            body_fun=partial(SolverQSQP.major_iteration, problem=problem),
-            init_val=variables,
-        )
-
-        return variables.x
+        return SolverQSQP._solve_full(problem).x

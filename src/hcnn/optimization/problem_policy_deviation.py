@@ -205,7 +205,7 @@ class ProblemPolicyDeviation(OptimizationProblem):
         return optvar.states[0] - self._initial_state
 
     @staticmethod
-    def _bounds_initial_state(optvar: OptimizationVariable) -> jax.Array:
+    def _bounds_initial_state(optvar: OptimizationVariable) -> tuple[jax.Array, jax.Array]:
         return (
             jnp.zeros_like(optvar.states[0]),
             jnp.zeros_like(optvar.states[0]),
@@ -218,7 +218,7 @@ class ProblemPolicyDeviation(OptimizationProblem):
         )(optvar.states[:-1], optvar.actions[:-1], optvar.states[1:]).ravel()
 
     @staticmethod
-    def _bounds_dynamics(optvar: OptimizationVariable) -> jax.Array:
+    def _bounds_dynamics(optvar: OptimizationVariable) -> tuple[jax.Array, jax.Array]:
         return (
             jnp.zeros(optvar.states.size - optvar.states[0].size),
             jnp.zeros(optvar.states.size - optvar.states[0].size),
@@ -231,7 +231,7 @@ class ProblemPolicyDeviation(OptimizationProblem):
         )(optvar.states, optvar.policy_actions).ravel()
 
     @staticmethod
-    def _bounds_policy(optvar: OptimizationVariable) -> jax.Array:
+    def _bounds_policy(optvar: OptimizationVariable) -> tuple[jax.Array, jax.Array]:
         return (
             jnp.zeros(optvar.actions.size),
             jnp.zeros(optvar.actions.size),
@@ -244,7 +244,9 @@ class ProblemPolicyDeviation(OptimizationProblem):
         )(optvar.states, optvar.actions, optvar.relaxations).ravel()
 
     @staticmethod
-    def _bounds_state_action(optvar: OptimizationVariable, constraint: Constraint) -> jax.Array:
+    def _bounds_state_action(
+        optvar: OptimizationVariable, constraint: Constraint
+    ) -> tuple[jax.Array, jax.Array]:
         return (
             jnp.tile(constraint.lower_bound, optvar.relaxations.shape[0]),
             jnp.tile(constraint.upper_bound, optvar.relaxations.shape[0]),
@@ -261,7 +263,7 @@ class ProblemPolicyDeviation(OptimizationProblem):
         )
 
     @staticmethod
-    def _bounds_relaxation(optvar: OptimizationVariable) -> jax.Array:
+    def _bounds_relaxation(optvar: OptimizationVariable) -> tuple[jax.Array, jax.Array]:
         return (
             # lower
             jnp.concatenate(

@@ -27,7 +27,7 @@ class Environment:
         )
         return Environment(system=system, policy=policy, constraint=constraint, problem=problem)
 
-    @jax.jit
+    # @jax.jit
     def step(self, state: jax.Array) -> jax.Array:
         problem = self.problem.copy_with(initial_state=state)
 

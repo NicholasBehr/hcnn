@@ -1,6 +1,7 @@
 import jax
 from flax import struct
 
+from hcnn.optimization.optimization import OptimizationSolver
 from hcnn.optimization.solver_qsqp import SolverQSQP
 
 from .constraint.constraint import Constraint
@@ -15,6 +16,7 @@ class Environment:
     policy: Policy
     constraint: Constraint  # state action constraint
     problem: ProblemPolicyDeviation
+    solver: OptimizationSolver
 
     @staticmethod
     def factory(system: System, policy: Policy, constraint: Constraint) -> "Environment":
@@ -23,16 +25,23 @@ class Environment:
             policy=policy,
             constraint=constraint,
             horizon=15,
-            rho=20,
+            rho=30,
         )
-        return Environment(system=system, policy=policy, constraint=constraint, problem=problem)
+        solver = SolverQSQP(atol=1e-3)
+        return Environment(
+            system=system,
+            policy=policy,
+            constraint=constraint,
+            problem=problem,
+            solver=solver,
+        )
 
-    # @jax.jit
+    @jax.jit
     def step(self, state: jax.Array) -> jax.Array:
         problem = self.problem.copy_with(initial_state=state)
 
         # Get the action from projection
-        x_star = SolverQSQP.solve(problem)
+        x_star = self.solver.solve(problem)
         action = problem.get_action(x_star)
 
         # Apply the action to the system

@@ -13,6 +13,9 @@ from hcnn.optimization.optimization import (
 
 @struct.dataclass
 class SolverQSQP(OptimizationSolver):
+    max_iter: int = 200
+    atol: float = 1e-5
+
     @struct.dataclass
     class Variables:
         # primal
@@ -28,7 +31,7 @@ class SolverQSQP(OptimizationSolver):
         alpha: jax.Array
         sigma: jax.Array
         rho_vec: jax.Array
-        max_iter: jax.Array
+        iter: jax.Array
 
         def replace(self, **kwargs) -> Self:
             """
@@ -54,10 +57,10 @@ class SolverQSQP(OptimizationSolver):
                 alpha=jnp.array(1.6, dtype=float),
                 sigma=jnp.array(1e-6, dtype=float),
                 rho_vec=0.1 * jnp.where(problem.lower_bound == problem.upper_bound, 1e3, 1.0),
-                max_iter=jnp.array(200, dtype=int),
+                iter=jnp.array(0, dtype=int),
             )
 
-        def update_primal_dual(self, problem: OptimizationProblem) -> Self:
+        def update_primal_dual(self, problem: OptimizationProblem, atol: float) -> Self:
             ## form linearization
             h, h_jvp = jax.linearize(problem.constraints, self.x_tilde)
             _, h_vjp = jax.vjp(problem.constraints, self.x_tilde)
@@ -90,7 +93,7 @@ class SolverQSQP(OptimizationSolver):
                 b=cg_rhs,
                 x0=self.x_tilde,
                 M=cg_preconditioner,
-                tol=1e-5,
+                atol=atol,
             )[0]
 
             ## z_tilde ##
@@ -144,44 +147,40 @@ class SolverQSQP(OptimizationSolver):
 
             return self.replace(rho_vec=rho_vec)
 
-    @staticmethod
-    def cond_fun(variables: "SolverQSQP.Variables", atol: float) -> jax.Array:
+    def cond_fun(self, variables: Variables) -> jax.Array:
         # return true if we should enter a new iteration
 
         # are we not converged?
-        primal_check = jnp.max(jnp.abs(variables.primal_residuals)) > atol
-        dual_check = jnp.max(jnp.abs(variables.dual_residuals)) > atol
-        x_tilde_check = jnp.max(jnp.abs(variables.x - variables.x_tilde)) > atol
-        z_tilde_check = jnp.max(jnp.abs(variables.z - variables.z_tilde)) > atol
+        primal_check = jnp.max(jnp.abs(variables.primal_residuals)) > self.atol
+        dual_check = jnp.max(jnp.abs(variables.dual_residuals)) > self.atol
+        x_tilde_check = jnp.max(jnp.abs(variables.x - variables.x_tilde)) > self.atol
+        z_tilde_check = jnp.max(jnp.abs(variables.z - variables.z_tilde)) > self.atol
         not_converged_check = jnp.logical_or(
             jnp.logical_or(primal_check, dual_check),
             jnp.logical_or(x_tilde_check, z_tilde_check),
         )
         # AND do we have iterations left?
-        max_iter_check = variables.max_iter > 0
+        max_iter_check = variables.iter < self.max_iter
 
         return jnp.logical_and(not_converged_check, max_iter_check)
 
-    @staticmethod
     def body_fun(
-        variables: "SolverQSQP.Variables", problem: OptimizationProblem
-    ) -> "SolverQSQP.Variables":
+        self, variables: "SolverQSQP.Variables", problem: OptimizationProblem
+    ) -> Variables:
         return (
-            variables.replace(max_iter=variables.max_iter - 1)
-            .update_primal_dual(problem)
+            variables.replace(iter=variables.iter + 1)
+            .update_primal_dual(problem=problem, atol=self.atol)
             .update_rho()
         )
 
-    @staticmethod
-    def _solve_full(problem: OptimizationProblem) -> "SolverQSQP.Variables":
+    def _solve_full(self, problem: OptimizationProblem) -> Variables:
         variables = SolverQSQP.Variables.factory(problem)
         variables = jax.lax.while_loop(
-            cond_fun=partial(SolverQSQP.cond_fun, atol=1e-5),  # do not set smaller than cg tol!
-            body_fun=partial(SolverQSQP.body_fun, problem=problem),
+            cond_fun=partial(self.cond_fun),
+            body_fun=partial(self.body_fun, problem=problem),
             init_val=variables,
         )
         return variables
 
-    @staticmethod
-    def solve(problem: OptimizationProblem) -> jax.Array:
-        return SolverQSQP._solve_full(problem).x
+    def solve(self, problem: OptimizationProblem) -> jax.Array:
+        return self._solve_full(problem).x

@@ -64,7 +64,6 @@ class OptimizationSolver(ABC):
     Quadratic Cost with Nonlinear Constraints Problem Solver
     """
 
-    @staticmethod
     @abstractmethod
-    def solve(problem: OptimizationProblem) -> jax.Array:
+    def solve(self, problem: OptimizationProblem) -> jax.Array:
         pass

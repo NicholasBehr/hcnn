@@ -36,15 +36,15 @@ class Problem(OptimizationProblem):
 
 def test_solve_start_feasible():
     problem = Problem.factory(jnp.array([2.0, 2.0]))
-    x = SolverLinearize.solve(problem)
+    x = SolverLinearize(num_iter=5).solve(problem)
 
-    assert jnp.all(problem.lower_bound - 1e-5 <= problem.constraints(x))
-    assert jnp.all(problem.constraints(x) <= problem.upper_bound + 1e-5)
+    assert jnp.all(problem.lower_bound - 1e-6 <= problem.constraints(x))
+    assert jnp.all(problem.constraints(x) <= problem.upper_bound + 1e-6)
 
 
 def test_solve_start_infeasible():
     problem = Problem.factory(jnp.array([0.5, 0.5]))
-    x = SolverLinearize.solve(problem)
+    x = SolverLinearize(num_iter=5).solve(problem)
 
-    assert jnp.all(problem.lower_bound - 1e-5 <= problem.constraints(x))
-    assert jnp.all(problem.constraints(x) <= problem.upper_bound + 1e-5)
+    assert jnp.all(problem.lower_bound - 1e-6 <= problem.constraints(x))
+    assert jnp.all(problem.constraints(x) <= problem.upper_bound + 1e-6)

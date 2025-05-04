@@ -10,8 +10,9 @@ from hcnn.optimization.optimization import (
 
 @struct.dataclass
 class SolverLinearize(OptimizationSolver):
-    @staticmethod
-    def solve(problem: OptimizationProblem) -> jax.Array:
+    num_iter: int = 10
+
+    def solve(self, problem: OptimizationProblem) -> jax.Array:
         def body_fun(i, x):
             hx, grad_hx = jax.linearize(problem.constraints, x)
             bound_shift = grad_hx(x) - hx
@@ -38,5 +39,5 @@ class SolverLinearize(OptimizationSolver):
             init_val=problem.x0,
             body_fun=body_fun,
             lower=0,
-            upper=5,
+            upper=self.num_iter,
         )

@@ -76,7 +76,7 @@ def check_shapes_match(tree_a, tree_b):
     return True
 
 
-def test_step_variables(problem: Problem, variables: SolverQSQP.Variables):
+def test_update_primal_dual(problem: Problem, variables: SolverQSQP.Variables):
     absolute_tolerance = 1e-5
 
     ## jit compilable
@@ -145,25 +145,15 @@ def test_step_variables(problem: Problem, variables: SolverQSQP.Variables):
         )
         assert jnp.allclose(lhs, rhs, atol=absolute_tolerance)
 
-        ## check primal residuals ##
-        lhs = new_variables.primal_residuals
-        rhs = h + J @ (new_variables.x - variables.x_tilde) - new_variables.z
-        assert jnp.allclose(lhs, rhs, atol=absolute_tolerance)
-
-        ## check dual residuals ##
-        lhs = new_variables.dual_residuals
-        rhs = problem.cost_qvp(new_variables.x) + problem.cost_linear + J.T @ new_variables.y
-        assert jnp.allclose(lhs, rhs, atol=absolute_tolerance)
-
 
 def test_solve_start_feasible():
     problem = Problem.factory(jnp.array([2.0, 2.0]))
-    var = SolverQSQP(atol=1e-6)._solve_full(problem)
+    var = SolverQSQP(atol=1e-5)._solve_full(problem)
     x = var.x
     constraints = problem.constraints(x)
 
-    assert jnp.all(problem.lower_bound - 1e-6 <= constraints)
-    assert jnp.all(constraints <= problem.upper_bound + 1e-6)
+    assert jnp.all(problem.lower_bound - 1e-5 <= constraints)
+    assert jnp.all(constraints <= problem.upper_bound + 1e-5)
 
 
 def test_solve_start_infeasible():

@@ -31,7 +31,7 @@ class SolverQSQP(OptimizationSolver):
         alpha: jax.Array
         sigma: jax.Array
         rho_vec: jax.Array
-        iter: jax.Array
+        iter_counter: jax.Array
 
         def replace(self, **kwargs) -> Self:
             """
@@ -57,7 +57,7 @@ class SolverQSQP(OptimizationSolver):
                 alpha=jnp.array(1.6, dtype=float),
                 sigma=jnp.array(1e-6, dtype=float),
                 rho_vec=0.1 * jnp.where(problem.lower_bound == problem.upper_bound, 1e3, 1.0),
-                iter=jnp.array(0, dtype=int),
+                iter_counter=jnp.array(0, dtype=int),
             )
 
         def update_primal_dual(self, problem: OptimizationProblem, atol: float) -> Self:
@@ -111,16 +111,21 @@ class SolverQSQP(OptimizationSolver):
                 self.alpha * new_z_tilde + (1 - self.alpha) * self.z - new_z
             )
 
-            ## residuals ##
-            primal_residuals = h + h_jvp(new_x - self.x_tilde) - new_z
-            dual_residuals = problem.cost_qvp(new_x) + problem.cost_linear + h_vjp(new_y)[0]
-
             return self.replace(
                 x_tilde=new_x_tilde,
                 z_tilde=new_z_tilde,
                 x=new_x,
                 z=new_z,
                 y=new_y,
+            )
+
+        def update_residuals(self, problem: OptimizationProblem) -> Self:
+            h, h_vjp = jax.vjp(problem.constraints, self.x)
+
+            primal_residuals = h - self.z
+            dual_residuals = problem.cost_qvp(self.x) + problem.cost_linear + h_vjp(self.y)[0]
+
+            return self.replace(
                 primal_residuals=primal_residuals,
                 dual_residuals=dual_residuals,
             )
@@ -145,22 +150,24 @@ class SolverQSQP(OptimizationSolver):
                 + self.rho_vec * cond_nochange.astype(dtype)
             )
 
-            return self.replace(rho_vec=rho_vec)
+            return self.replace(
+                rho_vec=rho_vec,
+            )
 
     def cond_fun(self, variables: Variables) -> jax.Array:
         # return true if we should enter a new iteration
 
         # are we not converged?
-        primal_check = jnp.max(jnp.abs(variables.primal_residuals)) > self.atol
-        dual_check = jnp.max(jnp.abs(variables.dual_residuals)) > self.atol
-        x_tilde_check = jnp.max(jnp.abs(variables.x - variables.x_tilde)) > self.atol
-        z_tilde_check = jnp.max(jnp.abs(variables.z - variables.z_tilde)) > self.atol
+        primal_check = jnp.max(jnp.abs(variables.primal_residuals)) >= self.atol
+        dual_check = jnp.max(jnp.abs(variables.dual_residuals)) >= self.atol
+        x_tilde_check = jnp.max(jnp.abs(variables.x - variables.x_tilde)) >= self.atol
+        z_tilde_check = jnp.max(jnp.abs(variables.z - variables.z_tilde)) >= self.atol
         not_converged_check = jnp.logical_or(
             jnp.logical_or(primal_check, dual_check),
             jnp.logical_or(x_tilde_check, z_tilde_check),
         )
         # AND do we have iterations left?
-        max_iter_check = variables.iter < self.max_iter
+        max_iter_check = variables.iter_counter < self.max_iter
 
         return jnp.logical_and(not_converged_check, max_iter_check)
 
@@ -168,9 +175,10 @@ class SolverQSQP(OptimizationSolver):
         self, variables: "SolverQSQP.Variables", problem: OptimizationProblem
     ) -> Variables:
         return (
-            variables.replace(iter=variables.iter + 1)
-            .update_primal_dual(problem=problem, atol=self.atol)
+            variables.replace(iter_counter=variables.iter_counter + 1)
             .update_rho()
+            .update_primal_dual(problem=problem, atol=self.atol)
+            .update_residuals(problem=problem)
         )
 
     def _solve_full(self, problem: OptimizationProblem) -> Variables:

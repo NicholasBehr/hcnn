@@ -1,48 +1,36 @@
 import jax
-from flax import struct
+from flax import nnx
 
-from hcnn.optimization.optimization import OptimizationSolver
-from hcnn.optimization.solver_qsqp import SolverQSQP
-
-from .constraint.constraint import Constraint
-from .optimization.problem_policy_deviation import ProblemPolicyDeviation
 from .policy.policy import Policy
+from .state_action_constraint.state_action_constraint import StateActionConstraint
 from .system.system import System
 
 
-@struct.dataclass
-class Environment:
+class Environment(nnx.Module):
     system: System
     policy: Policy
-    constraint: Constraint  # state action constraint
-    problem: ProblemPolicyDeviation
-    solver: OptimizationSolver
+    constraint: StateActionConstraint
 
-    @staticmethod
-    def factory(system: System, policy: Policy, constraint: Constraint) -> "Environment":
-        problem = ProblemPolicyDeviation.factory(
-            system=system,
-            policy=policy,
-            constraint=constraint,
-            horizon=15,
-            rho=30,
-        )
-        solver = SolverQSQP(atol=1e-3)
-        return Environment(
-            system=system,
-            policy=policy,
-            constraint=constraint,
-            problem=problem,
-            solver=solver,
-        )
+    def __init__(
+        self,
+        system: System,
+        policy: Policy,
+        constraint: StateActionConstraint,
+    ):
+        self.system = system
+        self.policy = policy
+        self.constraint = constraint
 
-    @jax.jit
+    def sample_trajectory(self, initial_state: jax.Array):
+        pass
+
     def step(self, state: jax.Array) -> jax.Array:
-        problem = self.problem.copy_with(initial_state=state)
+        # problem = self.problem.copy_with(initial_state=state)
 
         # Get the action from projection
-        x_star = self.solver.solve(problem)
-        action = problem.get_action(x_star)
+        # x_star = self.solver.solve(problem)
+        # action = problem.get_action(x_star)
+        action = self.policy(state)
 
         # Apply the action to the system
         next_state = self.system.step(state, action)

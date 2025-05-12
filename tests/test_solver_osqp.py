@@ -4,7 +4,7 @@ import pytest
 from flax import struct
 
 from hcnn.optimization.optimization import OptimizationProblem
-from hcnn.optimization.solver_qsqp import SolverQSQP
+from hcnn.optimization.solver_osqp import SolverOSQP
 
 # ruff: noqa: N806, matrix uppercase reference cases
 
@@ -44,10 +44,10 @@ def problem():
 
 @pytest.fixture
 def variables(problem):
-    return SolverQSQP.Variables.factory(problem)
+    return SolverOSQP.Variables.factory(problem)
 
 
-def randomize_variables(rng, variables) -> SolverQSQP.Variables:
+def randomize_variables(rng, variables) -> SolverOSQP.Variables:
     # Flatten the structure into leaves
     leaves, treedef = jax.tree_util.tree_flatten(variables)
 
@@ -76,11 +76,11 @@ def check_shapes_match(tree_a, tree_b):
     return True
 
 
-def test_update_primal_dual(problem: Problem, variables: SolverQSQP.Variables):
+def test_update_primal_dual(problem: Problem, variables: SolverOSQP.Variables):
     absolute_tolerance = 1e-5
 
     ## jit compilable
-    jit_step = jax.jit(SolverQSQP.Variables.update_primal_dual)
+    jit_step = jax.jit(SolverOSQP.Variables.update_primal_dual)
 
     for i in range(25):
         # radomize variables
@@ -148,7 +148,7 @@ def test_update_primal_dual(problem: Problem, variables: SolverQSQP.Variables):
 
 def test_solve_start_feasible():
     problem = Problem.factory(jnp.array([2.0, 2.0]))
-    var = SolverQSQP(atol=1e-5)._solve_full(problem)
+    var = SolverOSQP(tol=1e-5)._solve_full(problem)
     x = var.x
     constraints = problem.constraints(x)
 
@@ -158,7 +158,7 @@ def test_solve_start_feasible():
 
 def test_solve_start_infeasible():
     problem = Problem.factory(jnp.array([0.5, 0.5]))
-    var = SolverQSQP(atol=1e-5)._solve_full(problem)
+    var = SolverOSQP(tol=1e-5)._solve_full(problem)
     x = var.x
 
     assert jnp.all(problem.lower_bound - 1e-5 <= problem.constraints(x))

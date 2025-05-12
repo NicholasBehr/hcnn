@@ -2,16 +2,16 @@ import jax
 import jax.numpy as jnp
 from flax import struct
 
-from hcnn.constraint.constraint import Constraint
+from hcnn.state_action_constraint.state_action_constraint import StateActionConstraint
 
 
 @struct.dataclass
-class ConstraintStateOutsideSphere(Constraint):
+class StateOutsideSphere(StateActionConstraint):
     center: jax.Array
 
     @classmethod
-    def factory(cls, center: jax.Array, radius: float) -> "ConstraintStateOutsideSphere":
-        return ConstraintStateOutsideSphere(
+    def factory(cls, center: jax.Array, radius: float) -> "StateOutsideSphere":
+        return StateOutsideSphere(
             lower_bound=jnp.atleast_1d(radius**2),
             upper_bound=jnp.atleast_1d(jnp.inf),
             center=jnp.atleast_1d(center),

@@ -1,15 +1,10 @@
 from abc import ABC, abstractmethod
 
 import jax
-from flax import struct
+from flax import nnx
 
 
-@struct.dataclass
-class Policy(ABC):
+class Policy(nnx.Module, ABC):
     @abstractmethod
-    def get_action(self, state: jax.Array) -> jax.Array:
-        pass
-
-    @abstractmethod
-    def get_value(self, state: jax.Array) -> jax.Array:
+    def __call__(self, state: jax.Array) -> jax.Array:
         pass

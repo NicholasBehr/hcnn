@@ -1,61 +1,34 @@
 from abc import ABC, abstractmethod
+from typing import Callable
 
 import jax
 from flax import struct
 
 
 @struct.dataclass
-class OptimizationProblem(ABC):
+class OptimizationProblem:
     """
     Optimization Problem Definition
     """
 
-    cost_linear: jax.Array  # c in cost definition below (vectorized 1d)
-    lower_bound: jax.Array  # l in constraint definition below (vectorized 1d)
-    upper_bound: jax.Array  # u in constraint definition below (vectorized 1d)
-
-    ### OPTIMIZATION VARIABLE ###
-    # property allows to abstact away the actual storage format of x (usually is struct)
-    @property
-    @abstractmethod
-    def x0(self) -> jax.Array:  # initial optimization variable (vectorized 1d)
-        pass
+    x0: jax.Array  # initial guess for optimization variable (vectorized 1d)
 
     ### QUADRATIC COST ###
-    # f(x) = 1/2 x.T @ Q @ x + c.T @ x
+    # f(x) = 1/2 x.T @ diag(q) @ x + c.T @ x
+    cost_quad_diag: jax.Array  # q in cost (vectorized 1d)
+    cost_linear: jax.Array  # c in cost (vectorized 1d)
 
-    # Q in cost definition above
-    @abstractmethod
-    def cost_qvp(self, x: jax.Array) -> jax.Array:
-        """
-        Memory efficient representation of Q
-        Q must be PSD!
+    ### NONLINEAR PARAMETRIC CONSTRAINTS ###
+    # l <= h(x, phi) <= u
+    lower_bound: jax.Array  # l in constraint (vectorized 1d)
+    upper_bound: jax.Array  # u in constraint (vectorized 1d)
+    constraint_params: jax.Array  # phi in constraint (vectorized 1d)
+    constraint_fn: Callable[[jax.Array, jax.Array], jax.Array] = struct.field(
+        pytree_node=False
+    )  # h in constraint definition
 
-        Args:
-            x (jax.Array): The optimization variable.
-        Returns:
-            jax.Array: The result of the computation Q @ x
-        """
-        pass
-
-    def cost_fun(self, x: jax.Array) -> jax.Array:
-        return 1 / 2 * x.T @ self.cost_qvp(x) + self.cost_linear.T @ x
-
-    ### NONLINEAR CONSTRAINTS ###
-    @abstractmethod
-    def constraints(self, x: jax.Array) -> jax.Array:
-        """
-        Defines constraints for the optimization problem.
-        This function represents an inequality constraint of the form:
-        l <= g(x) <= u, where g(x) is a function of the optimization variable `x`,
-        and `l` and `u` are the `lower_bound` and `upper_bound`, respectively.
-
-        Args:
-            x (jax.Array): The optimization variable.
-        Returns:
-            jax.Array: The result of the constraint function g(x).
-        """
-        pass
+    def constraint_fn_x(self, x: jax.Array) -> jax.Array:
+        return self.constraint_fn(x, self.constraint_params)
 
 
 @struct.dataclass
@@ -66,4 +39,25 @@ class OptimizationSolver(ABC):
 
     @abstractmethod
     def solve(self, problem: OptimizationProblem) -> jax.Array:
+        """
+        Solve the given optimization problem and return the optimal solution.
+
+        This method takes an `OptimizationProblem` instance containing:
+        - a quadratic cost function
+        - nonlinear parametric constraints
+        - an initial guess for the optimal decision variable `x*`
+
+        The solver implementation should compute and return the optimal
+        value of the decision variable that minimizes the quadratic cost
+        while satisfying all constraints.
+
+        Parameters:
+            problem (OptimizationProblem): The optimization problem to be solved,
+                including cost function parameters, constraint bounds, and
+                constraint function.
+
+        Returns:
+            jax.Array: The optimal solution `x*` for the optimization problem,
+                matching the shape of the initial guess `problem.x_0`.
+        """
         pass

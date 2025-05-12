@@ -3,9 +3,9 @@ import jax.numpy as jnp
 from flax import struct
 from jax import flatten_util
 
-from hcnn.constraint.constraint import Constraint
 from hcnn.optimization.optimization import OptimizationProblem
 from hcnn.policy.policy import Policy
+from hcnn.state_action_constraint.state_action_constraint import StateActionConstraint
 from hcnn.system.system import System
 
 
@@ -21,7 +21,7 @@ class ProblemPolicyDeviation(OptimizationProblem):
 
     _system: System
     _policy: Policy
-    _constraint: Constraint
+    _constraint: StateActionConstraint
 
     _initial_state: jax.Array
     _x0: OptimizationVariable
@@ -34,7 +34,7 @@ class ProblemPolicyDeviation(OptimizationProblem):
     def factory(
         system: System,
         policy: Policy,
-        constraint: Constraint,
+        constraint: StateActionConstraint,
         horizon: int,
         rho: float,
     ) -> "ProblemPolicyDeviation":
@@ -245,7 +245,7 @@ class ProblemPolicyDeviation(OptimizationProblem):
 
     @staticmethod
     def _bounds_state_action(
-        optvar: OptimizationVariable, constraint: Constraint
+        optvar: OptimizationVariable, constraint: StateActionConstraint
     ) -> tuple[jax.Array, jax.Array]:
         return (
             jnp.tile(constraint.lower_bound, optvar.relaxations.shape[0]),

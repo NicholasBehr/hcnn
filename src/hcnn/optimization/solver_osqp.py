@@ -169,7 +169,7 @@ class SolverOSQP(OptimizationSolver):
         )
 
     @partial(jax.jit, static_argnums=0)
-    def _solve_internal(self, problem: OptimizationProblem) -> Variables:
+    def _solve_full(self, problem: OptimizationProblem) -> Variables:
         variables = SolverOSQP.Variables.factory(problem)
         variables = jax.lax.while_loop(
             cond_fun=self.cond_fun,
@@ -178,96 +178,86 @@ class SolverOSQP(OptimizationSolver):
         )
         return variables
 
-    def solve(self, problem: OptimizationProblem) -> jax.Array:
-        return _solve_custom_vjp_wrapper(self, problem)
+    def _solve(self, problem: OptimizationProblem):
+        return self._solve_full(problem).x
 
+    def _solve_fwd(self, problem: OptimizationProblem):
+        variables = self._solve_full(problem)
+        x_star = variables.x
+        y_star = variables.y
+        return x_star, (x_star, y_star, problem)
 
-@jax.custom_vjp
-def _solve_custom_vjp_wrapper(
-    solver_instance: "SolverOSQP", problem: OptimizationProblem
-) -> jax.Array:
-    return solver_instance._solve_internal(problem).x
+    def _solve_bwd(self, res, g: jax.Array):
+        x_star, y_star, problem = res
 
+        ## Precompute JVP, VJP and HVP for the constraint function h(x) = problem.constraint_fn_x(x)
 
-def _solve_custom_vjp_fwd(solver_instance: "SolverOSQP", problem: OptimizationProblem):
-    variables = solver_instance._solve_internal(problem)
-    x_star = variables.x
-    y_star = variables.y
-    return x_star, (x_star, y_star, problem, solver_instance.tol)
-
-
-@jax.jit
-def _solve_custom_vjp_bwd(res, g: jax.Array):
-    x_star, y_star, problem, tol = res
-
-    ## Precompute JVP, VJP and HVP for the constraint function h(x) = problem.constraint_fn_x(x)
-
-    # h_jvp computes v -> dh/dx @ v
-    _, h_jvp = jax.linearize(problem.constraint_fn_x, x_star)
-    # h_vjp computes w -> w^T @ dh/dx
-    _, h_vjp = jax.vjp(problem.constraint_fn_x, x_star)
-    # h_hvp computes y.T @ d^2h/dx^2 @ v
-    _, h_hvp = jax.linearize(
-        jax.grad(lambda x: jnp.dot(y_star, problem.constraint_fn_x(x))), x_star
-    )
-    abs_y_star = jnp.abs(y_star)
-
-    ## Define the lhs function using the precomputed components
-    def lhs(u):
-        u1, u3 = u
-
-        # Q @ u1
-        term1 = problem.cost_quad_diag * u1
-        # y.T @ d^2h/dx^2 @ u1
-        term2 = h_hvp(u1)
-        # (dh/dx).T @ D1 @ u3
-        term3 = h_vjp(abs_y_star * u3)[0]
-
-        v1 = term1 + term2 + term3
-
-        # dh/dx u1
-        v3 = h_jvp(u1)
-
-        return (v1, v3)
-
-    rhs = (g, jnp.zeros_like(y_star))
-
-    (u1, u3), _ = jax.scipy.sparse.linalg.gmres(A=lhs, b=rhs, x0=rhs)
-    u2 = abs_y_star * u3
-
-    ## explicit vjp (step 2)
-    constraint_params_term1 = jax.grad(
-        lambda phi_arg: jnp.dot(
-            jax.jvp(lambda x_inner: problem.constraint_fn(x_inner, phi_arg), (x_star,), (-u1,))[1],
-            y_star,
+        # h_jvp computes v -> dh/dx @ v
+        _, h_jvp = jax.linearize(problem.constraint_fn_x, x_star)
+        # h_vjp computes w -> w^T @ dh/dx
+        _, h_vjp = jax.vjp(problem.constraint_fn_x, x_star)
+        # h_hvp computes y.T @ d^2h/dx^2 @ v
+        _, h_hvp = jax.linearize(
+            jax.grad(lambda x: jnp.dot(y_star, problem.constraint_fn_x(x))), x_star
         )
-    )(problem.constraint_params)
-    constraint_params_term2 = jax.vjp(
-        lambda phi_arg: problem.constraint_fn(x_star, phi_arg),
-        problem.constraint_params,
-    )[1](-u2)[0]
+        abs_y_star = jnp.abs(y_star)
 
-    grad_x0 = jnp.zeros_like(problem.x0)
-    grad_cost_quad_diag = -u1 * x_star
-    grad_cost_linear = -u1
-    grad_lower_bound = jnp.where(y_star < -tol, u3 * y_star, 0)
-    grad_upper_bound = jnp.where(y_star > +tol, u3 * y_star, 0)
-    grad_constraint_params = constraint_params_term1 + constraint_params_term2
+        ## Define the lhs function using the precomputed components
+        def lhs(u):
+            u1, u3 = u
 
-    # Reconstruct the gradient PyTree for 'problem'
-    grad_problem = OptimizationProblem(
-        x0=grad_x0,
-        cost_quad_diag=grad_cost_quad_diag,
-        cost_linear=grad_cost_linear,
-        lower_bound=grad_lower_bound,
-        upper_bound=grad_upper_bound,
-        constraint_params=grad_constraint_params,
-        constraint_fn=problem.constraint_fn,
-    )
+            # Q @ u1
+            term1 = problem.cost_quad_diag * u1
+            # y.T @ d^2h/dx^2 @ u1
+            term2 = h_hvp(u1)
+            # (dh/dx).T @ D1 @ u3
+            term3 = h_vjp(abs_y_star * u3)[0]
 
-    # Return a tuple of cotangents for the arguments of `_solve_custom_vjp_wrapper`:
-    # (cotangent_solver_instance, cotangent_problem)
-    return (None, grad_problem)
+            v1 = term1 + term2 + term3
 
+            # dh/dx u1
+            v3 = h_jvp(u1)
 
-_solve_custom_vjp_wrapper.defvjp(_solve_custom_vjp_fwd, _solve_custom_vjp_bwd)
+            return (v1, v3)
+
+        rhs = (g, jnp.zeros_like(y_star))
+
+        (u1, u3), _ = jax.scipy.sparse.linalg.gmres(A=lhs, b=rhs, x0=rhs)
+        u2 = abs_y_star * u3
+
+        ## explicit vjp (step 2)
+        constraint_params_term1 = jax.grad(
+            lambda phi_arg: jnp.dot(
+                jax.jvp(lambda x_inner: problem.constraint_fn(x_inner, phi_arg), (x_star,), (-u1,))[
+                    1
+                ],
+                y_star,
+            )
+        )(problem.constraint_params)
+        constraint_params_term2 = jax.vjp(
+            lambda phi_arg: problem.constraint_fn(x_star, phi_arg),
+            problem.constraint_params,
+        )[1](-u2)[0]
+
+        grad_x0 = jnp.zeros_like(problem.x0)
+        grad_cost_quad_diag = -u1 * x_star
+        grad_cost_linear = -u1
+        grad_lower_bound = jnp.where(y_star < -self.tol, -u3 * y_star, 0)
+        grad_upper_bound = jnp.where(y_star > +self.tol, +u3 * y_star, 0)
+        grad_constraint_params = constraint_params_term1 + constraint_params_term2
+
+        # Reconstruct the gradient PyTree for 'problem'
+        grad_problem = OptimizationProblem(
+            x0=grad_x0,
+            cost_quad_diag=grad_cost_quad_diag,
+            cost_linear=grad_cost_linear,
+            lower_bound=grad_lower_bound,
+            upper_bound=grad_upper_bound,
+            constraint_params=grad_constraint_params,
+            constraint_fn=problem.constraint_fn,
+        )
+
+        return (grad_problem,)
+
+    _solve_vjp = jax.custom_vjp(_solve, nondiff_argnums=(0,))
+    _solve_vjp.defvjp(_solve_fwd, _solve_bwd)

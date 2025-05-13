@@ -8,8 +8,9 @@ from .system.system import System
 
 class Environment(nnx.Module):
     system: System
+    state_action_constraint: StateActionConstraint
     policy: Policy
-    constraint: StateActionConstraint
+    horizon: int
 
     def __init__(
         self,
@@ -19,9 +20,10 @@ class Environment(nnx.Module):
     ):
         self.system = system
         self.policy = policy
-        self.constraint = constraint
+        self.state_action_constraint = constraint
+        self.horizon = 5
 
-    def sample_trajectory(self, initial_state: jax.Array):
+    def cache_projector(self):
         pass
 
     def step(self, state: jax.Array) -> jax.Array:

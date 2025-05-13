@@ -37,7 +37,6 @@ class OptimizationSolver(ABC):
     Quadratic Cost with Nonlinear Constraints Problem Solver
     """
 
-    @abstractmethod
     def solve(self, problem: OptimizationProblem) -> jax.Array:
         """
         Solve the given optimization problem and return the optimal solution.
@@ -60,4 +59,19 @@ class OptimizationSolver(ABC):
             jax.Array: The optimal solution `x*` for the optimization problem,
                 matching the shape of the initial guess `problem.x_0`.
         """
+        return self._solve_vjp(self, problem)
+
+    @abstractmethod
+    def _solve(self, problem: OptimizationProblem):
         pass
+
+    @abstractmethod
+    def _solve_fwd(self, problem: OptimizationProblem):
+        pass
+
+    @abstractmethod
+    def _solve_bwd(self, res, g):
+        pass
+
+    _solve_vjp = jax.custom_vjp(_solve, nondiff_argnums=(0,))
+    _solve_vjp.defvjp(_solve_fwd, _solve_bwd)

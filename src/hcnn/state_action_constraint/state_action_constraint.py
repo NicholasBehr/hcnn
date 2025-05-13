@@ -1,13 +1,13 @@
 from abc import ABC, abstractmethod
 
 import jax
-from flax import nnx, struct
+from flax import struct
 
 
 @struct.dataclass
-class StateActionConstraint(nnx.Module, ABC):
-    lower_bound: jax.Array
-    upper_bound: jax.Array
+class StateActionConstraint(ABC):
+    lower_bound: jax.Array  # 1d array
+    upper_bound: jax.Array  # 1d array
 
     @abstractmethod
     def function(self, state: jax.Array, action: jax.Array) -> jax.Array:

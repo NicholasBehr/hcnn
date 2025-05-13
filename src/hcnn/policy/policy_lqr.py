@@ -11,7 +11,8 @@ class PolicyLQR(Policy):
     input_cost: jax.Array
     riccati_matrix: jax.Array
     gain_matrix: jax.Array
-    test: nnx.Variable
+
+    dummy_policy: nnx.Param
 
     def __init__(self, system_linear: SystemLinear, state_cost: jax.Array, input_cost: jax.Array):
         tol: float = 1e-8
@@ -59,7 +60,8 @@ class PolicyLQR(Policy):
         self.input_cost = input_cost
         self.riccati_matrix = riccati_matrix
         self.gain_matrix = gain_matrix
-        self.test = nnx.Param(jnp.array(1.0))
+
+        self.dummy_policy = nnx.Param(jnp.array(1.0))
 
     @staticmethod
     def is_stabilizable(
@@ -122,4 +124,4 @@ class PolicyLQR(Policy):
         return riccati_matrix, gain_matrix
 
     def __call__(self, state: jax.Array) -> jax.Array:
-        return -self.gain_matrix @ state
+        return -self.gain_matrix @ state * self.dummy_policy

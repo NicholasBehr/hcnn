@@ -7,23 +7,32 @@ from .system import System
 
 @struct.dataclass
 class SystemLinear(System):
-    state_matrix: jax.Array
-    input_matrix: jax.Array
-
-    def __post_init__(self):
-        if self.state_matrix.shape[0] != self.state_matrix.shape[1]:
-            raise ValueError("Input matrix must be square!")
-        if self.state_matrix.shape[0] != self.input_matrix.shape[0]:
-            raise ValueError("State dimensions must agree!")
+    state_matrix: jax.Array  # 2d array
+    input_matrix: jax.Array  # 2d array
 
     @classmethod
     def factory(cls, state_matrix: jax.Array, input_matrix: jax.Array) -> "SystemLinear":
         state_matrix = jnp.atleast_2d(state_matrix)
         input_matrix = jnp.atleast_2d(input_matrix)
-        return SystemLinear(
-            state_matrix=state_matrix,
-            input_matrix=input_matrix,
-        )
+
+        if not jnp.issubdtype(state_matrix.dtype, jnp.floating):
+            raise ValueError("State matrix must be of type float!")
+        if not jnp.issubdtype(input_matrix.dtype, jnp.floating):
+            raise ValueError("Input matrix must be of type float!")
+        if state_matrix.shape[0] != state_matrix.shape[1]:
+            raise ValueError("Input matrix must be square!")
+        if state_matrix.shape[0] != input_matrix.shape[0]:
+            raise ValueError("State dimensions must agree!")
+
+        return SystemLinear(state_matrix=state_matrix, input_matrix=input_matrix)
+
+    @property
+    def state_dim(self):
+        return self.state_matrix.shape[1]
+
+    @property
+    def action_dim(self):
+        return self.input_matrix.shape[1]
 
     def step(self, state: jax.Array, action: jax.Array) -> jax.Array:
         return self.state_matrix @ state + self.input_matrix @ action

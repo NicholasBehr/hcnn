@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from functools import partial
 from typing import Callable
 
 import jax
@@ -59,19 +60,11 @@ class OptimizationSolver(ABC):
             jax.Array: The optimal solution `x*` for the optimization problem,
                 matching the shape of the initial guess `problem.x_0`.
         """
+
+        # argument "self" needs to be passed explicitly for custom vjp to work
         return self._solve_vjp(self, problem)
 
+    @partial(jax.custom_vjp, nondiff_argnums=(0,))
     @abstractmethod
-    def _solve(self, problem: OptimizationProblem):
+    def _solve_vjp(self, problem: OptimizationProblem):
         pass
-
-    @abstractmethod
-    def _solve_fwd(self, problem: OptimizationProblem):
-        pass
-
-    @abstractmethod
-    def _solve_bwd(self, res, g):
-        pass
-
-    _solve_vjp = jax.custom_vjp(_solve, nondiff_argnums=(0,))
-    _solve_vjp.defvjp(_solve_fwd, _solve_bwd)

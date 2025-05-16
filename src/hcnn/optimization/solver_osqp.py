@@ -187,6 +187,7 @@ class SolverOSQP(OptimizationSolver):
         y_star = variables.y
         return x_star, (x_star, y_star, problem)
 
+    @partial(jax.jit, static_argnums=0)
     def _solve_bwd(self, res, g: jax.Array):
         x_star, y_star, problem = res
 

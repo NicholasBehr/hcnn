@@ -1,13 +1,23 @@
 from abc import ABC, abstractmethod
 
 import jax
+import jax.numpy as jnp
 from flax import struct
 
 
 @struct.dataclass
-class StateActionConstraint(ABC):
+class Constraint(ABC):
     lower_bound: jax.Array  # 1d array
     upper_bound: jax.Array  # 1d array
+
+    @property
+    def constraint_dim(self):
+        return self.lower_bound.shape[0]
+
+    def __post_init__(self):
+        assert jnp.ndim(self.lower_bound) == 1
+        assert jnp.ndim(self.upper_bound) == 1
+        assert self.lower_bound.shape[0] == self.upper_bound.shape[0]
 
     @abstractmethod
     def function(self, state: jax.Array, action: jax.Array) -> jax.Array:

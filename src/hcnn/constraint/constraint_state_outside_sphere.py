@@ -2,11 +2,11 @@ import jax
 import jax.numpy as jnp
 from flax import struct
 
-from hcnn.state_action_constraint.state_action_constraint import StateActionConstraint
+from hcnn.constraint.constraint import Constraint
 
 
 @struct.dataclass
-class StateOutsideSphere(StateActionConstraint):
+class StateOutsideSphere(Constraint):
     center: jax.Array
 
     @classmethod
@@ -20,4 +20,4 @@ class StateOutsideSphere(StateActionConstraint):
     def function(self, state: jax.Array, action: jax.Array) -> jax.Array:
         vector_to_center = state - self.center
         distance_squared = jnp.dot(vector_to_center, vector_to_center)
-        return distance_squared
+        return jnp.atleast_1d(distance_squared)

@@ -24,15 +24,12 @@ class SystemLinear(System):
         if state_matrix.shape[0] != input_matrix.shape[0]:
             raise ValueError("State dimensions must agree!")
 
-        return SystemLinear(state_matrix=state_matrix, input_matrix=input_matrix)
-
-    @property
-    def state_dim(self):
-        return self.state_matrix.shape[1]
-
-    @property
-    def action_dim(self):
-        return self.input_matrix.shape[1]
+        return SystemLinear(
+            state_dim=state_matrix.shape[1],
+            action_dim=input_matrix.shape[1],
+            state_matrix=state_matrix,
+            input_matrix=input_matrix,
+        )
 
     def step(self, state: jax.Array, action: jax.Array) -> jax.Array:
         return self.state_matrix @ state + self.input_matrix @ action

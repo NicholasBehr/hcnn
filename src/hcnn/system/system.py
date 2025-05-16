@@ -6,15 +6,8 @@ from flax import struct
 
 @struct.dataclass
 class System(ABC):
-    @property
-    @abstractmethod
-    def state_dim(self):
-        pass
-
-    @property
-    @abstractmethod
-    def action_dim(self):
-        pass
+    state_dim: int
+    action_dim: int
 
     @abstractmethod
     def step(self, state: jax.Array, action: jax.Array) -> jax.Array:

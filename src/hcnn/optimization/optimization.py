@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from functools import partial
-from typing import Callable
+from typing import Any, Callable
 
 import jax
 from flax import struct
@@ -12,7 +12,7 @@ class OptimizationProblem:
     Optimization Problem Definition
     """
 
-    x0: jax.Array  # initial guess for optimization variable (vectorized 1d)
+    x0: jax.Array  # initial guess for optimization variable x (vectorized 1d)
 
     ### QUADRATIC COST ###
     # f(x) = 1/2 x.T @ diag(q) @ x + c.T @ x
@@ -23,8 +23,8 @@ class OptimizationProblem:
     # l <= h(x, phi) <= u
     lower_bound: jax.Array  # l in constraint (vectorized 1d)
     upper_bound: jax.Array  # u in constraint (vectorized 1d)
-    constraint_params: jax.Array  # phi in constraint (vectorized 1d)
-    constraint_fn: Callable[[jax.Array, jax.Array], jax.Array] = struct.field(
+    constraint_params: Any  # phi in constraint (pytree)
+    constraint_fn: Callable[[jax.Array, Any], jax.Array] = struct.field(
         pytree_node=False
     )  # h in constraint definition
 

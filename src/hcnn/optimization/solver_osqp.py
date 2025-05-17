@@ -217,7 +217,7 @@ class SolverOSQP(OptimizationSolver):
             v1 = term1 + term2 + term3
 
             # dh/dx u1
-            v3 = h_jvp(u1)
+            v3 = h_jvp(u1) + 1e-12 * u3
 
             return (v1, v3)
 
@@ -245,7 +245,11 @@ class SolverOSQP(OptimizationSolver):
         grad_cost_linear = -u1
         grad_lower_bound = jnp.where(y_star < -self.tol, -u3 * y_star, 0)
         grad_upper_bound = jnp.where(y_star > +self.tol, +u3 * y_star, 0)
-        grad_constraint_params = constraint_params_term1 + constraint_params_term2
+        grad_constraint_params = jax.tree_util.tree_map(
+            jnp.add,
+            constraint_params_term1,
+            constraint_params_term2,
+        )
 
         # Reconstruct the gradient PyTree for 'problem'
         grad_problem = OptimizationProblem(

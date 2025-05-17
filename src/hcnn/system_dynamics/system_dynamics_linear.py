@@ -2,16 +2,16 @@ import jax
 from flax import struct
 from jax import numpy as jnp
 
-from .system import System
+from .system_dynamics_base import SystemDynamicsBase
 
 
 @struct.dataclass
-class SystemLinear(System):
+class SystemDynamicsLinear(SystemDynamicsBase):
     state_matrix: jax.Array  # 2d array
     input_matrix: jax.Array  # 2d array
 
     @classmethod
-    def factory(cls, state_matrix: jax.Array, input_matrix: jax.Array) -> "SystemLinear":
+    def factory(cls, state_matrix: jax.Array, input_matrix: jax.Array) -> "SystemDynamicsLinear":
         state_matrix = jnp.atleast_2d(state_matrix)
         input_matrix = jnp.atleast_2d(input_matrix)
 
@@ -24,7 +24,7 @@ class SystemLinear(System):
         if state_matrix.shape[0] != input_matrix.shape[0]:
             raise ValueError("State dimensions must agree!")
 
-        return SystemLinear(
+        return SystemDynamicsLinear(
             state_dim=state_matrix.shape[1],
             action_dim=input_matrix.shape[1],
             state_matrix=state_matrix,

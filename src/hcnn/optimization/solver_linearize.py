@@ -2,14 +2,14 @@ import jax
 from flax import struct
 from jaxopt import BoxOSQP
 
-from hcnn.optimization.optimization import (
+from .optimization import (
     OptimizationProblem,
-    OptimizationSolver,
+    OptimizationSolverBase,
 )
 
 
 @struct.dataclass
-class SolverLinearize(OptimizationSolver):
+class OptimizationSolverLinearize(OptimizationSolverBase):
     num_iter: int = 10
 
     def solve(self, problem: OptimizationProblem) -> jax.Array:

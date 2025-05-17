@@ -2,11 +2,12 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-from hcnn.policy.policy import Policy
-from hcnn.system.system_linear import SystemLinear
+from hcnn.system_dynamics import SystemDynamicsLinear
+
+from .policy_base import PolicyBase
 
 
-class PolicyLQR(Policy):
+class PolicyLQR(PolicyBase):
     state_cost: jax.Array
     input_cost: jax.Array
     riccati_matrix: jax.Array
@@ -15,7 +16,9 @@ class PolicyLQR(Policy):
     dummy_param: nnx.Param
     dummy_dropout: nnx.Dropout
 
-    def __init__(self, system_linear: SystemLinear, state_cost: jax.Array, input_cost: jax.Array):
+    def __init__(
+        self, system_linear: SystemDynamicsLinear, state_cost: jax.Array, input_cost: jax.Array
+    ):
         tol: float = 1e-8
         state_matrix = system_linear.state_matrix
         input_matrix = system_linear.input_matrix

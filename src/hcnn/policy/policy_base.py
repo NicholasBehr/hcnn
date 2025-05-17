@@ -5,7 +5,7 @@ from flax import nnx, struct
 
 
 @struct.dataclass
-class Policy(nnx.Module, ABC):
+class PolicyBase(nnx.Module, ABC):
     state_dim: int
     action_dim: int
 

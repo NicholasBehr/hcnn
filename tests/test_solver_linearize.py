@@ -3,7 +3,7 @@ import jax.numpy as jnp
 from flax import struct
 
 from hcnn.optimization.optimization import OptimizationProblem
-from hcnn.optimization.solver_linearize import SolverLinearize
+from hcnn.optimization.solver_linearize import OptimizationSolverLinearize
 
 
 @struct.dataclass
@@ -36,7 +36,7 @@ class Problem(OptimizationProblem):
 
 def test_solve_start_feasible():
     problem = Problem.factory(jnp.array([2.0, 2.0]))
-    x = SolverLinearize(num_iter=5).solve(problem)
+    x = OptimizationSolverLinearize(num_iter=5).solve(problem)
 
     assert jnp.all(problem.lower_bound - 1e-6 <= problem.constraints(x))
     assert jnp.all(problem.constraints(x) <= problem.upper_bound + 1e-6)
@@ -44,7 +44,7 @@ def test_solve_start_feasible():
 
 def test_solve_start_infeasible():
     problem = Problem.factory(jnp.array([0.5, 0.5]))
-    x = SolverLinearize(num_iter=5).solve(problem)
+    x = OptimizationSolverLinearize(num_iter=5).solve(problem)
 
     assert jnp.all(problem.lower_bound - 1e-6 <= problem.constraints(x))
     assert jnp.all(problem.constraints(x) <= problem.upper_bound + 1e-6)

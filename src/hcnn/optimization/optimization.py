@@ -6,8 +6,7 @@ import jax
 from flax import struct
 
 
-@struct.dataclass
-class OptimizationProblem:
+class OptimizationProblem(struct.PyTreeNode):
     """
     Optimization Problem Definition
     """
@@ -33,7 +32,7 @@ class OptimizationProblem:
 
 
 @struct.dataclass
-class OptimizationSolver(ABC):
+class OptimizationSolverBase(ABC):
     """
     Quadratic Cost with Nonlinear Constraints Problem Solver
     """

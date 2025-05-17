@@ -3,13 +3,12 @@ from typing import List
 import jax
 from flax import nnx, struct
 
-from hcnn.policy.policy import Policy
+from .policy_base import PolicyBase
 
 
 @struct.dataclass
-class PolicyMLP(Policy):
+class PolicyMLP(PolicyBase):
     layers: List[nnx.Module]
-    rngs: nnx.Rngs
 
     @classmethod
     def factory(
@@ -49,7 +48,6 @@ class PolicyMLP(Policy):
             state_dim=layer_sizes[0],
             action_dim=layer_sizes[-1],
             layers=layers,
-            rngs=rngs,
         )
 
     def __call__(
@@ -62,8 +60,8 @@ class PolicyMLP(Policy):
         # the state is the input to the policy
         x = state
 
-        if rngs is None:
-            rngs = self.rngs
+        if rngs is None and deterministic is None:
+            deterministic = True
 
         for layer in self.layers:
             if isinstance(layer, nnx.Dropout):

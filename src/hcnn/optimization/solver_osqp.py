@@ -5,14 +5,14 @@ import jax
 import jax.numpy as jnp
 from flax import struct
 
-from hcnn.optimization.optimization import (
+from .optimization import (
     OptimizationProblem,
-    OptimizationSolver,
+    OptimizationSolverBase,
 )
 
 
 @struct.dataclass
-class SolverOSQP(OptimizationSolver):
+class OptimizationSolverOSQP(OptimizationSolverBase):
     max_iter: int = 500
     tol: float = 1e-4
 
@@ -33,10 +33,10 @@ class SolverOSQP(OptimizationSolver):
         iter_counter: jax.Array
 
         @staticmethod
-        def factory(problem: OptimizationProblem) -> "SolverOSQP.Variables":
+        def factory(problem: OptimizationProblem) -> "OptimizationSolverOSQP.Variables":
             x = problem.x0
             z = problem.constraint_fn(x, problem.constraint_params)
-            return SolverOSQP.Variables(
+            return OptimizationSolverOSQP.Variables(
                 # primal
                 x=x,
                 x_tilde=x,
@@ -55,7 +55,9 @@ class SolverOSQP(OptimizationSolver):
 
         def update_primal_dual(self, problem: OptimizationProblem, tol) -> Self:
             ## form linearization around x_tilde
-            h, h_jvp = jax.linearize(problem.constraint_fn_x, self.x_tilde)
+            h, h_jvp = jax.linearize(
+                lambda x: problem.constraint_fn(x, problem.constraint_params), self.x_tilde
+            )
             _, h_vjp = jax.vjp(problem.constraint_fn_x, self.x_tilde)
 
             ## x_tilde ##
@@ -158,7 +160,7 @@ class SolverOSQP(OptimizationSolver):
 
     def body_fun(
         self,
-        variables: "SolverOSQP.Variables",
+        variables: "OptimizationSolverOSQP.Variables",
         problem: OptimizationProblem,
     ) -> Variables:
         return (
@@ -170,7 +172,7 @@ class SolverOSQP(OptimizationSolver):
 
     @partial(jax.jit, static_argnums=0)
     def _solve_full(self, problem: OptimizationProblem) -> Variables:
-        variables = SolverOSQP.Variables.factory(problem)
+        variables = OptimizationSolverOSQP.Variables.factory(problem)
         variables = jax.lax.while_loop(
             cond_fun=self.cond_fun,
             body_fun=partial(self.body_fun, problem=problem),
@@ -187,7 +189,7 @@ class SolverOSQP(OptimizationSolver):
         y_star = variables.y
         return x_star, (x_star, y_star, problem)
 
-    @partial(jax.jit, static_argnums=0)
+    # @partial(jax.jit, static_argnums=0)
     def _solve_bwd(self, res, g: jax.Array):
         x_star, y_star, problem = res
 

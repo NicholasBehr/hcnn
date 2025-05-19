@@ -33,9 +33,11 @@ class OptimizationSolverOSQP(OptimizationSolverBase):
         iter_counter: jax.Array
 
         @staticmethod
-        def factory(problem: OptimizationProblem) -> "OptimizationSolverOSQP.Variables":
-            x = problem.x0
-            z = problem.constraint_fn(x)
+        def factory(
+            problem: OptimizationProblem, phi: OptimizationProblem.Context
+        ) -> "OptimizationSolverOSQP.Variables":
+            x = problem.get_x0(phi)
+            z = problem.constraint_fn(x, phi)
             return OptimizationSolverOSQP.Variables(
                 # primal
                 x=x,
@@ -53,10 +55,12 @@ class OptimizationSolverOSQP(OptimizationSolverBase):
                 iter_counter=jnp.array(0, dtype=int),
             )
 
-        def update_primal_dual(self, problem: OptimizationProblem, tol) -> Self:
+        def update_primal_dual(
+            self, problem: OptimizationProblem, tol: float, phi: OptimizationProblem.Context
+        ) -> Self:
             ## form linearization around x_tilde
-            h, h_jvp = jax.linearize(problem.constraint_fn, self.x_tilde)
-            _, h_vjp = jax.vjp(problem.constraint_fn, self.x_tilde)
+            h, h_jvp = jax.linearize(lambda x: problem.constraint_fn(x, phi), self.x_tilde)
+            _, h_vjp = jax.vjp(lambda x: problem.constraint_fn(x, phi), self.x_tilde)
 
             ## x_tilde ##
             def cg_preconditioner(v: jax.Array) -> jax.Array:
@@ -105,9 +109,11 @@ class OptimizationSolverOSQP(OptimizationSolverBase):
                 y=new_y,
             )
 
-        def update_residuals(self, problem: OptimizationProblem) -> Self:
+        def update_residuals(
+            self, problem: OptimizationProblem, phi: OptimizationProblem.Context
+        ) -> Self:
             ## form linearization around x
-            h, h_vjp = jax.vjp(problem.constraint_fn, self.x)
+            h, h_vjp = jax.vjp(lambda x: problem.constraint_fn(x, phi), self.x)
 
             primal_residuals = h - self.z
             dual_residuals = (
@@ -160,31 +166,34 @@ class OptimizationSolverOSQP(OptimizationSolverBase):
         self,
         variables: "OptimizationSolverOSQP.Variables",
         problem: OptimizationProblem,
+        phi: OptimizationProblem.Context,
     ) -> Variables:
         return (
             variables.replace(iter_counter=variables.iter_counter + 1)
             .update_rho()
-            .update_primal_dual(problem=problem, tol=self.tol / 10)
-            .update_residuals(problem=problem)
+            .update_primal_dual(problem=problem, tol=self.tol / 10, phi=phi)
+            .update_residuals(problem=problem, phi=phi)
         )
 
-    def _solve_variables(self, problem: OptimizationProblem) -> Variables:
-        variables = OptimizationSolverOSQP.Variables.factory(problem)
+    def _solve_variables(
+        self, problem: OptimizationProblem, phi: OptimizationProblem.Context
+    ) -> Variables:
+        variables = OptimizationSolverOSQP.Variables.factory(problem, phi)
         variables = jax.lax.while_loop(
             cond_fun=self.cond_fun,
-            body_fun=partial(self.body_fun, problem=problem),
+            body_fun=partial(self.body_fun, problem=problem, phi=phi),
             init_val=variables,
         )
         return variables
 
-    def _solve(self, problem: OptimizationProblem):
-        return self._solve_variables(problem).x
+    def _solve(self, problem: OptimizationProblem, phi: OptimizationProblem.Context):
+        return self._solve_variables(problem, phi).x
 
-    def _solve_fwd(self, problem: OptimizationProblem):
-        variables = self._solve_variables(problem)
+    def _solve_fwd(self, problem: OptimizationProblem, phi: OptimizationProblem.Context):
+        variables = self._solve_variables(problem, phi)
         return variables.x, (variables.x, variables.y, problem)
 
-    @partial(nnx.jit, static_argnums=0)
+    @partial(jax.jit, static_argnums=0)
     def _solve_bwd(self, res, g):
         x_star, y_star, problem = res
         (state_updates_g,), out_g = g
@@ -265,5 +274,5 @@ class OptimizationSolverOSQP(OptimizationSolverBase):
 
         return (m_g,)
 
-    _solve_vjp = nnx.custom_vjp(_solve, nondiff_argnums=(0,))
+    _solve_vjp = jax.custom_vjp(_solve, nondiff_argnums=0)
     _solve_vjp.defvjp(_solve_fwd, _solve_bwd)

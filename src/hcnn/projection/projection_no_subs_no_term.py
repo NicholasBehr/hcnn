@@ -1,4 +1,3 @@
-from functools import partial
 from typing import Callable
 
 import jax
@@ -11,6 +10,8 @@ from hcnn.system_constraints import SystemConstraintsBase
 from hcnn.system_dynamics import SystemDynamicsBase
 
 from .projection_base import ProjectionBase, RolloutPlan
+
+Context = ProjectionBase.Context
 
 
 @struct.dataclass
@@ -33,7 +34,10 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
         policy: PolicyBase,
         horizon: int,
         relaxation_penalty: float,
-    ) -> "ProjectionNoSubstitutionNoTerminal":
+    ):
+        policy_graphdef, _, policy_non_param = nnx.split(policy, nnx.Param, ...)
+
+        # OptimizationProblem
         cost_quad_diag, get_optvar = flatten_util.ravel_pytree(
             cls.OptimizationVariable(
                 actions=jnp.zeros((horizon, sys_dynamics.action_dim)),
@@ -52,7 +56,6 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
                 relaxations_minus=relaxation_penalty * jnp.ones(horizon),
             )
         )
-
         bound_tuple_list = [
             cls._bounds_initial_state(sys_dynamics),
             cls._bounds_sys_dynamics(horizon, sys_dynamics),
@@ -64,35 +67,24 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
         lower_bound = jnp.concatenate(lower_bound_list)
         upper_bound = jnp.concatenate(upper_bound_list)
 
-        graph, _, other = nnx.split(policy, nnx.Param, ...)
-
         return ProjectionNoSubstitutionNoTerminal(
-            sys_dynamics=sys_dynamics,
-            sys_constraints=sys_constraints,
-            horizon=horizon,
-            relaxation_penalty=relaxation_penalty,
             cost_quad_diag=cost_quad_diag,
             cost_linear=cost_linear,
             lower_bound=lower_bound,
             upper_bound=upper_bound,
+            sys_dynamics=sys_dynamics,
+            sys_constraints=sys_constraints,
+            policy_graphdef=policy_graphdef,
+            policy_non_param=policy_non_param,
+            horizon=horizon,
             get_optvar=get_optvar,
-            policy_graph=graph,
-            policy_other=other,
         )
 
-    @partial(jax.jit, static_argnames=["horizon"])
-    def get_x0(
-        self,
-        horizon: int,
-        initial_state: jax.Array,
-        policy_params: nnx.State,
-        *,
-        jax_key: jax.Array,
-    ) -> jax.Array:
-        policy = nnx.merge(self.policy_graph, policy_params, self.policy_other)
+    def get_x0(self, context: Context) -> jax.Array:
+        policy = nnx.merge(self.policy_graphdef, context.policy_params, self.policy_non_param)
 
         def next_optvar_row(state, i):
-            action = policy(state, jax_key=jax.random.fold_in(jax_key, i))
+            action = policy(state, jax_key=jax.random.fold_in(context.jax_key, i))
             next_state = self.sys_dynamics.step(state, action)
             constraint = self.sys_constraints(state, action)
             intervention = jnp.array(0)
@@ -107,8 +99,8 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
 
         (_, optvar_tuple) = jax.lax.scan(
             f=next_optvar_row,
-            init=initial_state,
-            xs=jnp.arange(horizon),
+            init=context.initial_state,
+            xs=jnp.arange(self.horizon),
             unroll=True,
         )
 
@@ -122,20 +114,12 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
 
         return flatten_util.ravel_pytree(optvar)[0]
 
-    @jax.jit
-    def get_h(
-        self,
-        initial_state: jax.Array,
-        x: jax.Array,
-        policy_params: nnx.State,
-        *,
-        jax_key: jax.Array,
-    ):
+    def constraint_fn(self, x: jax.Array, context: Context) -> jax.Array:
         optvar = self.get_optvar(x)
         constraint_fun_list = [
-            self._fun_initial_state(optvar, initial_state),
+            self._fun_initial_state(optvar, context.initial_state),
             self._constraints_sys_dynamics(optvar),
-            self._constraints_policy(optvar, policy_params, jax_key),
+            self._constraints_policy(optvar, context.policy_params, context.jax_key),
             self._constraints_sys_constraints(optvar),
             self._constraints_non_neg_relax(optvar),
         ]
@@ -154,9 +138,7 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
         )
 
     # (1) initial state
-    def _fun_initial_state(
-        self, optvar: OptimizationVariable, initial_state: jax.Array
-    ) -> jax.Array:
+    def _fun_initial_state(self, optvar: OptimizationVariable, initial_state) -> jax.Array:
         return optvar.states[0] - initial_state
 
     @staticmethod
@@ -180,10 +162,8 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
         )
 
     # (3) policy
-    def _constraints_policy(
-        self, optvar: OptimizationVariable, policy_params, jax_key
-    ) -> jax.Array:
-        policy = nnx.merge(self.policy_graph, policy_params, self.policy_other)
+    def _constraints_policy(self, optvar: OptimizationVariable, policy_param, jax_key) -> jax.Array:
+        policy = nnx.merge(self.policy_graphdef, policy_param, self.policy_non_param)
 
         def constraint(action, state, intervention, i):
             return action - policy(state, jax_key=jax.random.fold_in(jax_key, i)) - intervention
@@ -192,7 +172,7 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
             optvar.actions,
             optvar.states,
             optvar.interventions,
-            jnp.arange(len(optvar.interventions)),
+            jnp.arange(self.horizon),
         ).ravel()
 
     @staticmethod

@@ -11,7 +11,7 @@ class Problem(OptimizationProblem):
     _x0: jax.Array
 
     @property
-    def x0(self) -> jax.Array:
+    def get_x0(self) -> jax.Array:
         return self._x0
 
     @staticmethod

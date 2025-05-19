@@ -1,32 +1,35 @@
 from abc import ABC, abstractmethod
 from functools import partial
-from typing import Tuple
 
 import jax
-from flax import nnx, struct
+from flax import struct
 
 
-class OptimizationProblem(nnx.Module, ABC):
+@struct.dataclass
+class OptimizationProblem(ABC):
     """
     Optimization Problem Definition
     """
 
+    @struct.dataclass
+    class Context:
+        pass
+
     ### INITIALIZATION ###
-    # initial guess for optimization variable x (vectorized 1d)
-    @property
+    # get initial guess for optimization variable x (vectorized 1d)
     @abstractmethod
-    def x0(self) -> jax.Array:
+    def get_x0(self, phi: Context) -> jax.Array:
         pass
 
     ### QUADRATIC COST ###
     # f(x) = 1/2 x.T @ diag(q) @ x + c.T @ x
-    cost_quad_diag: nnx.Variable  # q in cost (vectorized 1d)
-    cost_linear: nnx.Variable  # c in cost (vectorized 1d)
+    cost_quad_diag: jax.Array  # q in cost (vectorized 1d)
+    cost_linear: jax.Array  # c in cost (vectorized 1d)
 
     ### NONLINEAR PARAMETRIC CONSTRAINTS ###
     # l <= h(x, phi) <= u
     @abstractmethod
-    def constraint_fn(self, x: jax.Array) -> jax.Array:
+    def constraint_fn(self, x: jax.Array, phi: Context) -> jax.Array:
         pass
 
     lower_bound: jax.Array  # l in constraint (vectorized 1d)
@@ -39,7 +42,7 @@ class OptimizationSolverBase(ABC):
     Quadratic Cost with Nonlinear Constraints Problem Solver
     """
 
-    def solve(self, problem: OptimizationProblem) -> Tuple[jax.Array, jax.Array, jax.Array]:
+    def solve(self, problem: OptimizationProblem, phi: OptimizationProblem.Context) -> jax.Array:
         """
         Solve the given optimization problem and return the optimal solution.
 
@@ -47,6 +50,8 @@ class OptimizationSolverBase(ABC):
         - a quadratic cost function
         - nonlinear parametric constraints
         - an initial guess for the optimal decision variable `x*`
+
+        TODO explain context
 
         The solver implementation should compute and return the optimal
         value of the decision variable that minimizes the quadratic cost
@@ -63,9 +68,11 @@ class OptimizationSolverBase(ABC):
         """
 
         # argument "self" needs to be passed explicitly for custom vjp to work
-        return self._solve_vjp(self, problem)
+        return self._solve_vjp(self, problem=problem, phi=phi)
 
-    @partial(nnx.custom_vjp, nondiff_argnums=(0,))
+    @partial(jax.custom_vjp, nondiff_argnums=0)
     @abstractmethod
-    def _solve_vjp(self, problem: OptimizationProblem) -> jax.Array:
+    def _solve_vjp(
+        self, problem: OptimizationProblem, phi: OptimizationProblem.Context
+    ) -> jax.Array:
         pass

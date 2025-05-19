@@ -36,7 +36,7 @@ class OptimizationSolverLinearize(OptimizationSolverBase):
             return sol.primal[0]
 
         return jax.lax.fori_loop(
-            init_val=problem.x0,
+            init_val=problem.get_x0,
             body_fun=body_fun,
             lower=0,
             upper=self.num_iter,

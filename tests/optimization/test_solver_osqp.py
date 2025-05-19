@@ -23,7 +23,7 @@ class TestProblem(OptimizationProblem):
         self.upper_bound = nnx.Variable(jax.random.uniform(keys[5], 2, minval=5, maxval=10))
 
     @property
-    def x0(self):
+    def get_x0(self):
         return self._x0
 
     def constraint_fn(self, x):

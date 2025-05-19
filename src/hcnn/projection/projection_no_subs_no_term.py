@@ -1,3 +1,4 @@
+from functools import partial
 from typing import Callable
 
 import jax
@@ -79,66 +80,62 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
             policy_other=other,
         )
 
-    # TODO carry?
+    @partial(jax.jit, static_argnames=["horizon"])
     def get_x0(
         self,
+        horizon: int,
         initial_state: jax.Array,
         policy_params: nnx.State,
         *,
-        rngs: nnx.Rngs,
+        jax_key: jax.Array,
     ) -> jax.Array:
-        ## define shapes
-        actions = jnp.zeros((self.horizon, self.sys_dynamics.action_dim))
-        states = jnp.zeros((self.horizon, self.sys_dynamics.state_dim))
-        interventions = jnp.zeros(self.horizon)
-        relaxations_plus = jnp.zeros(self.horizon)
-        relaxations_minus = jnp.zeros(self.horizon)
-
-        # fill in the first state
-        states = states.at[0].set(initial_state)
-
         policy = nnx.merge(self.policy_graph, policy_params, self.policy_other)
 
-        # propagate actions, states and relaxations (no interventions)
-        for i in range(0, self.horizon):
-            state = states[i]
-            action = policy(state, rngs=nnx.clone(rngs))
+        def next_optvar_row(state, i):
+            action = policy(state, jax_key=jax.random.fold_in(jax_key, i))
             next_state = self.sys_dynamics.step(state, action)
+            constraint = self.sys_constraints(state, action)
+            intervention = jnp.array(0)
+            relaxation_plus = jnp.max(
+                jnp.maximum(0.0, self.sys_constraints.lower_bound - constraint)
+            )
+            relaxations_minus = jnp.max(
+                jnp.max(jnp.maximum(0.0, constraint - self.sys_constraints.upper_bound)),
+            )
+            out = (action, state, intervention, relaxation_plus, relaxations_minus)
+            return next_state, out
 
-            actions = actions.at[i].set(action)
-            if i < self.horizon - 1:
-                states = states.at[i + 1].set(next_state)
-            ineq_constraint = self.sys_constraints.__call__(state, action)
-            relaxations_plus = relaxations_plus.at[i].set(
-                jnp.max(jnp.maximum(0.0, self.sys_constraints.lower_bound - ineq_constraint)),
-            )
-            relaxations_minus = relaxations_minus.at[i].set(
-                jnp.max(jnp.maximum(0.0, ineq_constraint - self.sys_constraints.upper_bound)),
-            )
+        (_, optvar_tuple) = jax.lax.scan(
+            f=next_optvar_row,
+            init=initial_state,
+            xs=jnp.arange(horizon),
+            unroll=True,
+        )
 
         optvar = self.OptimizationVariable(
-            actions=actions,
-            states=states,
-            interventions=interventions,
-            relaxations_plus=relaxations_plus,
-            relaxations_minus=relaxations_minus,
+            actions=optvar_tuple[0],
+            states=optvar_tuple[1],
+            interventions=optvar_tuple[2],
+            relaxations_plus=optvar_tuple[3],
+            relaxations_minus=optvar_tuple[4],
         )
 
         return flatten_util.ravel_pytree(optvar)[0]
 
+    @jax.jit
     def get_h(
         self,
         initial_state: jax.Array,
         x: jax.Array,
         policy_params: nnx.State,
         *,
-        rngs: nnx.Rngs,
+        jax_key: jax.Array,
     ):
         optvar = self.get_optvar(x)
         constraint_fun_list = [
             self._fun_initial_state(optvar, initial_state),
             self._constraints_sys_dynamics(optvar),
-            self._constraints_policy(optvar, policy_params, rngs),
+            self._constraints_policy(optvar, policy_params, jax_key),
             self._constraints_sys_constraints(optvar),
             self._constraints_non_neg_relax(optvar),
         ]
@@ -183,19 +180,19 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
         )
 
     # (3) policy
-    def _constraints_policy(self, optvar: OptimizationVariable, policy_params, rngs) -> jax.Array:
+    def _constraints_policy(
+        self, optvar: OptimizationVariable, policy_params, jax_key
+    ) -> jax.Array:
         policy = nnx.merge(self.policy_graph, policy_params, self.policy_other)
 
-        @nnx.vmap(in_axes=(0, None, 0, 0, None), out_axes=0)
-        def constraint(action, policy, state, intervention, rngs):
-            return action - policy(state, rngs=rngs) - intervention
+        def constraint(action, state, intervention, i):
+            return action - policy(state, jax_key=jax.random.fold_in(jax_key, i)) - intervention
 
-        return constraint(
+        return jax.vmap(constraint)(
             optvar.actions,
-            policy,
             optvar.states,
             optvar.interventions,
-            nnx.clone(rngs),
+            jnp.arange(len(optvar.interventions)),
         ).ravel()
 
     @staticmethod

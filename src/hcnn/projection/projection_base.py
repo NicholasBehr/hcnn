@@ -19,14 +19,13 @@ class RolloutPlan:
 
 @struct.dataclass
 class ProjectionBase(ABC):
+    # constant system dynamics
     sys_dynamics: SystemDynamicsBase
+    # constant system constraints
     sys_constraints: SystemConstraintsBase
-    horizon: int  # N rollout horizon length
-    relaxation_penalty: float  # \rho relaxation (exact) penalty term
-
+    # constant part of policy
     policy_graph: nnx.GraphDef
     policy_other: nnx.State
-
     # constant OptimizationProblem params
     cost_quad_diag: jax.Array
     cost_linear: jax.Array
@@ -41,17 +40,17 @@ class ProjectionBase(ABC):
         sys_constraints: SystemConstraintsBase,
         policy: PolicyBase,
         horizon: int,
-        relaxation_penalty: float,
     ):
         pass
 
     @abstractmethod
     def get_x0(
         self,
+        horizon: int,
         initial_state: jax.Array,
         policy_params: nnx.State,
         *,
-        rngs: nnx.Rngs,
+        jax_key: jax.Array,
     ) -> jax.Array:
         pass
 
@@ -62,25 +61,27 @@ class ProjectionBase(ABC):
         x: jax.Array,
         policy_params: nnx.State,
         *,
-        rngs: nnx.Rngs,
+        jax_key: jax.Array,
     ) -> jax.Array:
         pass
 
+    @jax.jit
     def get_problem(
         self,
         initial_state: jax.Array,
         policy_params: nnx.State,
         *,
-        rngs: nnx.Rngs | None = None,
-    ) -> OptimizationProblem:
+        jax_key: jax.Array,
+    ):
         def constraint_fn(x, policy_params):
-            return self.get_h(initial_state, x, policy_params, rngs=rngs)
+            return self.get_h(initial_state, x, policy_params, jax_key=jax_key)
 
         return OptimizationProblem(
             x0=self.get_x0(
+                horizon=self.horizon,
                 initial_state=initial_state,
                 policy_params=policy_params,
-                rngs=rngs,
+                jax_key=jax_key,
             ),
             cost_quad_diag=self.cost_quad_diag,
             cost_linear=self.cost_linear,

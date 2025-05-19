@@ -14,9 +14,9 @@ class Environment:
     projection: ProjectionBase
     solver: OptimizationSolverBase
 
-    def step(self, state: jax.Array, *, rngs: nnx.Rngs) -> jax.Array:
+    def step(self, state: jax.Array, *, jax_key: jax.Array) -> jax.Array:
         policy_param = nnx.state(self.policy, nnx.Param)
-        problem = self.projection.get_problem(state, policy_param, rngs=rngs)
+        problem = self.projection.get_problem(state, policy_param, jax_key=jax_key)
         x_star = self.solver.solve(problem)
         rollout = self.projection.get_rollout(x_star)
 

@@ -14,7 +14,6 @@ class PolicyBase(nnx.Module, ABC):
         self,
         state: jax.Array,
         *,
-        deterministic: bool | None = None,
-        rngs: nnx.Rngs | None = None,
+        jax_key: jax.Array | None = None,
     ) -> jax.Array:
         pass

@@ -1,34 +1,36 @@
 from abc import ABC, abstractmethod
 from functools import partial
-from typing import Any, Callable
+from typing import Tuple
 
 import jax
-from flax import struct
+from flax import nnx, struct
 
 
-class OptimizationProblem(struct.PyTreeNode):
+class OptimizationProblem(nnx.Module, ABC):
     """
     Optimization Problem Definition
     """
 
-    x0: jax.Array  # initial guess for optimization variable x (vectorized 1d)
+    ### INITIALIZATION ###
+    # initial guess for optimization variable x (vectorized 1d)
+    @property
+    @abstractmethod
+    def x0(self) -> jax.Array:
+        pass
 
     ### QUADRATIC COST ###
     # f(x) = 1/2 x.T @ diag(q) @ x + c.T @ x
-    cost_quad_diag: jax.Array  # q in cost (vectorized 1d)
-    cost_linear: jax.Array  # c in cost (vectorized 1d)
+    cost_quad_diag: nnx.Variable  # q in cost (vectorized 1d)
+    cost_linear: nnx.Variable  # c in cost (vectorized 1d)
 
     ### NONLINEAR PARAMETRIC CONSTRAINTS ###
     # l <= h(x, phi) <= u
+    @abstractmethod
+    def constraint_fn(self, x: jax.Array) -> jax.Array:
+        pass
+
     lower_bound: jax.Array  # l in constraint (vectorized 1d)
     upper_bound: jax.Array  # u in constraint (vectorized 1d)
-    constraint_params: Any  # phi in constraint (pytree)
-    constraint_fn: Callable[[jax.Array, Any], jax.Array] = struct.field(
-        pytree_node=False
-    )  # h in constraint definition
-
-    def constraint_fn_x(self, x: jax.Array) -> jax.Array:
-        return self.constraint_fn(x, self.constraint_params)
 
 
 @struct.dataclass
@@ -37,7 +39,7 @@ class OptimizationSolverBase(ABC):
     Quadratic Cost with Nonlinear Constraints Problem Solver
     """
 
-    def solve(self, problem: OptimizationProblem) -> jax.Array:
+    def solve(self, problem: OptimizationProblem) -> Tuple[jax.Array, jax.Array, jax.Array]:
         """
         Solve the given optimization problem and return the optimal solution.
 
@@ -63,7 +65,7 @@ class OptimizationSolverBase(ABC):
         # argument "self" needs to be passed explicitly for custom vjp to work
         return self._solve_vjp(self, problem)
 
-    @partial(jax.custom_vjp, nondiff_argnums=(0,))
+    @partial(nnx.custom_vjp, nondiff_argnums=(0,))
     @abstractmethod
-    def _solve_vjp(self, problem: OptimizationProblem):
+    def _solve_vjp(self, problem: OptimizationProblem) -> jax.Array:
         pass

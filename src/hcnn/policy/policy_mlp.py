@@ -54,18 +54,15 @@ class PolicyMLP(PolicyBase):
         self,
         state: jax.Array,
         *,
-        deterministic: bool | None = None,
-        rngs: nnx.Rngs | None = None,
+        jax_key: jax.Array | None = None,
     ) -> jax.Array:
         # the state is the input to the policy
         x = state
 
-        if rngs is None and deterministic is None:
-            deterministic = True
-
+        rngs = nnx.Rngs(jax_key) if jax_key is not None else None
         for layer in self.layers:
             if isinstance(layer, nnx.Dropout):
-                x = layer(x, deterministic=deterministic, rngs=rngs)
+                x = layer(x, deterministic=rngs is None, rngs=rngs)
             else:
                 x = layer(x)
 

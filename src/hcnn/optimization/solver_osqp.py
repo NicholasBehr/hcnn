@@ -3,7 +3,7 @@ from typing import Self
 
 import jax
 import jax.numpy as jnp
-from flax import struct
+from flax import nnx, struct
 
 from .optimization import (
     OptimizationProblem,
@@ -35,7 +35,7 @@ class OptimizationSolverOSQP(OptimizationSolverBase):
         @staticmethod
         def factory(problem: OptimizationProblem) -> "OptimizationSolverOSQP.Variables":
             x = problem.x0
-            z = problem.constraint_fn(x, problem.constraint_params)
+            z = problem.constraint_fn(x)
             return OptimizationSolverOSQP.Variables(
                 # primal
                 x=x,
@@ -55,10 +55,8 @@ class OptimizationSolverOSQP(OptimizationSolverBase):
 
         def update_primal_dual(self, problem: OptimizationProblem, tol) -> Self:
             ## form linearization around x_tilde
-            h, h_jvp = jax.linearize(
-                lambda x: problem.constraint_fn(x, problem.constraint_params), self.x_tilde
-            )
-            _, h_vjp = jax.vjp(problem.constraint_fn_x, self.x_tilde)
+            h, h_jvp = jax.linearize(problem.constraint_fn, self.x_tilde)
+            _, h_vjp = jax.vjp(problem.constraint_fn, self.x_tilde)
 
             ## x_tilde ##
             def cg_preconditioner(v: jax.Array) -> jax.Array:
@@ -109,7 +107,7 @@ class OptimizationSolverOSQP(OptimizationSolverBase):
 
         def update_residuals(self, problem: OptimizationProblem) -> Self:
             ## form linearization around x
-            h, h_vjp = jax.vjp(problem.constraint_fn_x, self.x)
+            h, h_vjp = jax.vjp(problem.constraint_fn, self.x)
 
             primal_residuals = h - self.z
             dual_residuals = (
@@ -170,8 +168,7 @@ class OptimizationSolverOSQP(OptimizationSolverBase):
             .update_residuals(problem=problem)
         )
 
-    @partial(jax.jit, static_argnums=0)
-    def _solve_full(self, problem: OptimizationProblem) -> Variables:
+    def _solve_variables(self, problem: OptimizationProblem) -> Variables:
         variables = OptimizationSolverOSQP.Variables.factory(problem)
         variables = jax.lax.while_loop(
             cond_fun=self.cond_fun,
@@ -181,27 +178,25 @@ class OptimizationSolverOSQP(OptimizationSolverBase):
         return variables
 
     def _solve(self, problem: OptimizationProblem):
-        return self._solve_full(problem).x
+        return self._solve_variables(problem).x
 
     def _solve_fwd(self, problem: OptimizationProblem):
-        variables = self._solve_full(problem)
-        x_star = variables.x
-        y_star = variables.y
-        return x_star, (x_star, y_star, problem)
+        variables = self._solve_variables(problem)
+        return variables.x, (variables.x, variables.y, problem)
 
-    # @partial(jax.jit, static_argnums=0)
-    def _solve_bwd(self, res, g: jax.Array):
+    # @partial(nnx.jit, static_argnums=0)
+    def _solve_bwd(self, res, g):
         x_star, y_star, problem = res
+        (state_updates_g,), out_g = g
 
         ## Precompute JVP, VJP and HVP for the constraint function h(x) = problem.constraint_fn_x(x)
-
         # h_jvp computes v -> dh/dx @ v
-        _, h_jvp = jax.linearize(problem.constraint_fn_x, x_star)
+        _, h_jvp = jax.linearize(problem.constraint_fn, x_star)
         # h_vjp computes w -> w^T @ dh/dx
-        _, h_vjp = jax.vjp(problem.constraint_fn_x, x_star)
+        _, h_vjp = jax.vjp(problem.constraint_fn, x_star)
         # h_hvp computes y.T @ d^2h/dx^2 @ v
         _, h_hvp = jax.linearize(
-            jax.grad(lambda x: jnp.dot(y_star, problem.constraint_fn_x(x))), x_star
+            jax.grad(lambda x: jnp.dot(y_star, problem.constraint_fn(x))), x_star
         )
         abs_y_star = jnp.abs(y_star)
 
@@ -221,11 +216,13 @@ class OptimizationSolverOSQP(OptimizationSolverBase):
             # dh/dx u1
             v3 = h_jvp(u1) + 1e-12 * u3
 
+            jax.debug.print("{} {}", v1, v3)
+
             return (v1, v3)
 
-        rhs = (g, jnp.zeros_like(y_star))
+        rhs = (out_g, jnp.zeros_like(y_star))
 
-        (u1, u3), _ = jax.scipy.sparse.linalg.gmres(A=lhs, b=rhs, x0=rhs)
+        (u1, u3), _ = jax.scipy.sparse.linalg.gmres(A=lhs, b=rhs)
         u2 = abs_y_star * u3
 
         ## explicit vjp (step 2)
@@ -266,5 +263,5 @@ class OptimizationSolverOSQP(OptimizationSolverBase):
 
         return (grad_problem,)
 
-    _solve_vjp = jax.custom_vjp(_solve, nondiff_argnums=(0,))
+    _solve_vjp = nnx.custom_vjp(_solve, nondiff_argnums=(0,))
     _solve_vjp.defvjp(_solve_fwd, _solve_bwd)

@@ -184,7 +184,7 @@ class OptimizationSolverOSQP(OptimizationSolverBase):
         variables = self._solve_variables(problem)
         return variables.x, (variables.x, variables.y, problem)
 
-    # @partial(nnx.jit, static_argnums=0)
+    @partial(nnx.jit, static_argnums=0)
     def _solve_bwd(self, res, g):
         x_star, y_star, problem = res
         (state_updates_g,), out_g = g
@@ -216,52 +216,54 @@ class OptimizationSolverOSQP(OptimizationSolverBase):
             # dh/dx u1
             v3 = h_jvp(u1) + 1e-12 * u3
 
-            jax.debug.print("{} {}", v1, v3)
-
             return (v1, v3)
 
         rhs = (out_g, jnp.zeros_like(y_star))
 
-        (u1, u3), _ = jax.scipy.sparse.linalg.gmres(A=lhs, b=rhs)
+        (u1, u3), _ = jax.scipy.sparse.linalg.gmres(A=lhs, b=rhs, x0=rhs)
         u2 = abs_y_star * u3
 
         ## explicit vjp (step 2)
+        graph, state = nnx.split(problem)
+
+        def param_constraint_fn(x, state):
+            param_problem = nnx.merge(graph, state)
+            return param_problem.constraint_fn(x)
+
         constraint_params_term1 = jax.grad(
             lambda phi_arg: jnp.dot(
-                jax.jvp(lambda x_inner: problem.constraint_fn(x_inner, phi_arg), (x_star,), (-u1,))[
+                jax.jvp(lambda x_inner: param_constraint_fn(x_inner, phi_arg), (x_star,), (-u1,))[
                     1
                 ],
                 y_star,
             )
-        )(problem.constraint_params)
+        )(state)
+
         constraint_params_term2 = jax.vjp(
-            lambda phi_arg: problem.constraint_fn(x_star, phi_arg),
-            problem.constraint_params,
+            lambda phi_arg: param_constraint_fn(x_star, phi_arg),
+            state,
         )[1](-u2)[0]
 
-        grad_x0 = jnp.zeros_like(problem.x0)
-        grad_cost_quad_diag = -u1 * x_star
-        grad_cost_linear = -u1
-        grad_lower_bound = jnp.where(y_star < -self.tol, -u3 * y_star, 0)
-        grad_upper_bound = jnp.where(y_star > +self.tol, +u3 * y_star, 0)
         grad_constraint_params = jax.tree_util.tree_map(
             jnp.add,
             constraint_params_term1,
             constraint_params_term2,
         )
 
-        # Reconstruct the gradient PyTree for 'problem'
-        grad_problem = OptimizationProblem(
-            x0=grad_x0,
-            cost_quad_diag=grad_cost_quad_diag,
-            cost_linear=grad_cost_linear,
-            lower_bound=grad_lower_bound,
-            upper_bound=grad_upper_bound,
-            constraint_params=grad_constraint_params,
-            constraint_fn=problem.constraint_fn,
-        )
+        m_g = jax.tree.map(lambda x: x, state_updates_g)  # create copy
+        m_g["cost_quad_diag"].value += -u1 * x_star
+        m_g["cost_linear"].value += -u1
+        m_g["lower_bound"].value += jnp.where(y_star < -self.tol, -u3 * y_star, 0)
+        m_g["upper_bound"].value += jnp.where(y_star > +self.tol, +u3 * y_star, 0)
+        for k, v in grad_constraint_params.items():
+            if isinstance(v, nnx.VariableState):
+                m_g[k].value += v.value
+            else:
+                m_g[k] += v
 
-        return (grad_problem,)
+        print(m_g)
+
+        return (m_g,)
 
     _solve_vjp = nnx.custom_vjp(_solve, nondiff_argnums=(0,))
     _solve_vjp.defvjp(_solve_fwd, _solve_bwd)

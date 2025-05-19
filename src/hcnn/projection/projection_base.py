@@ -1,4 +1,4 @@
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 
 import jax
 from flax import nnx, struct
@@ -18,19 +18,10 @@ class RolloutPlan:
 
 
 @struct.dataclass
-class ProjectionBase(ABC):
-    # constant system dynamics
+class ProjectionBase(OptimizationProblem):
     sys_dynamics: SystemDynamicsBase
-    # constant system constraints
     sys_constraints: SystemConstraintsBase
-    # constant part of policy
-    policy_graph: nnx.GraphDef
-    policy_other: nnx.State
-    # constant OptimizationProblem params
-    cost_quad_diag: jax.Array
-    cost_linear: jax.Array
-    lower_bound: jax.Array
-    upper_bound: jax.Array
+    policy: PolicyBase
 
     @classmethod
     @abstractmethod

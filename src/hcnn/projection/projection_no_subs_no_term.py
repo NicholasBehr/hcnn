@@ -6,12 +6,9 @@ from flax import nnx, struct
 from jax import flatten_util
 
 from hcnn.policy import PolicyBase
+from hcnn.projection import Context, ProjectionBase, RolloutPlan
 from hcnn.system_constraints import SystemConstraintsBase
 from hcnn.system_dynamics import SystemDynamicsBase
-
-from .projection_base import ProjectionBase, RolloutPlan
-
-Context = ProjectionBase.Context
 
 
 @struct.dataclass
@@ -42,7 +39,7 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
             cls.OptimizationVariable(
                 actions=jnp.zeros((horizon, sys_dynamics.action_dim)),
                 states=jnp.zeros((horizon, sys_dynamics.state_dim)),
-                interventions=2 * jnp.ones(horizon),
+                interventions=2 * jnp.ones((horizon, sys_dynamics.action_dim)),
                 relaxations_plus=jnp.zeros(horizon),
                 relaxations_minus=jnp.zeros(horizon),
             )
@@ -51,7 +48,7 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
             cls.OptimizationVariable(
                 actions=jnp.zeros((horizon, sys_dynamics.action_dim)),
                 states=jnp.zeros((horizon, sys_dynamics.state_dim)),
-                interventions=jnp.zeros(horizon),
+                interventions=jnp.zeros((horizon, sys_dynamics.action_dim)),
                 relaxations_plus=relaxation_penalty * jnp.ones(horizon),
                 relaxations_minus=relaxation_penalty * jnp.ones(horizon),
             )
@@ -80,14 +77,14 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
             get_optvar=get_optvar,
         )
 
-    def get_x0(self, context: Context) -> jax.Array:
-        policy = nnx.merge(self.policy_graphdef, context.policy_params, self.policy_non_param)
+    def get_x0(self, phi: Context) -> jax.Array:
+        policy = nnx.merge(self.policy_graphdef, phi.policy_params, self.policy_non_param)
 
         def next_optvar_row(state, i):
-            action = policy(state, jax_key=jax.random.fold_in(context.jax_key, i))
-            next_state = self.sys_dynamics.step(state, action)
+            action = policy(state, jax_key=jax.random.fold_in(phi.jax_key, i))
+            intervention = jnp.zeros_like(action)
+            next_state = self.sys_dynamics.next_state(state, action)
             constraint = self.sys_constraints(state, action)
-            intervention = jnp.array(0)
             relaxation_plus = jnp.max(
                 jnp.maximum(0.0, self.sys_constraints.lower_bound - constraint)
             )
@@ -99,7 +96,7 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
 
         (_, optvar_tuple) = jax.lax.scan(
             f=next_optvar_row,
-            init=context.initial_state,
+            init=phi.initial_state,
             xs=jnp.arange(self.horizon),
             unroll=True,
         )
@@ -114,12 +111,12 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
 
         return flatten_util.ravel_pytree(optvar)[0]
 
-    def constraint_fn(self, x: jax.Array, context: Context) -> jax.Array:
+    def constraint_fn(self, x: jax.Array, phi: Context) -> jax.Array:
         optvar = self.get_optvar(x)
         constraint_fun_list = [
-            self._fun_initial_state(optvar, context.initial_state),
+            self._fun_initial_state(optvar, phi.initial_state),
             self._constraints_sys_dynamics(optvar),
-            self._constraints_policy(optvar, context.policy_params, context.jax_key),
+            self._constraints_policy(optvar, phi.policy_params, phi.jax_key),
             self._constraints_sys_constraints(optvar),
             self._constraints_non_neg_relax(optvar),
         ]
@@ -151,7 +148,8 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
     # (2) system dynamics
     def _constraints_sys_dynamics(self, optvar: OptimizationVariable) -> jax.Array:
         return jax.vmap(
-            lambda state, action, next_state: next_state - self.sys_dynamics.step(state, action)
+            lambda state, action, next_state: next_state
+            - self.sys_dynamics.next_state(state, action)
         )(optvar.states[:-1], optvar.actions[:-1], optvar.states[1:]).ravel()
 
     @staticmethod

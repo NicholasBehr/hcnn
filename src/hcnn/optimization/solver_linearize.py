@@ -2,19 +2,16 @@ import jax
 from flax import struct
 from jaxopt import BoxOSQP
 
-from .optimization import (
-    OptimizationProblem,
-    OptimizationSolverBase,
-)
+from .optimization import OptimizationProblemBase, OptimizationSolverBase, PhiType
 
 
 @struct.dataclass
-class OptimizationSolverLinearize(OptimizationSolverBase):
+class OptimizationSolverLinearize(OptimizationSolverBase[PhiType]):
     num_iter: int = 10
 
-    def solve(self, problem: OptimizationProblem) -> jax.Array:
+    def solve(self, problem: OptimizationProblemBase, phi: PhiType) -> jax.Array:
         def body_fun(i, x):
-            hx, grad_hx = jax.linearize(problem.constraints, x)
+            hx, grad_hx = jax.linearize(lambda x: problem.constraint_fn(x, phi), x)
             bound_shift = grad_hx(x) - hx
 
             lower = problem.lower_bound + bound_shift

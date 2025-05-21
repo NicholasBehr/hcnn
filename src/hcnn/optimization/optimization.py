@@ -1,24 +1,23 @@
 from abc import ABC, abstractmethod
 from functools import partial
+from typing import Generic, TypeVar
 
 import jax
 from flax import struct
 
+PhiType = TypeVar("PhiType")
+
 
 @struct.dataclass
-class OptimizationProblem(ABC):
+class OptimizationProblemBase(ABC, Generic[PhiType]):
     """
     Optimization Problem Definition
     """
 
-    @struct.dataclass
-    class Context:
-        pass
-
     ### INITIALIZATION ###
     # get initial guess for optimization variable x (vectorized 1d)
     @abstractmethod
-    def get_x0(self, phi: Context) -> jax.Array:
+    def get_x0(self, phi: PhiType) -> jax.Array:
         pass
 
     ### QUADRATIC COST ###
@@ -29,7 +28,7 @@ class OptimizationProblem(ABC):
     ### NONLINEAR PARAMETRIC CONSTRAINTS ###
     # l <= h(x, phi) <= u
     @abstractmethod
-    def constraint_fn(self, x: jax.Array, phi: Context) -> jax.Array:
+    def constraint_fn(self, x: jax.Array, phi: PhiType) -> jax.Array:
         pass
 
     lower_bound: jax.Array  # l in constraint (vectorized 1d)
@@ -37,12 +36,12 @@ class OptimizationProblem(ABC):
 
 
 @struct.dataclass
-class OptimizationSolverBase(ABC):
+class OptimizationSolverBase(ABC, Generic[PhiType]):
     """
     Quadratic Cost with Nonlinear Constraints Problem Solver
     """
 
-    def solve(self, problem: OptimizationProblem, phi: OptimizationProblem.Context) -> jax.Array:
+    def solve(self, problem: OptimizationProblemBase, phi: PhiType) -> jax.Array:
         """
         Solve the given optimization problem and return the optimal solution.
 
@@ -70,9 +69,7 @@ class OptimizationSolverBase(ABC):
         # argument "self" needs to be passed explicitly for custom vjp to work
         return self._solve_vjp(self, problem=problem, phi=phi)
 
-    @partial(jax.custom_vjp, nondiff_argnums=0)
+    @partial(jax.custom_vjp, nondiff_argnums=(0,))
     @abstractmethod
-    def _solve_vjp(
-        self, problem: OptimizationProblem, phi: OptimizationProblem.Context
-    ) -> jax.Array:
+    def _solve_vjp(self, problem: OptimizationProblemBase, phi: PhiType) -> jax.Array:
         pass

@@ -1,60 +1,65 @@
+import jax
 import jax.numpy as jnp
 import pytest
 
 from hcnn.policy.policy_lqr import PolicyLQR
 from hcnn.system_dynamics.system_dynamics_linear import SystemDynamicsLinear
+from tests.policy.policy_base import *
 
 
 @pytest.fixture
-def stable_system():
-    state_matrix = jnp.array([[0.9, 0.0], [0.0, 0.95]])
-    input_matrix = jnp.array([[0.1], [0.05]])
-    return SystemDynamicsLinear.factory(state_matrix=state_matrix, input_matrix=input_matrix)
+def dynamics_linear():
+    key = jax.random.key(0)
+    return SystemDynamicsLinear.factory(
+        state_matrix=jax.random.normal(key, (2, 2)),
+        input_matrix=jax.random.normal(key, (2, 1)),
+    )
 
 
-def test_factory_valid(stable_system):
-    state_cost = jnp.eye(2)
-    input_cost = jnp.eye(1)
-
-    policy = PolicyLQR.factory(stable_system, state_cost, input_cost)
-
-    assert isinstance(policy, PolicyLQR)
-    assert jnp.allclose(policy.state_cost, state_cost)
-    assert jnp.allclose(policy.input_cost, input_cost)
-    assert policy.riccati_matrix.shape == state_cost.shape
-    assert policy.gain_matrix.shape == (input_cost.shape[0], state_cost.shape[0])
+@pytest.fixture
+def instance(dynamics_linear: SystemDynamicsLinear):
+    return PolicyLQR.factory(
+        system_linear=dynamics_linear,
+        state_cost=jnp.eye(dynamics_linear.state_dim),
+        input_cost=jnp.eye(dynamics_linear.action_dim),
+    )
 
 
-def test_non_symmetric_state_cost_raises(stable_system):
+def test_valid_instance_creation(instance: PolicyLQR, dynamics_linear: SystemDynamicsLinear):
+    assert instance.riccati_matrix.shape == (dynamics_linear.state_dim, dynamics_linear.state_dim)
+    assert instance.gain_matrix.shape == (dynamics_linear.action_dim, dynamics_linear.state_dim)
+
+
+def test_non_symmetric_state_cost_raises(dynamics_linear: SystemDynamicsLinear):
     state_cost = jnp.array([[1.0, 2.0], [0.0, 1.0]])
     input_cost = jnp.eye(1)
 
     with pytest.raises(ValueError, match="State cost matrix must be symmetric!"):
-        PolicyLQR.factory(stable_system, state_cost, input_cost)
+        PolicyLQR.factory(dynamics_linear, state_cost, input_cost)
 
 
-def test_non_psd_state_cost_raises(stable_system):
+def test_non_psd_state_cost_raises(dynamics_linear: SystemDynamicsLinear):
     state_cost = jnp.array([[1.0, 0.0], [0.0, -1.0]])
     input_cost = jnp.eye(1)
 
     with pytest.raises(ValueError, match="State cost matrix is not PSD!"):
-        PolicyLQR.factory(stable_system, state_cost, input_cost)
+        PolicyLQR.factory(dynamics_linear, state_cost, input_cost)
 
 
-def test_non_symmetric_input_cost_raises(stable_system):
+def test_non_symmetric_input_cost_raises(dynamics_linear: SystemDynamicsLinear):
     state_cost = jnp.eye(2)
     input_cost = jnp.array([[1.0, 2.0], [0.0, 1.0]])
 
     with pytest.raises(ValueError, match="Input cost matrix must be symmetric!"):
-        PolicyLQR.factory(stable_system, state_cost, input_cost)
+        PolicyLQR.factory(dynamics_linear, state_cost, input_cost)
 
 
-def test_non_pd_input_cost_raises(stable_system):
+def test_non_pd_input_cost_raises(dynamics_linear: SystemDynamicsLinear):
     state_cost = jnp.eye(2)
     input_cost = jnp.array([[0.0]])
 
     with pytest.raises(ValueError, match="Input cost matrix is not PD!"):
-        PolicyLQR.factory(stable_system, state_cost, input_cost)
+        PolicyLQR.factory(dynamics_linear, state_cost, input_cost)
 
 
 def test_unstabilizable_system_raises():
@@ -81,20 +86,20 @@ def test_undetectable_system_raises():
         PolicyLQR.factory(system, state_cost, input_cost)
 
 
-def test_state_cost_shape_mismatch_raises(stable_system):
+def test_state_cost_shape_mismatch_raises(dynamics_linear: SystemDynamicsLinear):
     state_cost = jnp.eye(3)  # should be 2x2
     input_cost = jnp.eye(1)
 
     with pytest.raises(ValueError, match="State dimension missmatch!"):
-        PolicyLQR.factory(stable_system, state_cost, input_cost)
+        PolicyLQR.factory(dynamics_linear, state_cost, input_cost)
 
 
-def test_input_cost_shape_mismatch_raises(stable_system):
+def test_input_cost_shape_mismatch_raises(dynamics_linear: SystemDynamicsLinear):
     state_cost = jnp.eye(2)
     input_cost = jnp.eye(2)  # should be 1x1
 
     with pytest.raises(ValueError, match="Input dimension missmatch!"):
-        PolicyLQR.factory(stable_system, state_cost, input_cost)
+        PolicyLQR.factory(dynamics_linear, state_cost, input_cost)
 
 
 def test_dare_solver_outputs_valid_riccati_and_gain():
@@ -153,7 +158,7 @@ def test_dare_solver_reference_case_1():
 def test_dare_solver_reference_case_2():
     # Matrices from the MATLAB example
     state_matrix = jnp.array([[1.2, 0.5], [0, 1.1]])
-    input_matrix = jnp.array([[0], [1]])
+    input_matrix = jnp.array([[0.0], [1.0]])
     state_cost = jnp.eye(2)
     input_cost = jnp.eye(1)
 

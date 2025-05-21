@@ -1,23 +1,20 @@
 import jax
 import jax.numpy as jnp
-from flax import nnx
+from flax import struct
 
 from hcnn.system_dynamics import SystemDynamicsLinear
 
 from .policy_base import PolicyBase
 
 
+@struct.dataclass
 class PolicyLQR(PolicyBase):
-    state_cost: jax.Array
-    input_cost: jax.Array
     riccati_matrix: jax.Array
     gain_matrix: jax.Array
 
-    dummy_param: nnx.Param
-    dummy_dropout: nnx.Dropout
-
-    def __init__(
-        self, system_linear: SystemDynamicsLinear, state_cost: jax.Array, input_cost: jax.Array
+    @classmethod
+    def factory(
+        cls, system_linear: SystemDynamicsLinear, state_cost: jax.Array, input_cost: jax.Array
     ):
         tol: float = 1e-8
         state_matrix = system_linear.state_matrix
@@ -40,19 +37,24 @@ class PolicyLQR(PolicyBase):
         if not jnp.all(matrix_r_eigenvals >= +tol):
             raise ValueError("Input cost matrix is not PD!")
 
+        if state_cost.shape != (system_linear.state_dim, system_linear.state_dim):
+            raise ValueError("State dimension missmatch!")
+        if input_cost.shape != (system_linear.action_dim, system_linear.action_dim):
+            raise ValueError("Input dimension missmatch!")
+
         # (2) verify existence of solution
         # 1. R is PD (done)
         # 2. (A, B) is stabilizable
-        if not self.is_stabilizable(state_matrix, input_matrix):
+        if not cls.is_stabilizable(state_matrix, input_matrix):
             raise ValueError("(A, B) is not stabilizable!")
         # 3. (A, Q^{1/2}) is detectable
         u, s, vt = jnp.linalg.svd(state_cost, hermitian=True)
         matrix_q_sqrt = u @ jnp.diag(jnp.power(s, 0.5)) @ vt
-        if not self.is_stabilizable(state_matrix.T, matrix_q_sqrt.T):
+        if not cls.is_stabilizable(state_matrix.T, matrix_q_sqrt.T):
             raise ValueError("(A, Q^{1/2}) is not detectable!")
 
         # (3) solve DARE using the system matrices
-        riccati_matrix, gain_matrix = self.solve_discreate_are(
+        riccati_matrix, gain_matrix = cls.solve_discreate_are(
             state_matrix,
             input_matrix,
             state_cost,
@@ -60,13 +62,12 @@ class PolicyLQR(PolicyBase):
         )
 
         # (4) create instance
-        self.state_cost = state_cost
-        self.input_cost = input_cost
-        self.riccati_matrix = riccati_matrix
-        self.gain_matrix = gain_matrix
-
-        self.dummy_policy = nnx.Param(jnp.array(1.0))
-        self.dummy_dropout = nnx.Dropout(0.5, nnx.Rngs(0))
+        return PolicyLQR(
+            state_dim=system_linear.state_dim,
+            action_dim=system_linear.action_dim,
+            riccati_matrix=riccati_matrix,
+            gain_matrix=gain_matrix,
+        )
 
     @staticmethod
     def is_stabilizable(
@@ -128,5 +129,10 @@ class PolicyLQR(PolicyBase):
             riccati_matrix = new_riccati_matrix
         return riccati_matrix, gain_matrix
 
-    def __call__(self, state: jax.Array) -> jax.Array:
-        return -self.gain_matrix @ state * self.dummy_policy
+    def __call__(
+        self,
+        state: jax.Array,
+        *,
+        jax_key: jax.Array | None = None,
+    ) -> jax.Array:
+        return -self.gain_matrix @ state

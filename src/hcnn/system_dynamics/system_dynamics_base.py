@@ -10,5 +10,5 @@ class SystemDynamicsBase(ABC):
     action_dim: int
 
     @abstractmethod
-    def step(self, state: jax.Array, action: jax.Array) -> jax.Array:
+    def next_state(self, state: jax.Array, action: jax.Array) -> jax.Array:
         pass

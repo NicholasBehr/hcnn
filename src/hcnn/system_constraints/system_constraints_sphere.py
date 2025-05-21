@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 from flax import struct
 
-from .system_constraints_base import SystemConstraintsBase
+from hcnn.system_constraints import SystemConstraintsBase
 
 
 @struct.dataclass
@@ -10,11 +10,16 @@ class SystemConstraintsSphere(SystemConstraintsBase):
     center: jax.Array
 
     @classmethod
-    def factory(cls, center: jax.Array, radius: float) -> "SystemConstraintsSphere":
+    def factory(cls, center: jax.Array, radius: jax.Array) -> "SystemConstraintsSphere":
+        assert radius.ndim == 0
+        center = jnp.atleast_1d(center)
         return SystemConstraintsSphere(
+            state_dim=center.shape[0],
+            action_dim=None,
+            constraint_dim=1,
             lower_bound=jnp.atleast_1d(radius**2),
             upper_bound=jnp.atleast_1d(jnp.inf),
-            center=jnp.atleast_1d(center),
+            center=center,
         )
 
     def __call__(self, state: jax.Array, action: jax.Array) -> jax.Array:

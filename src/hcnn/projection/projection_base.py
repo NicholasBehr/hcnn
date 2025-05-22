@@ -17,14 +17,14 @@ class RolloutPlan:
 
 
 @struct.dataclass
-class Context:
+class ProjectionPhi:
     initial_state: jax.Array
     policy_params: nnx.State
     jax_key: jax.Array
 
 
 @struct.dataclass
-class ProjectionBase(OptimizationProblemBase[Context]):
+class ProjectionBase(OptimizationProblemBase[ProjectionPhi]):
     sys_dynamics: SystemDynamicsBase
     sys_constraints: SystemConstraintsBase
     policy_graphdef: nnx.GraphDef

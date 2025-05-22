@@ -6,7 +6,7 @@ from flax import nnx, struct
 from jax import flatten_util
 
 from hcnn.policy import PolicyBase
-from hcnn.projection import Context, ProjectionBase, RolloutPlan
+from hcnn.projection import ProjectionBase, ProjectionPhi, RolloutPlan
 from hcnn.system_constraints import SystemConstraintsBase
 from hcnn.system_dynamics import SystemDynamicsBase
 
@@ -77,7 +77,7 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
             get_optvar=get_optvar,
         )
 
-    def get_x0(self, phi: Context) -> jax.Array:
+    def get_x0(self, phi: ProjectionPhi) -> jax.Array:
         policy = nnx.merge(self.policy_graphdef, phi.policy_params, self.policy_non_param)
 
         def next_optvar_row(state, i):
@@ -111,7 +111,7 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
 
         return flatten_util.ravel_pytree(optvar)[0]
 
-    def constraint_fn(self, x: jax.Array, phi: Context) -> jax.Array:
+    def constraint_fn(self, x: jax.Array, phi: ProjectionPhi) -> jax.Array:
         optvar = self.get_optvar(x)
         constraint_fun_list = [
             self._fun_initial_state(optvar, phi.initial_state),

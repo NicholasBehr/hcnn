@@ -9,7 +9,7 @@ from .optimization import OptimizationProblemBase, OptimizationSolverBase, PhiTy
 class OptimizationSolverLinearize(OptimizationSolverBase[PhiType]):
     num_iter: int = 10
 
-    def solve(self, problem: OptimizationProblemBase, phi: PhiType) -> jax.Array:
+    def _solve_vjp(self, problem: OptimizationProblemBase, phi: PhiType) -> jax.Array:
         def body_fun(i, x):
             hx, grad_hx = jax.linearize(lambda x: problem.constraint_fn(x, phi), x)
             bound_shift = grad_hx(x) - hx

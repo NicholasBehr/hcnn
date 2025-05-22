@@ -30,9 +30,7 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
         iter_counter: jax.Array
 
         @staticmethod
-        def factory(
-            problem: OptimizationProblemBase, phi: PhiType
-        ) -> "OptimizationSolverOSQP.Variables":
+        def factory(problem: OptimizationProblemBase, phi: PhiType) -> "OptimizationSolverOSQP.Variables":
             x = problem.get_x0(phi)
             z = problem.constraint_fn(x, phi)
             return OptimizationSolverOSQP.Variables(
@@ -52,9 +50,7 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
                 iter_counter=jnp.array(0, dtype=int),
             )
 
-        def update_primal_dual(
-            self, problem: OptimizationProblemBase, tol: float, phi: PhiType
-        ) -> Self:
+        def update_primal_dual(self, problem: OptimizationProblemBase, tol: float, phi: PhiType) -> Self:
             ## form linearization around x_tilde
             h, h_jvp = jax.linearize(lambda x: problem.constraint_fn(x, phi), self.x_tilde)
             _, h_vjp = jax.vjp(lambda x: problem.constraint_fn(x, phi), self.x_tilde)
@@ -94,9 +90,7 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
             new_z = jnp.clip(inner, problem.lower_bound, problem.upper_bound)
 
             ## y ##
-            new_y = self.y + self.rho_vec * (
-                self.alpha * new_z_tilde + (1 - self.alpha) * self.z - new_z
-            )
+            new_y = self.y + self.rho_vec * (self.alpha * new_z_tilde + (1 - self.alpha) * self.z - new_z)
 
             return self.replace(
                 x_tilde=new_x_tilde,
@@ -111,9 +105,7 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
             h, h_vjp = jax.vjp(lambda x: problem.constraint_fn(x, phi), self.x)
 
             primal_residuals = h - self.z
-            dual_residuals = (
-                problem.cost_quad_diag * self.x + problem.cost_linear + h_vjp(self.y)[0]
-            )
+            dual_residuals = problem.cost_quad_diag * self.x + problem.cost_linear + h_vjp(self.y)[0]
 
             return self.replace(
                 primal_residuals=primal_residuals,
@@ -184,70 +176,60 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
 
     def _solve_fwd(self, problem: OptimizationProblemBase, phi: PhiType):
         variables = self._solve_variables(problem, phi)
-        return variables.x, (variables.x, variables.y, problem, phi)
+        return variables.x, (variables.x, variables.z, variables.y, problem, phi)
 
     def _solve_bwd(
         self,
         res: Tuple[jax.Array, jax.Array, OptimizationProblemBase, PhiType],
         g: jax.Array,
     ):
-        x_star, y_star, problem, phi = res
+        x_star, z_star, y_star, problem, phi = res
+        v1 = g
 
-        ## Precompute JVP, VJP and HVP for the constraint function h(x) = problem.constraint_fn_x(x)
-        # h_jvp computes v -> dh/dx @ v
-        _, h_jvp = jax.linearize(lambda x: problem.constraint_fn(x, phi), x_star)
-        # h_vjp computes w -> w^T @ dh/dx
-        _, h_vjp = jax.vjp(lambda x: problem.constraint_fn(x, phi), x_star)
-        # h_hvp computes y.T @ d^2h/dx^2 @ v
-        _, h_hvp = jax.linearize(
-            jax.grad(lambda x: jnp.dot(y_star, problem.constraint_fn(x, phi))), x_star
+        # TODO REDO STUPID (BUT SAFE?) FULL JACOB IMPLEMENTATION AFTER BUGFIX
+        Ax_fn = jax.jacrev(lambda x: problem.constraint_fn(x, phi))
+        Ax = Ax_fn(x_star)
+        yAxx_fn = jax.jacfwd(lambda x: jnp.dot(y_star, Ax_fn(x)))
+        yAxx = yAxx_fn(x_star)
+        d2 = jnp.where(
+            y_star > self.tol,
+            z_star - problem.upper_bound,
+            jnp.where(
+                y_star < -self.tol,
+                z_star - problem.lower_bound,
+                0,
+            ),
         )
-        abs_y_star = jnp.abs(y_star)
 
-        ## Define the lhs function using the precomputed components
-        regulaization = 1e-10
-
-        def lhs(u):
-            u1, u3 = u
-
-            # Q @ u1
-            term1 = problem.cost_quad_diag * u1
-            # y.T @ d^2h/dx^2 @ u1
-            term2 = h_hvp(u1)
-            # (dh/dx).T @ D1 @ u3
-            term3 = h_vjp(abs_y_star * u3)[0]
-
-            v1 = term1 + term2 + term3 + regulaization * u1
-
-            # dh/dx u1
-            v3 = h_jvp(u1) + regulaization * u3
-
-            return (v1, v3)
-
-        rhs = (g, jnp.zeros_like(y_star))
-
-        (u1, u3), _ = jax.scipy.sparse.linalg.gmres(A=lhs, b=rhs, x0=rhs)
-        u2 = abs_y_star * u3
+        lhs = jnp.vstack(
+            [
+                jnp.hstack([jnp.diag(problem.cost_quad_diag) + yAxx, Ax.T @ jnp.diag(y_star)]),
+                jnp.hstack([Ax, jnp.diag(d2)]),
+            ]
+        )
+        rhs = jnp.hstack([v1, jnp.zeros_like(y_star)])
+        out, _ = jax.scipy.sparse.linalg.cg(A=lhs.T @ lhs, b=lhs.T @ rhs)
+        u1 = out[: x_star.shape[0]]
+        u3 = out[x_star.shape[0] :]
+        u2 = y_star * u3
 
         ## explicit vjp (step 2)
-        g_problem = jax.tree_util.tree_map(lambda x: jnp.zeros_like(x), problem)
-        g_problem = g_problem.replace(
-            cost_quad_diag=-u1 * x_star,
-            cost_linear=-u1,
-            lower_bound=jnp.where(y_star < -self.tol, -u3 * y_star, 0),
-            upper_bound=jnp.where(y_star > +self.tol, +u3 * y_star, 0),
-        )
-
         g_phi_1 = jax.grad(
             lambda phi_arg: jnp.dot(
-                jax.jvp(lambda x_inner: problem.constraint_fn(x_inner, phi_arg), (x_star,), (-u1,))[
-                    1
-                ],
+                jax.jvp(lambda x_inner: problem.constraint_fn(x_inner, phi_arg), (x_star,), (-u1,))[1],
                 y_star,
             )
         )(phi)
         g_phi_2 = jax.vjp(lambda phi_arg: problem.constraint_fn(x_star, phi_arg), phi)[1](-u2)[0]
         g_phi = jax.tree_util.tree_map(jnp.add, g_phi_1, g_phi_2)
+
+        g_problem = jax.tree_util.tree_map(lambda x: jnp.zeros_like(x), problem)  # copy
+        g_problem = g_problem.replace(
+            cost_quad_diag=-u1 * x_star,
+            cost_linear=-u1,
+            lower_bound=jnp.where(y_star < -self.tol, u3 * y_star, 0),
+            upper_bound=jnp.where(y_star > +self.tol, u3 * y_star, 0),
+        )
 
         return (g_problem, g_phi)
 

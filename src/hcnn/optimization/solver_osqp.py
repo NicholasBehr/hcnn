@@ -201,6 +201,8 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
             ),
         )
 
+        jax.debug.print("Ax {}, \nyAxx {}, \ny_star{}", Ax, yAxx, y_star)
+
         lhs = jnp.vstack(
             [
                 jnp.hstack([jnp.diag(problem.cost_quad_diag) + yAxx, Ax.T @ jnp.diag(y_star)]),
@@ -208,10 +210,14 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
             ]
         )
         rhs = jnp.hstack([v1, jnp.zeros_like(y_star)])
+        jax.debug.print("lhs: \n{}, \nrhs:\n{}\n", lhs, rhs)
         out, _ = jax.scipy.sparse.linalg.cg(A=lhs.T @ lhs, b=lhs.T @ rhs)
+
+        assert jnp.allclose(lhs.T @ lhs @ out, lhs.T @ rhs, atol=1e-4)
         u1 = out[: x_star.shape[0]]
         u3 = out[x_star.shape[0] :]
         u2 = y_star * u3
+        jax.debug.print("u1 {}, u2 {}, u3 {}", u1, u2, u3)
 
         ## explicit vjp (step 2)
         g_phi_1 = jax.grad(

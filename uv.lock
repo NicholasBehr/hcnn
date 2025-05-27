@@ -619,6 +619,7 @@ dev = [
     { name = "pyright" },
     { name = "pytest" },
     { name = "ruff" },
+    { name = "scipy" },
 ]
 
 [package.metadata]
@@ -639,6 +640,7 @@ dev = [
     { name = "pyright", specifier = ">=1.1.398" },
     { name = "pytest", specifier = ">=8.3.5" },
     { name = "ruff", specifier = ">=0.11.4" },
+    { name = "scipy", specifier = ">=1.15.3" },
 ]
 
 [[package]]

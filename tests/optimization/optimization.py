@@ -4,31 +4,8 @@ from flax import struct
 
 from hcnn.optimization.optimization import OptimizationProblemBase, OptimizationSolverBase
 
-# @struct.dataclass
-# class ConvexProblem(OptimizationProblemBase[jax.Array]):
-#     def get_x0(self, phi: jax.Array):
-#         return jnp.zeros((2 * dim,))
 
-#     def constraint_fn(self, x: jax.Array, phi: jax.Array) -> jax.Array:
-#         return jnp.hstack([jnp.zeros((dim, dim)), -jnp.eye(dim)]) @ x
-
-#     @classmethod
-#     def factory(cls, jax_key):
-#         cost_quad_diag = jnp.ones(2 * dim)
-#         cost_linear = jnp.zeros(2 * dim)
-#         phi = jax.random.normal(jax.random.fold_in(jax_key, 1), (dim, dim))
-#         lower_bound = -jnp.inf * jnp.ones((dim,))
-#         upper_bound = jax.random.uniform(jax.random.fold_in(jax_key, 2), (dim,), minval=-10, maxval=10)
-
-#         return ConvexProblem(
-#             cost_quad_diag=cost_quad_diag,
-#             cost_linear=cost_linear,
-#             lower_bound=lower_bound,
-#             upper_bound=upper_bound,
-#         ), phi
-
-
-## unconstrained problem
+## unconstrained problem TEST dq dc
 @struct.dataclass
 class UnconstrainedProblem(OptimizationProblemBase[jax.Array]):
     """
@@ -56,8 +33,8 @@ class UnconstrainedProblem(OptimizationProblemBase[jax.Array]):
 
 
 def test_solve_unconstrained(solver: OptimizationSolverBase):
-    dimension = 5
-    for i in range(30):
+    dimension = 15
+    for i in range(15):
         # create
         keys = jax.random.split(jax.random.key(i), 2)
         cost_quad_diag = jax.random.normal(keys[0], (dimension,))
@@ -72,13 +49,13 @@ def test_solve_unconstrained(solver: OptimizationSolverBase):
         assert jnp.allclose(
             x_star,
             x_star_analytic,
-            atol=1e-4,
+            atol=1e-5,
         )
 
 
 def test_vjp_unconstrained(solver: OptimizationSolverBase):
-    dimension = 5
-    for i in range(30):
+    dimension = 15
+    for i in range(15):
         # create
         keys = jax.random.split(jax.random.key(i), 2)
         cost_quad_diag = jax.random.normal(keys[0], (dimension,))
@@ -86,40 +63,39 @@ def test_vjp_unconstrained(solver: OptimizationSolverBase):
         problem, phi = UnconstrainedProblem.factory(cost_quad_diag, cost_linear)
 
         # solve
-        def optimization(problem, phi):
-            return solver.solve(problem, phi)
+        jac_prob, jac_phi = jax.jacrev(solver.solve, argnums=(0, 1))(problem, phi)
 
-        jac_prob, jac_phi = jax.jacrev(optimization, argnums=(0, 1))(problem, phi)
+        # jac_prob_unroll = jax.jacrev(solver._solve_for_unrolling, argnums=(0,))(problem, phi)
 
         # verify
         assert jnp.allclose(
             jac_prob.cost_quad_diag,
             jnp.diag(cost_linear / (cost_quad_diag**2)),
-            atol=1e-4,
+            atol=1e-5,
         )
         assert jnp.allclose(
             jac_prob.cost_linear,
             jnp.diag(-1 / (cost_quad_diag)),
-            atol=1e-4,
+            atol=1e-5,
         )
         assert jnp.allclose(
             jac_prob.lower_bound,
             jnp.zeros((dimension, dimension)),
-            atol=1e-4,
+            atol=1e-5,
         )
         assert jnp.allclose(
             jac_prob.upper_bound,
             jnp.zeros((dimension, dimension)),
-            atol=1e-4,
+            atol=1e-5,
         )
         assert jnp.allclose(
             jac_phi,
             jnp.zeros((1, 1)),
-            atol=1e-4,
+            atol=1e-5,
         )
 
 
-## box projection
+## box projection TEST dc dl du
 @struct.dataclass
 class BoxProjectionProblem(OptimizationProblemBase[jax.Array]):
     """
@@ -148,8 +124,8 @@ class BoxProjectionProblem(OptimizationProblemBase[jax.Array]):
 
 
 def test_solve_box_projection(solver: OptimizationSolverBase):
-    dimension = 5
-    for i in range(30):
+    dimension = 15
+    for i in range(15):
         # create
         keys = jax.random.split(jax.random.key(i), 3)
         origin = jax.random.normal(keys[0], (dimension,))
@@ -165,13 +141,13 @@ def test_solve_box_projection(solver: OptimizationSolverBase):
         assert jnp.allclose(
             x_star,
             x_star_analytic,
-            atol=1e-4,
+            atol=1e-5,
         )
 
 
 def test_vjp_box_projection(solver: OptimizationSolverBase):
-    dimension = 2
-    for i in range(30):
+    dimension = 15
+    for i in range(15):
         # create
         keys = jax.random.split(jax.random.key(i), 3)
         origin = jax.random.normal(keys[0], (dimension,))
@@ -192,19 +168,124 @@ def test_vjp_box_projection(solver: OptimizationSolverBase):
         jac_o_ref, jac_lb_ref, jac_ub_ref = jax.jacrev(box_projection_reference, argnums=(0, 1, 2))(
             origin, lower_bound, upper_bound
         )
+        print(f"run {i}")
 
         assert jnp.allclose(
             jac_o,
             jac_o_ref,
-            atol=1e-4,
+            atol=1e-5,
         ), f"was {jnp.diagonal(jac_o)} should be {jnp.diagonal(jac_o_ref)}"
         assert jnp.allclose(
             jac_lb,
             jac_lb_ref,
-            atol=1e-4,
+            atol=1e-5,
         ), f"was {jnp.diagonal(jac_lb)} should be {jnp.diagonal(jac_lb_ref)}"
         assert jnp.allclose(
             jac_ub,
             jac_ub_ref,
-            atol=1e-4,
+            atol=1e-5,
         ), f"was {jnp.diagonal(jac_ub)} should be {jnp.diagonal(jac_lb_ref)}"
+
+
+## triagle projection TEST dphi
+@struct.dataclass
+class TriangleProjectionProblem(OptimizationProblemBase[jax.Array]):
+    def get_x0(self, phi: jax.Array):
+        return jnp.zeros_like(self.cost_linear)
+
+    def constraint_fn(self, x: jax.Array, phi: jax.Array) -> jax.Array:
+        return phi @ x
+
+    @classmethod
+    def factory(cls, origin, point_a, point_b, point_c):
+        cost_quad_diag = jnp.ones_like(origin)
+        cost_linear = -origin
+
+        # Stack points into a (3, 2) array
+        points = jnp.stack([point_a, point_b, point_c])
+
+        # Get the edges in order
+        edges = jnp.roll(points, -1, axis=0) - points  # shape (3, 2)
+
+        # Compute outward normals to each edge (2D perp vector: (x, y) -> (y, -x))
+        normals = jnp.stack([edges[:, 1], -edges[:, 0]], axis=1)
+
+        # Normalize the normals
+        norms = jnp.linalg.norm(normals, axis=1, keepdims=True)
+        normals = normals / norms
+
+        # Compute b_i = n_i · p_i
+        b = jnp.sum(normals * points, axis=1)
+
+        phi = normals
+        lower_bound = -50 * jnp.ones((3,))
+        upper_bound = b
+
+        return TriangleProjectionProblem(
+            cost_quad_diag=cost_quad_diag,
+            cost_linear=cost_linear,
+            lower_bound=lower_bound,
+            upper_bound=upper_bound,
+        ), phi
+
+
+def test_solve_triangle_projection(solver: OptimizationSolverBase):
+    point_a = jnp.array([0.0, 0.0])
+    point_b = jnp.array([1.0, 0.0])
+    point_c = jnp.array([0.0, 1.0])
+
+    origins = jnp.array(
+        [
+            [1.0, 1.0],
+            [-0.5, 0.5],
+            [0.5, -0.5],
+            [0.25, 0.25],
+        ]
+    )
+
+    x_stars_analytic = jnp.array(
+        [
+            [0.5, 0.5],
+            [0.0, 0.5],
+            [0.5, 0.0],
+            [0.25, 0.25],
+        ]
+    )
+
+    for origin, x_star_analytic in zip(origins, x_stars_analytic, strict=False):
+        problem, phi = TriangleProjectionProblem.factory(origin, point_a, point_b, point_c)
+
+        # solve
+        x_star = solver.solve(problem, phi)
+
+        # verify
+        assert jnp.allclose(
+            x_star,
+            x_star_analytic,
+            atol=1e-5,
+        )
+
+
+def test_vjp_triangle_projection(solver: OptimizationSolverBase):
+    point_a = jnp.array([0.0, 0.0])
+    point_b = jnp.array([1.0, 0.0])
+    point_c = jnp.array([0.0, 1.0])
+
+    origins = jnp.array(
+        [
+            [1.0, 1.0],
+            [-0.5, 0.5],
+            [0.5, -0.5],
+            [0.25, 0.25],
+        ]
+    )
+
+    problem, phi = TriangleProjectionProblem.factory(origins[0], point_a, point_b, point_c)
+
+    jac_phi = jax.jacrev(solver.solve, argnums=(1,))(problem, phi)
+    jac_phi_unroll = jax.jacrev(solver._solve_for_unrolling, argnums=(1,))(problem, phi)
+
+    print("jac_phi using vjt\n", jac_phi)
+    print("jac_phi using loop unrolling\n", jac_phi_unroll)
+
+    assert False

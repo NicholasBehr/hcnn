@@ -171,6 +171,12 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
         )
         return variables
 
+    def _solve_for_unrolling(self, problem: OptimizationProblemBase, phi: PhiType):
+        variables = OptimizationSolverOSQP.Variables.factory(problem, phi)
+        for _ in range(10):
+            variables = self.body_fun(variables, problem, phi)
+        return variables.x
+
     def _solve(self, problem: OptimizationProblemBase, phi: PhiType):
         return self._solve_variables(problem, phi).x
 
@@ -184,40 +190,40 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
         g: jax.Array,
     ):
         x_star, z_star, y_star, problem, phi = res
+        y_plus = jnp.maximum(y_star, 0)
+        y_minus = jnp.minimum(y_star, 0)
         v1 = g
 
         # TODO REDO STUPID (BUT SAFE?) FULL JACOB IMPLEMENTATION AFTER BUGFIX
         Ax_fn = jax.jacrev(lambda x: problem.constraint_fn(x, phi))
         Ax = Ax_fn(x_star)
-        yAxx_fn = jax.jacfwd(lambda x: jnp.dot(y_star, Ax_fn(x)))
-        yAxx = yAxx_fn(x_star)
-        d2 = jnp.where(
-            y_star > self.tol,
-            z_star - problem.upper_bound,
-            jnp.where(
-                y_star < -self.tol,
-                z_star - problem.lower_bound,
-                0,
-            ),
-        )
 
-        jax.debug.print("Ax {}, \nyAxx {}, \ny_star{}", Ax, yAxx, y_star)
+        # jax.debug.print("Ax {}, \nyAxx {}, \ny_star{}", Ax, yAxx, y_star)
+
+        n = x_star.shape[0]
+        m = z_star.shape[0]
 
         lhs = jnp.vstack(
             [
-                jnp.hstack([jnp.diag(problem.cost_quad_diag) + yAxx, Ax.T @ jnp.diag(y_star)]),
-                jnp.hstack([Ax, jnp.diag(d2)]),
+                jnp.hstack([jnp.diag(problem.cost_quad_diag), jnp.zeros((n, m)), Ax.T, Ax.T]),
+                jnp.hstack([Ax, -jnp.eye(m), jnp.zeros((m, m)), jnp.zeros((m, m))]),
+                jnp.hstack(
+                    [jnp.zeros((m, n)), jnp.diag(y_plus), jnp.diag(z_star - problem.upper_bound), jnp.zeros((m, m))]
+                ),
+                jnp.hstack(
+                    [jnp.zeros((m, n)), jnp.diag(y_minus), jnp.zeros((m, m)), jnp.diag(z_star - problem.lower_bound)]
+                ),
             ]
         )
-        rhs = jnp.hstack([v1, jnp.zeros_like(y_star)])
-        jax.debug.print("lhs: \n{}, \nrhs:\n{}\n", lhs, rhs)
-        out, _ = jax.scipy.sparse.linalg.cg(A=lhs.T @ lhs, b=lhs.T @ rhs)
-
-        assert jnp.allclose(lhs.T @ lhs @ out, lhs.T @ rhs, atol=1e-4)
-        u1 = out[: x_star.shape[0]]
-        u3 = out[x_star.shape[0] :]
-        u2 = y_star * u3
-        jax.debug.print("u1 {}, u2 {}, u3 {}", u1, u2, u3)
+        rhs = jnp.concatenate([v1, jnp.zeros((3 * m,))])
+        # jax.debug.print("lhs: \n{}, \nrhs:\n{}\n", lhs, rhs)
+        out, _ = jax.scipy.sparse.linalg.gmres(A=lhs, b=rhs)
+        # jax.debug.print("out: {}, lhs@out: {}", out, lhs @ out)
+        u1 = out[:n]
+        u2 = out[n : n + m]
+        u3 = out[n + m : n + 2 * m]
+        u4 = out[n + 2 * m :]
+        jax.debug.print("u1 {}, u2 {}, u3 {}, u4 {}", u1, u2, u3, u4)
 
         ## explicit vjp (step 2)
         g_phi_1 = jax.grad(
@@ -229,12 +235,14 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
         g_phi_2 = jax.vjp(lambda phi_arg: problem.constraint_fn(x_star, phi_arg), phi)[1](-u2)[0]
         g_phi = jax.tree_util.tree_map(jnp.add, g_phi_1, g_phi_2)
 
+        jax.debug.print("phi1: {}, \nphi2: {}", g_phi_1, g_phi_2)
+
         g_problem = jax.tree_util.tree_map(lambda x: jnp.zeros_like(x), problem)  # copy
         g_problem = g_problem.replace(
             cost_quad_diag=-u1 * x_star,
             cost_linear=-u1,
-            lower_bound=jnp.where(y_star < -self.tol, u3 * y_star, 0),
-            upper_bound=jnp.where(y_star > +self.tol, u3 * y_star, 0),
+            upper_bound=u3,
+            lower_bound=u4,
         )
 
         return (g_problem, g_phi)

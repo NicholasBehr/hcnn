@@ -67,3 +67,47 @@ def test_primal_dual(solver: OptimizationSolverOSQP):
 
         assert jnp.allclose(x_star, x_star_ref, atol=1e-4)
         assert jnp.allclose(y_star, y_star_ref, atol=1e-4)
+
+
+# def test_lgs_jacobian():
+#     A = np.eye(2)
+#     u = np.array([+1.0, -1.5])
+#     l = np.array([-1.0, -2.0])
+#     m = osqp.OSQP()
+#     m.setup(
+#         P=csc_matrix(np.eye(2)),
+#         q=np.array([0, 0]),
+#         A=csc_matrix(A),
+#         l=l,
+#         u=u,
+#         eps_rel=1e-5,
+#         eps_abs=1e-5,
+#     )
+#     results = m.solve()
+#     x_star = results.x
+#     y_star = results.y
+#     y_plus = jnp.maximum(y_star, 0)
+#     y_minus = jnp.minimum(y_star, 0)
+
+#     lhs = np.vstack(
+#         [
+#             np.hstack([np.eye(2), np.zeros((2, 2)), A.T, A.T]),
+#             np.hstack([A, -np.eye(2), np.zeros((2, 4))]),
+#             np.hstack([np.zeros((2, 2)), np.diag(y_plus), np.diag(A @ x_star - u), np.zeros((2, 2))]),
+#             np.hstack([np.zeros((2, 2)), np.diag(y_minus), np.zeros((2, 2)), np.diag(A @ x_star - l)]),
+#         ]
+#     )
+
+#     rhs = np.vstack(
+#         [
+#             np.zeros((4, 2)),
+#             np.diag(-y_plus),
+#             np.zeros((2, 2)),
+#         ]
+#     )
+
+#     jac = np.linalg.solve(lhs.T, rhs)
+#     np.set_printoptions(suppress=True, precision=4)
+#     print(jac)
+
+#     assert False

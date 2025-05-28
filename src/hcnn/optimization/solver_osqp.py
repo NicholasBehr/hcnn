@@ -173,7 +173,7 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
 
     def _solve_for_unrolling(self, problem: OptimizationProblemBase, phi: PhiType):
         variables = OptimizationSolverOSQP.Variables.factory(problem, phi)
-        for _ in range(10):
+        for _ in range(35):
             variables = self.body_fun(variables, problem, phi)
         return variables.x
 
@@ -215,34 +215,34 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
                 ),
             ]
         )
-        rhs = jnp.concatenate([v1, jnp.zeros((3 * m,))])
+        rhs = -jnp.concatenate([v1, jnp.zeros((3 * m,))])
         # jax.debug.print("lhs: \n{}, \nrhs:\n{}\n", lhs, rhs)
-        out, _ = jax.scipy.sparse.linalg.gmres(A=lhs, b=rhs)
+        out, _ = jax.scipy.sparse.linalg.gmres(A=lhs.T, b=rhs)
         # jax.debug.print("out: {}, lhs@out: {}", out, lhs @ out)
-        u1 = out[:n]
-        u2 = out[n : n + m]
-        u3 = out[n + m : n + 2 * m]
-        u4 = out[n + 2 * m :]
-        jax.debug.print("u1 {}, u2 {}, u3 {}, u4 {}", u1, u2, u3, u4)
+        dx = out[:n]
+        dz = out[n : n + m]
+        dyp = out[n + m : n + 2 * m]
+        dym = out[n + 2 * m :]
+        jax.debug.print("dx {}, dz {}, dyp {}, dym {}", dx, dz, dyp, dym)
 
         ## explicit vjp (step 2)
         g_phi_1 = jax.grad(
             lambda phi_arg: jnp.dot(
-                jax.jvp(lambda x_inner: problem.constraint_fn(x_inner, phi_arg), (x_star,), (-u1,))[1],
+                jax.jvp(lambda x_inner: problem.constraint_fn(x_inner, phi_arg), (x_star,), (dx,))[1],
                 y_star,
             )
         )(phi)
-        g_phi_2 = jax.vjp(lambda phi_arg: problem.constraint_fn(x_star, phi_arg), phi)[1](-u2)[0]
+        g_phi_2 = jax.vjp(lambda phi_arg: problem.constraint_fn(x_star, phi_arg), phi)[1](dz)[0]
         g_phi = jax.tree_util.tree_map(jnp.add, g_phi_1, g_phi_2)
 
         jax.debug.print("phi1: {}, \nphi2: {}", g_phi_1, g_phi_2)
 
         g_problem = jax.tree_util.tree_map(lambda x: jnp.zeros_like(x), problem)  # copy
         g_problem = g_problem.replace(
-            cost_quad_diag=-u1 * x_star,
-            cost_linear=-u1,
-            upper_bound=u3,
-            lower_bound=u4,
+            cost_quad_diag=dx * x_star,
+            cost_linear=dx,
+            upper_bound=dyp @ jnp.diag(-y_plus),
+            lower_bound=dym @ jnp.diag(-y_minus),
         )
 
         return (g_problem, g_phi)

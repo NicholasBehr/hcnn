@@ -10,22 +10,30 @@ class SystemDynamicsLinear(SystemDynamicsBase):
     state_matrix: jax.Array  # float 2d matrix
     input_matrix: jax.Array  # float 2d matrix
 
-    # def __post_init__(self):
-    #     # verify floating
-    #     assert jnp.issubdtype(self.state_matrix.dtype, jnp.floating)
-    #     assert jnp.issubdtype(self.input_matrix.dtype, jnp.floating)
-
-    #     # verify output dimension
-    #     assert self.state_matrix.shape == (self.state_dim, self.state_dim)
-    #     assert self.input_matrix.shape == (self.state_dim, self.action_dim)
-
     @classmethod
     def factory(cls, state_matrix: jax.Array, input_matrix: jax.Array):
+        # verify floating
+        assert jnp.issubdtype(state_matrix.dtype, jnp.floating)
+        assert jnp.issubdtype(input_matrix.dtype, jnp.floating)
+
         state_matrix = jnp.atleast_2d(state_matrix)
         input_matrix = jnp.atleast_2d(input_matrix)
+
+        # verify 2d
+        two_dim = 2
+        assert jnp.ndim(state_matrix) == two_dim
+        assert jnp.ndim(input_matrix) == two_dim
+
+        state_dim = state_matrix.shape[1]
+        action_dim = input_matrix.shape[1]
+
+        # verify output dimension
+        assert state_matrix.shape == (state_dim, state_dim)
+        assert input_matrix.shape == (state_dim, action_dim)
+
         return SystemDynamicsLinear(
-            state_dim=state_matrix.shape[1],
-            action_dim=input_matrix.shape[1],
+            state_dim=state_dim,
+            action_dim=action_dim,
             state_matrix=state_matrix,
             input_matrix=input_matrix,
         )

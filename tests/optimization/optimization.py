@@ -298,7 +298,7 @@ class Context:
 
 
 @struct.dataclass
-class CircleProjectionProblem(OptimizationProblemBase[jax.Array]):
+class CircleProjectionProblem(OptimizationProblemBase[Context]):
     """
     x_star = argmin |x - origin|_2^2
             s.t. l <= x.T @ x <= u

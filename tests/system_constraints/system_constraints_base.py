@@ -4,7 +4,7 @@ import jax.numpy as jnp
 from hcnn.system_constraints import SystemConstraintsBase
 
 
-def test_constraint_dim(instance: SystemConstraintsBase):
+def test_call_dim(instance: SystemConstraintsBase):
     key = jax.random.key(0)
     if instance.state_dim is None:
         state = jnp.ones((1,))

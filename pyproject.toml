@@ -24,8 +24,6 @@ dev = [
     "pytest>=8.3.5",
     "ruff>=0.11.4",
     "matplotlib>=3.10.1",
-    "osqp>=1.0.4",
-    "scipy>=1.15.3",
 ]
 
 [tool.ruff]
@@ -49,8 +47,3 @@ ignore = ["D"]  # Ignore docstring warnings
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"] # allow unused imports
 "test_*" = ["PLR2004", "F403"] # allow magic values and * imports for tests
-
-[tool.pytest.ini_options]
-filterwarnings = [
-  "ignore::DeprecationWarning:jaxopt.*"
-]

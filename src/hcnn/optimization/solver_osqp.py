@@ -197,7 +197,7 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
         y_minus = jnp.minimum(y_star, 0)
         v1 = g
 
-        ## Implicit VJP
+        ## Implicit VJP (step 1)
         tau = 1e-5
         frac_upper = jax.lax.div(1.0, problem.upper_bound - z_star + tau)
         frac_lower = jax.lax.div(1.0, z_star - problem.lower_bound + tau)
@@ -215,6 +215,7 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
             return problem.cost_quad_diag * u1 + h_hvp(u1) + h_vjp(plus_u_minus_l * h_jvp(u1))[0]
 
         # TODO ATTENTION need to verify lhs is PSD, but cg seems more stable than gmres
+        # mainly A_xx at solution PSD?
         u1, _ = jax.scipy.sparse.linalg.cg(A=schur_lhs, b=v1, maxiter=self.max_iter)
         h_jvp_u1 = h_jvp(u1)
         u2 = plus_u_minus_l * h_jvp_u1

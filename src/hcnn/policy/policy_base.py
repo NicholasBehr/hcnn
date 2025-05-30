@@ -16,4 +16,14 @@ class PolicyBase(nnx.Module, ABC):
         *,
         jax_key: jax.Array | None = None,
     ) -> jax.Array:
+        """
+        Compute the action for a given state.
+
+        Args:
+            state (jax.Array): Input state vector of shape (state_dim,).
+            jax_key (jax.Array, optional): Optional PRNG key for stochastic policies.
+
+        Returns:
+            jax.Array: The action vector of shape (action_dim,).
+        """
         pass

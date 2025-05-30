@@ -5,7 +5,7 @@ import jax
 import jax.numpy as jnp
 from flax import struct
 
-from .optimization import OptimizationProblemBase, OptimizationSolverBase, PhiType
+from hcnn.optimization import OptimizationProblemBase, OptimizationSolverBase, PhiType
 
 
 @struct.dataclass

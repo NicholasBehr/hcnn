@@ -2,9 +2,8 @@ import jax
 import jax.numpy as jnp
 from flax import struct
 
+from hcnn.policy import PolicyBase
 from hcnn.system_dynamics import SystemDynamicsLinear
-
-from .policy_base import PolicyBase
 
 
 @struct.dataclass
@@ -13,9 +12,7 @@ class PolicyLQR(PolicyBase):
     gain_matrix: jax.Array
 
     @classmethod
-    def factory(
-        cls, system_linear: SystemDynamicsLinear, state_cost: jax.Array, input_cost: jax.Array
-    ):
+    def factory(cls, system_linear: SystemDynamicsLinear, state_cost: jax.Array, input_cost: jax.Array):
         tol: float = 1e-8
         state_matrix = system_linear.state_matrix
         input_matrix = system_linear.input_matrix
@@ -70,9 +67,7 @@ class PolicyLQR(PolicyBase):
         )
 
     @staticmethod
-    def is_stabilizable(
-        state_matrix: jax.Array, input_matrix: jax.Array, tol: float = 1e-7
-    ) -> bool:
+    def is_stabilizable(state_matrix: jax.Array, input_matrix: jax.Array, tol: float = 1e-7) -> bool:
         n = state_matrix.shape[0]
 
         for eigval in jnp.linalg.eigvals(state_matrix):

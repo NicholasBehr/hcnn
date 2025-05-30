@@ -3,8 +3,8 @@ import jax.numpy as jnp
 import pytest
 from flax import struct
 
-from hcnn.optimization.solver_osqp import OptimizationProblemBase, OptimizationSolverOSQP
-from tests.optimization.optimization import *
+from hcnn.optimization import OptimizationProblemBase, OptimizationSolverOSQP
+from tests.optimization.optimization_base import *
 
 
 @pytest.fixture

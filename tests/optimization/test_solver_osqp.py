@@ -1,45 +1,37 @@
-from functools import partial
-
 import jax
 import jax.numpy as jnp
 import pytest
-from jax import test_util
+from flax import struct
 
-from hcnn.optimization.solver_osqp import OptimizationSolverOSQP
-from tests.optimization.optimization import get_problem_and_phi
-
-TOLERANCE = 1e-5
+from hcnn.optimization.solver_osqp import OptimizationProblemBase, OptimizationSolverOSQP
+from tests.optimization.optimization import *
 
 
 @pytest.fixture
 def solver():
-    return OptimizationSolverOSQP(tol=TOLERANCE, max_iter=5000)
+    return OptimizationSolverOSQP(tol=1e-5, max_iter=1_000)
 
 
-def test_solve(solver: OptimizationSolverOSQP):
-    for i in range(5):
-        rng = jax.random.key(i)
-        problem, phi = get_problem_and_phi(rng)
-        variables = solver._solve_variables(problem, phi)
-        print(f"iter counter: {variables.iter_counter}")
-        assert jnp.max(jnp.abs(variables.primal_residuals)) <= TOLERANCE
-        assert jnp.max(jnp.abs(variables.dual_residuals)) <= TOLERANCE
+@struct.dataclass
+class OSQPProblem(OptimizationProblemBase[jax.Array]):
+    def get_x0(self, phi: jax.Array):
+        return jnp.zeros_like(self.cost_linear)
 
+    def constraint_fn(self, x: jax.Array, phi: jax.Array) -> jax.Array:
+        return phi @ x
 
-def test_vjp(solver: OptimizationSolverOSQP):
-    for i in range(5):
-        rng = jax.random.key(i)
-        problem, phi = get_problem_and_phi(rng)
+    @classmethod
+    def factory(cls, dimension, jax_key):
+        keys = jax.random.split(jax_key, 5)
+        cost_quad_diag = jax.random.uniform(keys[0], (dimension,), minval=0.5, maxval=2.0)
+        cost_linear = jax.random.normal(keys[1], (dimension,))
+        lower_bound = jax.random.uniform(keys[2], (dimension - 1,), minval=-3, maxval=2)
+        upper_bound = jax.random.uniform(keys[3], (dimension - 1,), minval=lower_bound, maxval=4)
+        phi = jax.random.uniform(keys[4], (dimension - 1, dimension))
 
-        print(f"running test {i}")
-
-        test_util.check_vjp(
-            f=solver.solve,
-            f_vjp=partial(jax.vjp, solver.solve),
-            args=(problem, phi),
-            eps=10 * TOLERANCE,
-            rtol=5 / 100,
-            err_msg=f"experiment {i} failed",
-        )
-
-        print(f"completing test {i}")
+        return OSQPProblem(
+            cost_quad_diag=cost_quad_diag,
+            cost_linear=cost_linear,
+            lower_bound=lower_bound,
+            upper_bound=upper_bound,
+        ), phi

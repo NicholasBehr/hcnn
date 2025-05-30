@@ -8,8 +8,6 @@ dependencies = [
     "brax>=0.12.3",
     "flax>=0.10.5",
     "jax>=0.5.3",
-    "jaxopt>=0.8.5",
-    "optimistix>=0.0.10",
 ]
 
 [project.optional-dependencies]
@@ -30,7 +28,7 @@ dev = [
 
 [tool.ruff]
 exclude = [".venv"]
-line-length = 100
+line-length = 120
 target-version = "py313"
 
 [tool.ruff.lint]
@@ -49,8 +47,3 @@ ignore = ["D"]  # Ignore docstring warnings
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"] # allow unused imports
 "test_*" = ["PLR2004", "F403"] # allow magic values and * imports for tests
-
-[tool.pytest.ini_options]
-filterwarnings = [
-  "ignore::DeprecationWarning:jaxopt.*"
-]

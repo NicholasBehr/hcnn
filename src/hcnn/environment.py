@@ -3,7 +3,7 @@ from flax import nnx, struct
 
 from .optimization import OptimizationSolverBase
 from .policy import PolicyBase
-from .projection import Context, ProjectionBase
+from .projection import ProjectionBase, ProjectionPhi
 
 
 @struct.dataclass
@@ -14,7 +14,7 @@ class Environment:
 
     def step(self, state: jax.Array, *, jax_key: jax.Array) -> jax.Array:
         policy_param = nnx.state(self.policy, nnx.Param)
-        context = Context(
+        context = ProjectionPhi(
             initial_state=state,
             policy_params=policy_param,
             jax_key=jax_key,

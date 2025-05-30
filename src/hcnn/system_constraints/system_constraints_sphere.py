@@ -13,6 +13,7 @@ class SystemConstraintsSphere(SystemConstraintsBase):
     def factory(cls, center: jax.Array, radius: jax.Array) -> "SystemConstraintsSphere":
         assert radius.ndim == 0
         center = jnp.atleast_1d(center)
+        assert center.ndim == 1
         return SystemConstraintsSphere(
             state_dim=center.shape[0],
             action_dim=None,

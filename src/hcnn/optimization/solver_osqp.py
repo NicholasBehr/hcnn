@@ -30,7 +30,7 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
         iter_counter: jax.Array
 
         @staticmethod
-        def factory(problem: OptimizationProblemBase, phi: PhiType) -> "OptimizationSolverOSQP.Variables":
+        def factory(problem: OptimizationProblemBase[PhiType], phi: PhiType) -> "OptimizationSolverOSQP.Variables":
             x = problem.get_x0(phi)
             z = problem.constraint_fn(x, phi)
             return OptimizationSolverOSQP.Variables(
@@ -50,7 +50,7 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
                 iter_counter=jnp.array(0, dtype=int),
             )
 
-        def update_primal_dual(self, problem: OptimizationProblemBase, tol: float, phi: PhiType) -> Self:
+        def update_primal_dual(self, problem: OptimizationProblemBase[PhiType], tol: float, phi: PhiType) -> Self:
             ## form linearization around x_tilde
             h, h_jvp = jax.linearize(lambda x: problem.constraint_fn(x, phi), self.x_tilde)
             _, h_vjp = jax.vjp(lambda x: problem.constraint_fn(x, phi), self.x_tilde)
@@ -100,7 +100,7 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
                 y=new_y,
             )
 
-        def update_residuals(self, problem: OptimizationProblemBase, phi: PhiType) -> Self:
+        def update_residuals(self, problem: OptimizationProblemBase[PhiType], phi: PhiType) -> Self:
             ## form linearization around x
             h, h_vjp = jax.vjp(lambda x: problem.constraint_fn(x, phi), self.x)
 
@@ -151,8 +151,8 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
 
     def body_fun(
         self,
-        variables: "OptimizationSolverOSQP.Variables",
-        problem: OptimizationProblemBase,
+        variables: Variables,
+        problem: OptimizationProblemBase[PhiType],
         phi: PhiType,
     ) -> Variables:
         return (
@@ -162,7 +162,8 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
             .update_residuals(problem=problem, phi=phi)
         )
 
-    def _solve_variables(self, problem: OptimizationProblemBase, phi: PhiType) -> Variables:
+    @partial(jax.jit, static_argnums=(0,))
+    def _solve_variables(self, problem: OptimizationProblemBase[PhiType], phi: PhiType) -> Variables:
         variables = OptimizationSolverOSQP.Variables.factory(problem, phi)
         variables = jax.lax.while_loop(
             cond_fun=self.cond_fun,
@@ -171,78 +172,69 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
         )
         return variables
 
-    def _solve_for_unrolling(self, problem: OptimizationProblemBase, phi: PhiType):
+    def _solve_for_unrolling(self, problem: OptimizationProblemBase[PhiType], phi: PhiType):
         variables = OptimizationSolverOSQP.Variables.factory(problem, phi)
         for _ in range(35):
             variables = self.body_fun(variables, problem, phi)
         return variables.x
 
-    def _solve(self, problem: OptimizationProblemBase, phi: PhiType):
+    def _solve(self, problem: OptimizationProblemBase[PhiType], phi: PhiType):
         return self._solve_variables(problem, phi).x
 
-    def _solve_fwd(self, problem: OptimizationProblemBase, phi: PhiType):
+    def _solve_fwd(self, problem: OptimizationProblemBase[PhiType], phi: PhiType):
         variables = self._solve_variables(problem, phi)
         return variables.x, (variables.x, variables.z, variables.y, problem, phi)
 
     def _solve_bwd(
         self,
-        res: Tuple[jax.Array, jax.Array, OptimizationProblemBase, PhiType],
+        res: Tuple[jax.Array, jax.Array, jax.Array, OptimizationProblemBase[PhiType], PhiType],
         g: jax.Array,
     ):
+        ## Unpack and rename input
         x_star, z_star, y_star, problem, phi = res
         y_plus = jnp.maximum(y_star, 0)
         y_minus = jnp.minimum(y_star, 0)
         v1 = g
 
-        # TODO REDO STUPID (BUT SAFE?) FULL JACOB IMPLEMENTATION AFTER BUGFIX
-        Ax_fn = jax.jacrev(lambda x: problem.constraint_fn(x, phi))
-        Ax = Ax_fn(x_star)
+        tau = 1e-5
+        frac_upper = jax.lax.div(1.0, problem.upper_bound - z_star + tau)
+        frac_lower = jax.lax.div(1.0, z_star - problem.lower_bound + tau)
+        plus_u_minus_l = y_plus * frac_upper - y_minus * frac_lower
 
-        # jax.debug.print("Ax {}, \nyAxx {}, \ny_star{}", Ax, yAxx, y_star)
+        ## Precompute JVP, VJP and HVP for the constraint function h(x) = problem.constraint_fn_x(x)
+        # h_jvp computes v -> dh/dx @ v
+        _, h_jvp = jax.linearize(lambda x: problem.constraint_fn(x, phi), x_star)
+        # h_vjp computes w -> w^T @ dh/dx
+        _, h_vjp = jax.vjp(lambda x: problem.constraint_fn(x, phi), x_star)
+        # h_hvp computes y.T @ d^2h/dx^2 @ v
+        _, h_hvp = jax.linearize(jax.grad(lambda x: jnp.dot(y_star, problem.constraint_fn(x, phi))), x_star)
 
-        n = x_star.shape[0]
-        m = z_star.shape[0]
+        def schur_lhs(u1: jax.Array) -> jax.Array:
+            return problem.cost_quad_diag * u1 + h_hvp(u1) + h_vjp(plus_u_minus_l * h_jvp(u1))[0]
 
-        lhs = jnp.vstack(
-            [
-                jnp.hstack([jnp.diag(problem.cost_quad_diag), jnp.zeros((n, m)), Ax.T, Ax.T]),
-                jnp.hstack([Ax, -jnp.eye(m), jnp.zeros((m, m)), jnp.zeros((m, m))]),
-                jnp.hstack(
-                    [jnp.zeros((m, n)), jnp.diag(y_plus), jnp.diag(z_star - problem.upper_bound), jnp.zeros((m, m))]
-                ),
-                jnp.hstack(
-                    [jnp.zeros((m, n)), jnp.diag(y_minus), jnp.zeros((m, m)), jnp.diag(z_star - problem.lower_bound)]
-                ),
-            ]
-        )
-        rhs = -jnp.concatenate([v1, jnp.zeros((3 * m,))])
-        # jax.debug.print("lhs: \n{}, \nrhs:\n{}\n", lhs, rhs)
-        out, _ = jax.scipy.sparse.linalg.gmres(A=lhs.T, b=rhs)
-        # jax.debug.print("out: {}, lhs@out: {}", out, lhs @ out)
-        dx = out[:n]
-        dz = out[n : n + m]
-        dyp = out[n + m : n + 2 * m]
-        dym = out[n + 2 * m :]
-        jax.debug.print("dx {}, dz {}, dyp {}, dym {}", dx, dz, dyp, dym)
+        u1, info = jax.scipy.sparse.linalg.cg(A=schur_lhs, b=v1)
+        jax.debug.print("u1: {}, info: {}", u1, info)
+        h_jvp_u1 = h_jvp(u1)
+        u2 = plus_u_minus_l * h_jvp_u1
+        u3 = frac_upper * h_jvp_u1
+        u4 = frac_lower * h_jvp_u1
 
         ## explicit vjp (step 2)
         g_phi_1 = jax.grad(
             lambda phi_arg: jnp.dot(
-                jax.jvp(lambda x_inner: problem.constraint_fn(x_inner, phi_arg), (x_star,), (dx,))[1],
+                jax.jvp(lambda x_inner: problem.constraint_fn(x_inner, phi_arg), (x_star,), (-u1,))[1],
                 y_star,
             )
         )(phi)
-        g_phi_2 = jax.vjp(lambda phi_arg: problem.constraint_fn(x_star, phi_arg), phi)[1](dz)[0]
+        g_phi_2 = jax.vjp(lambda phi_arg: problem.constraint_fn(x_star, phi_arg), phi)[1](-u2)[0]
         g_phi = jax.tree_util.tree_map(jnp.add, g_phi_1, g_phi_2)
-
-        jax.debug.print("phi1: {}, \nphi2: {}", g_phi_1, g_phi_2)
 
         g_problem = jax.tree_util.tree_map(lambda x: jnp.zeros_like(x), problem)  # copy
         g_problem = g_problem.replace(
-            cost_quad_diag=dx * x_star,
-            cost_linear=dx,
-            upper_bound=dyp @ jnp.diag(-y_plus),
-            lower_bound=dym @ jnp.diag(-y_minus),
+            cost_quad_diag=-x_star * u1,
+            cost_linear=-u1,
+            upper_bound=+y_plus * u3,
+            lower_bound=-y_minus * u4,
         )
 
         return (g_problem, g_phi)

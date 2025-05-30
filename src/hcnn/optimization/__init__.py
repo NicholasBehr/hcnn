@@ -1,3 +1,2 @@
 from .optimization import OptimizationProblemBase, OptimizationSolverBase, PhiType
-from .solver_linearize import OptimizationSolverLinearize
 from .solver_osqp import OptimizationSolverOSQP

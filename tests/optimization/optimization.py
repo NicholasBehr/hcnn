@@ -1,6 +1,9 @@
+from functools import partial
+
 import jax
 import jax.numpy as jnp
 from flax import struct
+from jax import test_util
 
 from hcnn.optimization.optimization import OptimizationProblemBase, OptimizationSolverBase
 
@@ -280,17 +283,11 @@ def test_vjp_triangle_projection(solver: OptimizationSolverBase):
         ]
     )
 
-    problem, phi = TriangleProjectionProblem.factory(origins[0], point_a, point_b, point_c)
+    for origin in origins:
+        problem, phi = TriangleProjectionProblem.factory(origin, point_a, point_b, point_c)
 
-    jac_phi = jax.jacrev(solver.solve, argnums=(1,))(problem, phi)
-    jac_phi_unroll = jax.jacrev(solver._solve_for_unrolling, argnums=(1,))(problem, phi)
-
-    jnp.set_printoptions(suppress=True, precision=5)
-    print("jac_phi using vjt\n", jac_phi)
-    print("jac_phi using loop unrolling\n", jac_phi_unroll)
-
-    assert jnp.allclose(
-        jac_phi[0],
-        jac_phi_unroll[0],
-        atol=1e-5,
-    )
+        test_util.check_vjp(
+            f=solver.solve,
+            f_vjp=partial(jax.vjp, solver.solve),
+            args=(problem, phi),
+        )

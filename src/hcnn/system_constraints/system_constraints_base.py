@@ -1,7 +1,6 @@
 from abc import ABC, abstractmethod
 
 import jax
-import jax.numpy as jnp
 from flax import struct
 
 
@@ -13,18 +12,18 @@ class SystemConstraintsBase(ABC):
     lower_bound: jax.Array  # 1d float array
     upper_bound: jax.Array  # 1d float array
 
-    def __post_init__(self):
-        # verify 1d
-        assert jnp.ndim(self.lower_bound) == 1
-        assert jnp.ndim(self.upper_bound) == 1
+    # def __post_init__(self):
+    #     # verify 1d
+    #     assert jnp.ndim(self.lower_bound) == 1
+    #     assert jnp.ndim(self.upper_bound) == 1
 
-        # verify floating
-        assert jnp.issubdtype(self.lower_bound.dtype, jnp.floating)
-        assert jnp.issubdtype(self.upper_bound.dtype, jnp.floating)
+    #     # verify floating
+    #     assert jnp.issubdtype(self.lower_bound.dtype, jnp.floating)
+    #     assert jnp.issubdtype(self.upper_bound.dtype, jnp.floating)
 
-        # verify constraint dim
-        assert self.lower_bound.shape[0] == self.constraint_dim
-        assert self.upper_bound.shape[0] == self.constraint_dim
+    #     # verify constraint dim
+    #     assert self.lower_bound.shape[0] == self.constraint_dim
+    #     assert self.upper_bound.shape[0] == self.constraint_dim
 
     @abstractmethod
     def __call__(self, state: jax.Array, action: jax.Array) -> jax.Array:

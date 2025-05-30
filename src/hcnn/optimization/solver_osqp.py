@@ -185,6 +185,7 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
         variables = self._solve_variables(problem, phi)
         return variables.x, (variables.x, variables.z, variables.y, problem, phi)
 
+    @partial(jax.jit, static_argnums=(0,))
     def _solve_bwd(
         self,
         res: Tuple[jax.Array, jax.Array, jax.Array, OptimizationProblemBase[PhiType], PhiType],
@@ -196,6 +197,7 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
         y_minus = jnp.minimum(y_star, 0)
         v1 = g
 
+        ## Implicit VJP
         tau = 1e-5
         frac_upper = jax.lax.div(1.0, problem.upper_bound - z_star + tau)
         frac_lower = jax.lax.div(1.0, z_star - problem.lower_bound + tau)
@@ -212,14 +214,22 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
         def schur_lhs(u1: jax.Array) -> jax.Array:
             return problem.cost_quad_diag * u1 + h_hvp(u1) + h_vjp(plus_u_minus_l * h_jvp(u1))[0]
 
-        u1, info = jax.scipy.sparse.linalg.cg(A=schur_lhs, b=v1)
-        jax.debug.print("u1: {}, info: {}", u1, info)
+        # TODO ATTENTION need to verify lhs is PSD, but cg seems more stable than gmres
+        u1, _ = jax.scipy.sparse.linalg.cg(A=schur_lhs, b=v1, maxiter=self.max_iter)
         h_jvp_u1 = h_jvp(u1)
         u2 = plus_u_minus_l * h_jvp_u1
         u3 = frac_upper * h_jvp_u1
         u4 = frac_lower * h_jvp_u1
 
-        ## explicit vjp (step 2)
+        ## Explicit VJP (step 2)
+        g_problem = jax.tree_util.tree_map(lambda x: jnp.zeros_like(x), problem)  # copy
+        g_problem = g_problem.replace(
+            cost_quad_diag=-x_star * u1,
+            cost_linear=-u1,
+            upper_bound=+y_plus * u3,
+            lower_bound=-y_minus * u4,
+        )
+
         g_phi_1 = jax.grad(
             lambda phi_arg: jnp.dot(
                 jax.jvp(lambda x_inner: problem.constraint_fn(x_inner, phi_arg), (x_star,), (-u1,))[1],
@@ -228,14 +238,6 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
         )(phi)
         g_phi_2 = jax.vjp(lambda phi_arg: problem.constraint_fn(x_star, phi_arg), phi)[1](-u2)[0]
         g_phi = jax.tree_util.tree_map(jnp.add, g_phi_1, g_phi_2)
-
-        g_problem = jax.tree_util.tree_map(lambda x: jnp.zeros_like(x), problem)  # copy
-        g_problem = g_problem.replace(
-            cost_quad_diag=-x_star * u1,
-            cost_linear=-u1,
-            upper_bound=+y_plus * u3,
-            lower_bound=-y_minus * u4,
-        )
 
         return (g_problem, g_phi)
 

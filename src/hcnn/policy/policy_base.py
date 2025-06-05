@@ -6,8 +6,8 @@ from flax import nnx, struct
 
 @struct.dataclass
 class PolicyBase(nnx.Module, ABC):
-    state_dim: int
-    action_dim: int
+    state_dim: int = struct.field(pytree_node=False)
+    action_dim: int = struct.field(pytree_node=False)
 
     @abstractmethod
     def __call__(

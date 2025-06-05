@@ -20,7 +20,7 @@ class RolloutPlan:
 class ProjectionPhi:
     initial_state: jax.Array
     policy_params: nnx.State
-    jax_key: jax.Array
+    jax_key: jax.Array = struct.field(pytree_node=False)
 
 
 @struct.dataclass

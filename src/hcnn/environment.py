@@ -25,7 +25,7 @@ class Environment:
     solver: OptimizationSolverBase
 
     # PARAMETERS
-    td_gamma: float = 0.5
+    td_gamma: float = 0.9
     gae_lambda: float = 0.99
 
     def init(
@@ -36,7 +36,7 @@ class Environment:
         rngs: nnx.Rngs,
     ):
         # optimizers
-        policy_optimizer = nnx.Optimizer(policy, optax.nadamw(learning_rate=1e-2))
+        policy_optimizer = nnx.Optimizer(policy, optax.nadamw(learning_rate=1e-3))
         value_to_go_optimizer = nnx.Optimizer(value_to_go, optax.nadamw(learning_rate=1e-2))
         relax_to_go_optimizer = nnx.Optimizer(relax_to_go, optax.nadamw(learning_rate=1e-2))
 

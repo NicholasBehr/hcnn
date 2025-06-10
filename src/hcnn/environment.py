@@ -25,8 +25,8 @@ class Environment:
     solver: OptimizationSolverBase
 
     # PARAMETERS
-    td_gamma: float = 0.9
-    gae_lambda: float = 0.99
+    td_gamma: float = 0.8
+    gae_lambda: float = 0.999
 
     def init(
         self,

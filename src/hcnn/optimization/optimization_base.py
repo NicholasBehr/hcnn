@@ -16,8 +16,9 @@ class OptimizationProblemBase(ABC, Generic[PhiType]):
 
     ### INITIALIZATION ###
     # get initial guess for optimization variable x (vectorized 1d)
+    @staticmethod
     @abstractmethod
-    def get_x0(self, phi: PhiType) -> jax.Array:
+    def get_x0(phi: PhiType) -> jax.Array:
         pass
 
     ### QUADRATIC COST ###
@@ -27,8 +28,9 @@ class OptimizationProblemBase(ABC, Generic[PhiType]):
 
     ### NONLINEAR PARAMETRIC CONSTRAINTS ###
     # l <= h(x, phi) <= u
+    @staticmethod
     @abstractmethod
-    def constraint_fn(self, x: jax.Array, phi: PhiType) -> jax.Array:
+    def constraint_fn(x: jax.Array, phi: PhiType) -> jax.Array:
         pass
 
     lower_bound: jax.Array  # l in constraint (vectorized 1d)
@@ -41,6 +43,7 @@ class OptimizationSolverBase(ABC, Generic[PhiType]):
     Quadratic Cost with Nonlinear Constraints Problem Solver
     """
 
+    @partial(jax.jit, static_argnames='self')
     def solve(self, problem: OptimizationProblemBase, phi: PhiType) -> jax.Array:
         """
         Solve the given optimization problem and return the optimal solution.

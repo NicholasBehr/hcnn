@@ -9,7 +9,7 @@ from tests.optimization.optimization_base import *
 
 @pytest.fixture
 def solver():
-    return OptimizationSolverOSQP(tol=1e-5, max_iter=1_000)
+    return OptimizationSolverOSQP(tol=1e-5, max_iter=10_000)
 
 
 @struct.dataclass

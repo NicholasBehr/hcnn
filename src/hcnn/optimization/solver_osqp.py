@@ -30,7 +30,7 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
         iter_counter: jax.Array
 
         @staticmethod
-        def factory(problem: OptimizationProblemBase[PhiType], phi: PhiType) -> "OptimizationSolverOSQP.Variables":
+        def factory(problem: OptimizationProblemBase[PhiType], phi: PhiType) -> Self:
             x = problem.get_x0(phi)
             z = problem.constraint_fn(x, phi)
             return OptimizationSolverOSQP.Variables(
@@ -162,7 +162,6 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
             .update_residuals(problem=problem, phi=phi)
         )
 
-    @partial(jax.jit, static_argnums=(0,))
     def _solve_variables(self, problem: OptimizationProblemBase[PhiType], phi: PhiType) -> Variables:
         variables = OptimizationSolverOSQP.Variables.factory(problem, phi)
         variables = jax.lax.while_loop(
@@ -185,7 +184,6 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
         variables = self._solve_variables(problem, phi)
         return variables.x, (variables.x, variables.z, variables.y, problem, phi)
 
-    @partial(jax.jit, static_argnums=(0,))
     def _solve_bwd(
         self,
         res: Tuple[jax.Array, jax.Array, jax.Array, OptimizationProblemBase[PhiType], PhiType],

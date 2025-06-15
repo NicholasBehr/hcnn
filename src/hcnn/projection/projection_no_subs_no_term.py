@@ -1,42 +1,28 @@
-from typing import Callable
-
 import jax
 import jax.numpy as jnp
 from flax import nnx, struct
 from jax import flatten_util
 
 from hcnn.policy import PolicyBase
-from hcnn.projection import ProjectionBase, ProjectionPhi, RolloutPlan
+from hcnn.projection import ProjectionBase, ProjectionPhi, Rollout
 from hcnn.system_constraints import SystemConstraintsBase
 from hcnn.system_dynamics import SystemDynamicsBase
 
 
 @struct.dataclass
 class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
-    @struct.dataclass
-    class OptimizationVariable:
-        actions: jax.Array
-        states: jax.Array
-        interventions: jax.Array
-        relaxations_plus: jax.Array
-        relaxations_minus: jax.Array
-
-    get_optvar: Callable[[jax.Array], OptimizationVariable] = struct.field(pytree_node=False)
-
     @classmethod
     def factory(
         cls,
+        policy: PolicyBase,
         sys_dynamics: SystemDynamicsBase,
         sys_constraints: SystemConstraintsBase,
-        policy: PolicyBase,
         horizon: int,
         relaxation_penalty: float,
     ):
-        policy_graphdef, _, policy_non_param = nnx.split(policy, nnx.Param, ...)
-
         # OptimizationProblem
-        cost_quad_diag, get_optvar = flatten_util.ravel_pytree(
-            cls.OptimizationVariable(
+        cost_quad_diag, x_to_rollout = flatten_util.ravel_pytree(
+            Rollout(
                 actions=jnp.zeros((horizon, sys_dynamics.action_dim)),
                 states=jnp.zeros((horizon, sys_dynamics.state_dim)),
                 interventions=2 * jnp.ones((horizon, sys_dynamics.action_dim)),
@@ -45,7 +31,7 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
             )
         )
         cost_linear, _ = flatten_util.ravel_pytree(
-            cls.OptimizationVariable(
+            Rollout(
                 actions=jnp.zeros((horizon, sys_dynamics.action_dim)),
                 states=jnp.zeros((horizon, sys_dynamics.state_dim)),
                 interventions=jnp.zeros((horizon, sys_dynamics.action_dim)),
@@ -64,79 +50,81 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
         lower_bound = jnp.concatenate(lower_bound_list)
         upper_bound = jnp.concatenate(upper_bound_list)
 
-        return ProjectionNoSubstitutionNoTerminal(
+        problem = ProjectionNoSubstitutionNoTerminal(
             cost_quad_diag=cost_quad_diag,
             cost_linear=cost_linear,
             lower_bound=lower_bound,
             upper_bound=upper_bound,
-            sys_dynamics=sys_dynamics,
-            sys_constraints=sys_constraints,
-            policy_graphdef=policy_graphdef,
-            policy_non_param=policy_non_param,
-            horizon=horizon,
-            get_optvar=get_optvar,
         )
 
-    def get_x0(self, phi: ProjectionPhi) -> jax.Array:
-        policy = nnx.merge(self.policy_graphdef, phi.policy_params, self.policy_non_param)
+        phi = ProjectionPhi(
+            initial_state=jnp.zeros((sys_dynamics.state_dim,)),
+            split_policy=nnx.split(policy),
+            split_dynamics=nnx.split(sys_dynamics),
+            split_constraints=nnx.split(sys_constraints),
+            jax_key=jax.random.key(0),
+            horizon=horizon,
+            x_to_rollout=x_to_rollout,
+        )
 
-        def next_optvar_row(state, i):
-            action = policy(state, jax_key=jax.random.fold_in(phi.jax_key, i))
+        return (problem, phi)
+
+    @staticmethod
+    @jax.jit
+    def get_x0(phi: ProjectionPhi) -> jax.Array:
+        policy = nnx.merge(*phi.split_policy)
+        sys_dynamics = nnx.merge(*phi.split_dynamics)
+        sys_constraints = nnx.merge(*phi.split_constraints)
+
+        def next_row(state, i):
+            action = policy(state, jax_key=phi.jax_key)
             intervention = jnp.zeros_like(action)
-            next_state = self.sys_dynamics.next_state(state, action)
-            constraint = self.sys_constraints(state, action)
-            relaxation_plus = jnp.max(
-                jnp.maximum(0.0, self.sys_constraints.lower_bound - constraint)
-            )
+            next_state = sys_dynamics.next_state(state, action)
+            constraint = sys_constraints(state, action)
+            relaxation_plus = jnp.max(jnp.maximum(0.0, sys_constraints.lower_bound - constraint))
             relaxations_minus = jnp.max(
-                jnp.max(jnp.maximum(0.0, constraint - self.sys_constraints.upper_bound)),
+                jnp.max(jnp.maximum(0.0, constraint - sys_constraints.upper_bound)),
             )
             out = (action, state, intervention, relaxation_plus, relaxations_minus)
             return next_state, out
 
-        (_, optvar_tuple) = jax.lax.scan(
-            f=next_optvar_row,
+        (_, rollout_tuple) = jax.lax.scan(
+            f=next_row,
             init=phi.initial_state,
-            xs=jnp.arange(self.horizon),
-            unroll=True,
+            xs=jnp.arange(phi.horizon),
         )
 
-        optvar = self.OptimizationVariable(
-            actions=optvar_tuple[0],
-            states=optvar_tuple[1],
-            interventions=optvar_tuple[2],
-            relaxations_plus=optvar_tuple[3],
-            relaxations_minus=optvar_tuple[4],
+        optvar = Rollout(
+            actions=rollout_tuple[0],
+            states=rollout_tuple[1],
+            interventions=rollout_tuple[2],
+            relaxations_plus=rollout_tuple[3],
+            relaxations_minus=rollout_tuple[4],
         )
 
         return flatten_util.ravel_pytree(optvar)[0]
 
-    def constraint_fn(self, x: jax.Array, phi: ProjectionPhi) -> jax.Array:
-        optvar = self.get_optvar(x)
+    @staticmethod
+    @jax.jit
+    def constraint_fn(x: jax.Array, phi: ProjectionPhi) -> jax.Array:
+        rollout = phi.x_to_rollout(x)
+        policy = nnx.merge(*phi.split_policy)
+        sys_dynamics = nnx.merge(*phi.split_dynamics)
+        sys_constraints = nnx.merge(*phi.split_constraints)
+
         constraint_fun_list = [
-            self._fun_initial_state(optvar, phi.initial_state),
-            self._constraints_sys_dynamics(optvar),
-            self._constraints_policy(optvar, phi.policy_params, phi.jax_key),
-            self._constraints_sys_constraints(optvar),
-            self._constraints_non_neg_relax(optvar),
+            ProjectionNoSubstitutionNoTerminal._constraints_initial_state(rollout, phi.initial_state),
+            ProjectionNoSubstitutionNoTerminal._constraints_sys_dynamics(rollout, sys_dynamics),
+            ProjectionNoSubstitutionNoTerminal._constraints_policy(rollout, policy, phi.jax_key),
+            ProjectionNoSubstitutionNoTerminal._constraints_sys_constraints(rollout, sys_constraints),
+            ProjectionNoSubstitutionNoTerminal._constraints_non_neg_relax(rollout),
         ]
         return jnp.concatenate(constraint_fun_list)
 
-    def get_rollout(
-        self,
-        x_star: jax.Array,
-    ) -> RolloutPlan:
-        optvar = self.get_optvar(x_star)
-        return RolloutPlan(
-            states=optvar.states,
-            actions=optvar.actions,
-            interventions=optvar.interventions,
-            relaxations=jnp.maximum(optvar.relaxations_plus, optvar.relaxations_minus),
-        )
-
     # (1) initial state
-    def _fun_initial_state(self, optvar: OptimizationVariable, initial_state) -> jax.Array:
-        return optvar.states[0] - initial_state
+    @staticmethod
+    def _constraints_initial_state(rollout: Rollout, initial_state: jax.Array) -> jax.Array:
+        return rollout.states[0] - initial_state
 
     @staticmethod
     def _bounds_initial_state(sys_dynamics) -> tuple[jax.Array, jax.Array]:
@@ -146,11 +134,24 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
         )
 
     # (2) system dynamics
-    def _constraints_sys_dynamics(self, optvar: OptimizationVariable) -> jax.Array:
-        return jax.vmap(
-            lambda state, action, next_state: next_state
-            - self.sys_dynamics.next_state(state, action)
-        )(optvar.states[:-1], optvar.actions[:-1], optvar.states[1:]).ravel()
+    @staticmethod
+    def _constraints_sys_dynamics(rollout: Rollout, sys_dynamics) -> jax.Array:
+        def next_state_constr(carry, data_slice):
+            state_i, state_i_plus_1, action_i = data_slice
+            pred_next_state = sys_dynamics.next_state(state_i, action_i)
+            constraint = state_i_plus_1 - pred_next_state
+            return carry, constraint
+
+        states_i = rollout.states[:-1]
+        states_i_plus_1 = rollout.states[1:]
+        actions_i = rollout.actions[:-1]
+
+        _, constraints = jax.lax.scan(
+            next_state_constr,
+            None,
+            (states_i, states_i_plus_1, actions_i),
+        )
+        return constraints.ravel()
 
     @staticmethod
     def _bounds_sys_dynamics(horizon, sys_dynamics) -> tuple[jax.Array, jax.Array]:
@@ -160,18 +161,27 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
         )
 
     # (3) policy
-    def _constraints_policy(self, optvar: OptimizationVariable, policy_param, jax_key) -> jax.Array:
-        policy = nnx.merge(self.policy_graphdef, policy_param, self.policy_non_param)
+    @staticmethod
+    def _constraints_policy(rollout: Rollout, policy, jax_key) -> jax.Array:
+        def policy_constraints(carry, data_slice):
+            state, action, intervention = data_slice
+            policy_action = policy(state, jax_key=jax_key)
+            constraint = action - policy_action - intervention
+            return carry, constraint
 
-        def constraint(action, state, intervention, i):
-            return action - policy(state, jax_key=jax.random.fold_in(jax_key, i)) - intervention
+        # Prepare data slices for scan
+        data_slices = (
+            rollout.states,
+            rollout.actions,
+            rollout.interventions,
+        )
 
-        return jax.vmap(constraint)(
-            optvar.actions,
-            optvar.states,
-            optvar.interventions,
-            jnp.arange(self.horizon),
-        ).ravel()
+        _, constraints = jax.lax.scan(
+            policy_constraints,
+            None,
+            data_slices,
+        )
+        return constraints.ravel()
 
     @staticmethod
     def _bounds_policy(horizon, sys_dynamics) -> tuple[jax.Array, jax.Array]:
@@ -181,14 +191,28 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
         )
 
     # (4) system constraints
-    def _constraints_sys_constraints(self, optvar: OptimizationVariable) -> jax.Array:
-        return jax.vmap(
-            lambda state, action, relaxation_plus, relaxation_minus: self.sys_constraints(
-                state, action
-            )
-            + relaxation_plus
-            - relaxation_minus
-        )(optvar.states, optvar.actions, optvar.relaxations_plus, optvar.relaxations_minus).ravel()
+    @staticmethod
+    def _constraints_sys_constraints(rollout: Rollout, sys_constraints) -> jax.Array:
+        def sys_constraint_fn(carry, data_slice):
+            state, action, r_plus, r_minus = data_slice
+            constraint = sys_constraints(state, action) + r_plus - r_minus
+            return carry, constraint
+
+        # Prepare data slices for scan
+        data_slices = (
+            rollout.states,
+            rollout.actions,
+            rollout.relaxations_plus,
+            rollout.relaxations_minus,
+        )
+
+        _, constraints = jax.lax.scan(
+            sys_constraint_fn,
+            None,
+            data_slices,
+        )
+
+        return constraints.ravel()
 
     @staticmethod
     def _bounds_sys_constraints(horizon, sys_constraints) -> tuple[jax.Array, jax.Array]:
@@ -198,8 +222,9 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
         )
 
     # (5) non-negative relaxations
-    def _constraints_non_neg_relax(self, optvar: OptimizationVariable) -> jax.Array:
-        return jnp.concatenate((optvar.relaxations_plus, optvar.relaxations_minus))
+    @staticmethod
+    def _constraints_non_neg_relax(rollout: Rollout) -> jax.Array:
+        return jnp.concatenate((rollout.relaxations_plus, rollout.relaxations_minus))
 
     @staticmethod
     def _bounds_non_neg_relax(horizon) -> tuple[jax.Array, jax.Array]:

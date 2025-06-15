@@ -1,2 +1,2 @@
-from .projection_base import ProjectionBase, ProjectionPhi, RolloutPlan
+from .projection_base import ProjectionBase, ProjectionPhi, Rollout
 from .projection_no_subs_no_term import ProjectionNoSubstitutionNoTerminal

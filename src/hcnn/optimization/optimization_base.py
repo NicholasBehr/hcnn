@@ -43,7 +43,7 @@ class OptimizationSolverBase(ABC, Generic[PhiType]):
     Quadratic Cost with Nonlinear Constraints Problem Solver
     """
 
-    @partial(jax.jit, static_argnames='self')
+    @partial(jax.jit, static_argnames="self")
     def solve(self, problem: OptimizationProblemBase, phi: PhiType) -> jax.Array:
         """
         Solve the given optimization problem and return the optimal solution.

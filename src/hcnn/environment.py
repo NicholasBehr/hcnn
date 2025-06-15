@@ -66,45 +66,6 @@ class Environment:
 
     @staticmethod
     @jax.jit
-    def train_epoch(graphdef, state):
-        def scan_fn(carry, _):
-            return Environment.train_step(graphdef, carry), None
-
-        state, _ = jax.lax.scan(scan_fn, state, None, length=50)
-
-        (
-            self,
-            policy,
-            policy_optimizer,
-            value_to_go,
-            value_to_go_optimizer,
-            relax_to_go,
-            relax_to_go_optimizer,
-            metrics,
-            rngs,
-        ) = nnx.merge(graphdef, state)
-
-        jax.debug.print("{}", metrics.compute())
-        metrics.reset()
-
-        # Return the updated state
-        state = nnx.state(
-            (
-                self,
-                policy,
-                policy_optimizer,
-                value_to_go,
-                value_to_go_optimizer,
-                relax_to_go,
-                relax_to_go_optimizer,
-                metrics,
-                rngs,
-            )
-        )
-        return state
-
-    @staticmethod
-    @jax.jit
     def train_step(graphdef, state):
         (
             self,

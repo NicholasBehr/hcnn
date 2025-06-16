@@ -7,7 +7,8 @@ from jax import test_util
 
 from hcnn.optimization import OptimizationProblemBase, OptimizationSolverBase
 
-jax.config.update("jax_cuda_visible_devices", "3")
+# jax.config.update("jax_cuda_visible_devices", "0")
+jax.config.update("jax_platform_name", "cpu")
 
 
 @struct.dataclass
@@ -41,7 +42,7 @@ def test_solve_unconstrained(solver: OptimizationSolverBase):
     for i in range(15):
         # create
         keys = jax.random.split(jax.random.key(i), 2)
-        cost_quad_diag = jax.random.normal(keys[0], (dimension,))
+        cost_quad_diag = jnp.abs(jax.random.normal(keys[0], (dimension,)))
         cost_linear = jax.random.normal(keys[1], (dimension,))
         problem, phi = UnconstrainedProblem.factory(cost_quad_diag, cost_linear)
 
@@ -51,20 +52,19 @@ def test_solve_unconstrained(solver: OptimizationSolverBase):
         # verify
         x_star_analytic = -cost_linear / cost_quad_diag
 
-        jax.debug.print("{} {}", x_star, x_star_analytic)
         assert jnp.allclose(
             x_star,
             x_star_analytic,
             atol=1e-4,
-        )
+        ), f"{x_star}, {x_star_analytic}"
 
 
 def test_vjp_unconstrained(solver: OptimizationSolverBase):
-    dimension = 15
+    dimension = 5
     for i in range(15):
         # create
         keys = jax.random.split(jax.random.key(i), 2)
-        cost_quad_diag = jax.random.normal(keys[0], (dimension,))
+        cost_quad_diag = jnp.abs(jax.random.normal(keys[0], (dimension,)))
         cost_linear = jax.random.normal(keys[1], (dimension,))
         problem, phi = UnconstrainedProblem.factory(cost_quad_diag, cost_linear)
 

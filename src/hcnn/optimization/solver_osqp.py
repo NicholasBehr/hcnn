@@ -214,7 +214,7 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
 
         # TODO ATTENTION need to verify lhs is PSD, but cg seems more stable than gmres
         # mainly A_xx at solution PSD?
-        u1, _ = jax.scipy.sparse.linalg.cg(A=schur_lhs, b=v1, maxiter=self.max_iter)
+        u1, _ = jax.scipy.sparse.linalg.cg(A=schur_lhs, b=v1, maxiter=self.max_iter, tol=self.tol)
         h_jvp_u1 = h_jvp(u1)
         u2 = plus_u_minus_l * h_jvp_u1
         u3 = frac_upper * h_jvp_u1

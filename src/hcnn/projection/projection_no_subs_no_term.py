@@ -136,19 +136,18 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
     # (2) system dynamics
     @staticmethod
     def _constraints_sys_dynamics(rollout: Rollout, sys_dynamics) -> jax.Array:
-        def next_state_constr(carry, data_slice):
+        def next_state_constr(data_slice):
             state_i, state_i_plus_1, action_i = data_slice
             pred_next_state = sys_dynamics.next_state(state_i, action_i)
             constraint = state_i_plus_1 - pred_next_state
-            return carry, constraint
+            return constraint
 
         states_i = rollout.states[:-1]
         states_i_plus_1 = rollout.states[1:]
         actions_i = rollout.actions[:-1]
 
-        _, constraints = jax.lax.scan(
+        constraints = jax.lax.map(
             next_state_constr,
-            None,
             (states_i, states_i_plus_1, actions_i),
         )
         return constraints.ravel()
@@ -163,22 +162,21 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
     # (3) policy
     @staticmethod
     def _constraints_policy(rollout: Rollout, policy, jax_key) -> jax.Array:
-        def policy_constraints(carry, data_slice):
+        def policy_constraints(data_slice):
             state, action, intervention = data_slice
             policy_action = policy(state, jax_key=jax_key)
             constraint = action - policy_action - intervention
-            return carry, constraint
+            return constraint
 
-        # Prepare data slices for scan
+        # Prepare data slices for map
         data_slices = (
             rollout.states,
             rollout.actions,
             rollout.interventions,
         )
 
-        _, constraints = jax.lax.scan(
+        constraints = jax.lax.map(
             policy_constraints,
-            None,
             data_slices,
         )
         return constraints.ravel()
@@ -193,12 +191,12 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
     # (4) system constraints
     @staticmethod
     def _constraints_sys_constraints(rollout: Rollout, sys_constraints) -> jax.Array:
-        def sys_constraint_fn(carry, data_slice):
+        def sys_constraint_fn(data_slice):
             state, action, r_plus, r_minus = data_slice
             constraint = sys_constraints(state, action) + r_plus - r_minus
-            return carry, constraint
+            return constraint
 
-        # Prepare data slices for scan
+        # Prepare data slices for map
         data_slices = (
             rollout.states,
             rollout.actions,
@@ -206,9 +204,8 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
             rollout.relaxations_minus,
         )
 
-        _, constraints = jax.lax.scan(
+        constraints = jax.lax.map(
             sys_constraint_fn,
-            None,
             data_slices,
         )
 

@@ -1,3 +1,4 @@
+from functools import partial
 from typing import Self, Tuple
 
 import jax
@@ -10,6 +11,7 @@ from hcnn.optimization import OptimizationProblemBase, OptimizationSolverBase, P
 @struct.dataclass
 class OptimizationSolverShallow(OptimizationSolverBase[PhiType]):
     max_iter: int = 500
+    tol: float = 1e-4
 
     class Variables(struct.PyTreeNode):
         # primal
@@ -69,9 +71,18 @@ class OptimizationSolverShallow(OptimizationSolverBase[PhiType]):
             r_zhjx_y = self.rho_vec * zhjx - self.y
             cg_rhs = self.sigma * self.x - problem.cost_linear + h_vjp(r_zhjx_y)[0]
 
-            res = cg_rhs - cg_lhs(self.x_tilde)
-            alpha = jnp.dot(res, res) / (jnp.dot(res, cg_lhs(res)) + 1e-12)
-            new_x_tilde = self.x_tilde + alpha * res
+            # preconditioned steepest descent update for x_tilde
+            # residual
+            r = cg_rhs - cg_lhs(self.x_tilde)
+            # preconditioned residual
+            p = r / (problem.cost_quad_diag + self.sigma)
+            # step size alpha
+            alpha_sd_numerator = jnp.dot(r, p)
+            alpha_sd_denominator = jnp.dot(p, cg_lhs(p))
+            eps = jnp.finfo(problem.cost_quad_diag.dtype).eps
+            alpha_sd = alpha_sd_numerator / (alpha_sd_denominator + eps)
+            # update
+            new_x_tilde = self.x_tilde + alpha_sd * p
 
             ## z_tilde ##
             new_z_tilde = h + h_jvp(new_x_tilde - self.x_tilde)
@@ -108,8 +119,8 @@ class OptimizationSolverShallow(OptimizationSolverBase[PhiType]):
 
         def update_rho(self) -> Self:
             mu_sqr = 10**2
-            tau_incr = 2
-            tau_decr = 2
+            tau_incr = 1.1
+            tau_decr = 1.1
 
             prim_norm_sqr = jnp.dot(self.primal_residuals, self.primal_residuals)
             dual_norm_sqr = jnp.dot(self.dual_residuals, self.dual_residuals)
@@ -130,6 +141,19 @@ class OptimizationSolverShallow(OptimizationSolverBase[PhiType]):
                 rho_vec=rho_vec,
             )
 
+    def cond_fun(self, variables: Variables) -> jax.Array:
+        # return true if we should enter a new iteration
+
+        # are we not converged?
+        primal_check = jnp.max(jnp.abs(variables.primal_residuals)) >= self.tol
+        dual_check = jnp.max(jnp.abs(variables.dual_residuals)) >= self.tol
+        not_converged_check = jnp.logical_or(primal_check, dual_check)
+
+        # AND do we have iterations left?
+        iter_remaining_check = variables.iter_counter < self.max_iter
+
+        return jnp.logical_and(not_converged_check, iter_remaining_check)
+
     def body_fun(
         self,
         variables: Variables,
@@ -145,17 +169,12 @@ class OptimizationSolverShallow(OptimizationSolverBase[PhiType]):
 
     def _solve_variables(self, problem: OptimizationProblemBase[PhiType], phi: PhiType) -> Variables:
         variables = OptimizationSolverShallow.Variables.factory(problem, phi)
-
-        def scan_body(carry, _):
-            return self.body_fun(carry, problem, phi), None
-
-        final_variables, _ = jax.lax.scan(
-            scan_body,
-            variables,
-            None,
-            length=self.max_iter,
+        variables = jax.lax.while_loop(
+            cond_fun=self.cond_fun,
+            body_fun=partial(self.body_fun, problem=problem, phi=phi),
+            init_val=variables,
         )
-        return final_variables
+        return variables
 
     def _solve(self, problem: OptimizationProblemBase[PhiType], phi: PhiType):
         return self._solve_variables(problem, phi).x
@@ -194,7 +213,7 @@ class OptimizationSolverShallow(OptimizationSolverBase[PhiType]):
 
         # TODO ATTENTION need to verify lhs is PSD, but cg seems more stable than gmres
         # mainly A_xx at solution PSD?
-        u1, _ = jax.scipy.sparse.linalg.cg(A=schur_lhs, b=v1, maxiter=self.max_iter)
+        u1, _ = jax.scipy.sparse.linalg.cg(A=schur_lhs, b=v1, maxiter=self.max_iter, tol=self.tol)
         h_jvp_u1 = h_jvp(u1)
         u2 = plus_u_minus_l * h_jvp_u1
         u3 = frac_upper * h_jvp_u1

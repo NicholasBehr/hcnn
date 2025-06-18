@@ -15,16 +15,20 @@ class SystemConstraintsBase(ABC):
     @abstractmethod
     def __call__(self, state: jax.Array, action: jax.Array) -> jax.Array:
         """
-        Evaluates the constraint function g(state, action) for the given state and action.
+        Evaluates the constraint function g(state, action)
+        for the given state and action.
+
+        Args:
+            state (jax.Array): State,
+                shape (state_dim,) or (batch_dim, state_dim).
+            action (jax.Array): Action,
+                shape (action_dim,) or (batch_dim, action_dim).
 
         Returns:
-            jax.Array: A 1D array of constraint values of shape (constraint_dim,).
+            jax.Array: Constraint values,
+                shape (constraint_dim,) or (batch_dim, constraint_dim).
 
         The constraint is considered satisfied if, for each element i:
             lower_bound[i] <= g(state, action)[i] <= upper_bound[i]
-
-        Args:
-            state (jax.Array): The system state of shape (state_dim,).
-            action (jax.Array): The control action of shape (action_dim,).
         """
         pass

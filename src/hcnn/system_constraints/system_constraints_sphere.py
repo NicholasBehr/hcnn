@@ -10,7 +10,9 @@ class SystemConstraintsSphere(SystemConstraintsBase):
     center: jax.Array
 
     @classmethod
-    def factory(cls, center: jax.Array, radius: jax.Array) -> "SystemConstraintsSphere":
+    def factory(
+        cls, center: jax.Array, radius: jax.Array
+    ) -> "SystemConstraintsSphere":
         assert radius.ndim == 0
         center = jnp.atleast_1d(center)
         assert center.ndim == 1
@@ -25,5 +27,5 @@ class SystemConstraintsSphere(SystemConstraintsBase):
 
     def __call__(self, state: jax.Array, action: jax.Array) -> jax.Array:
         vector_to_center = state - self.center
-        distance_squared = jnp.dot(vector_to_center, vector_to_center)
-        return jnp.atleast_1d(distance_squared)
+        distance_squared = jnp.sum(vector_to_center**2, axis=-1, keepdims=True)
+        return distance_squared

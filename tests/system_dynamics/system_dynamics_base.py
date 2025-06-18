@@ -8,5 +8,15 @@ def test_next_state_dim(instance: SystemDynamicsBase):
     state = jax.random.normal(key, (instance.state_dim,))
     action = jax.random.normal(key, (instance.action_dim,))
 
-    next_state = instance.next_state(state, action)
+    next_state = instance(state, action)
     assert next_state.shape == (instance.state_dim,)
+
+
+def test_next_states_dim(instance: SystemDynamicsBase):
+    batch_size = 20
+    key = jax.random.key(0)
+    states = jax.random.normal(key, (batch_size, instance.state_dim))
+    actions = jax.random.normal(key, (batch_size, instance.action_dim))
+
+    next_states = instance(states, actions)
+    assert next_states.shape == (batch_size, instance.state_dim)

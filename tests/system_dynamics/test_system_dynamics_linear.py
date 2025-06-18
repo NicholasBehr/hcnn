@@ -18,12 +18,14 @@ def instance() -> SystemDynamicsLinear:
 def test_valid_instance_creation(instance: SystemDynamicsLinear):
     assert instance.state_dim == 4
     assert instance.action_dim == 2
-    assert instance.state_matrix.shape == (4, 4)
-    assert instance.input_matrix.shape == (4, 2)
+    assert instance.state_matrix_transp.shape == (4, 4)
+    assert instance.input_matrix_transp.shape == (2, 4)
 
 
 def test_state_matrix_not_square():
-    state_matrix = jnp.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])  # 2x3, not square
+    state_matrix = jnp.array(
+        [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
+    )  # 2x3, not square
     input_matrix = jnp.array([[1.0], [2.0]])
     with pytest.raises(AssertionError):
         SystemDynamicsLinear.factory(state_matrix, input_matrix)
@@ -36,15 +38,29 @@ def test_dimension_mismatch_between_state_and_input():
         SystemDynamicsLinear.factory(state_matrix, input_matrix)
 
 
-def test_next_state_example():
-    state_matrix = jnp.array([[1.0, 0.0], [0.0, 1.0]])
-    input_matrix = jnp.array([[1.0], [1.0]])
+def test_next_state_example1():
+    state_matrix = jnp.array([[1.0, 2.0], [3.0, 4.0]])
+    input_matrix = jnp.array([[5.0], [6.0]])
     instance = SystemDynamicsLinear.factory(state_matrix, input_matrix)
 
     state = jnp.array([1.0, 2.0])  # shape (2,)
     action = jnp.array([3.0])  # shape (1,)
 
-    next_state = instance.next_state(state, action)
+    next_state = instance(state, action)
 
-    expected = jnp.array([1.0 + 3.0, 2.0 + 3.0])  # [4.0, 5.0]
+    expected = jnp.array([20.0, 29.0])
     assert jnp.allclose(next_state, expected)
+
+
+def test_next_states_example2():
+    state_matrix = jnp.array([[1.0, 2.0], [3.0, 4.0]])
+    input_matrix = jnp.array([[5.0], [6.0]])
+    instance = SystemDynamicsLinear.factory(state_matrix, input_matrix)
+
+    states = jnp.array([[1.0, 2.0], [3.0, 4.0]])  # shape (2,2)
+    actions = jnp.array([[3.0], [4.0]])  # shape (2,1)
+
+    next_states = instance(states, actions)
+
+    expected = jnp.array([[20.0, 29.0], [31.0, 49.0]])
+    assert jnp.allclose(next_states, expected)

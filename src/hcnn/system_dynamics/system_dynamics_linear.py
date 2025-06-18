@@ -7,8 +7,8 @@ from hcnn.system_dynamics import SystemDynamicsBase
 
 @struct.dataclass
 class SystemDynamicsLinear(SystemDynamicsBase):
-    state_matrix: jax.Array  # float 2d matrix
-    input_matrix: jax.Array  # float 2d matrix
+    state_matrix_transp: jax.Array  # float 2d matrix
+    input_matrix_transp: jax.Array  # float 2d matrix
 
     @classmethod
     def factory(cls, state_matrix: jax.Array, input_matrix: jax.Array):
@@ -34,9 +34,12 @@ class SystemDynamicsLinear(SystemDynamicsBase):
         return SystemDynamicsLinear(
             state_dim=state_dim,
             action_dim=action_dim,
-            state_matrix=state_matrix,
-            input_matrix=input_matrix,
+            state_matrix_transp=state_matrix.T,
+            input_matrix_transp=input_matrix.T,
         )
 
-    def next_state(self, state: jax.Array, action: jax.Array) -> jax.Array:
-        return self.state_matrix @ state + self.input_matrix @ action
+    @jax.jit
+    def __call__(self, state: jax.Array, action: jax.Array) -> jax.Array:
+        return (
+            state @ self.state_matrix_transp + action @ self.input_matrix_transp
+        )

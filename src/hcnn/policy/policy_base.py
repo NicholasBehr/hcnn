@@ -9,6 +9,7 @@ class PolicyBase(nnx.Module, ABC):
     state_dim: int = struct.field(pytree_node=False)
     action_dim: int = struct.field(pytree_node=False)
 
+    @nnx.jit
     @abstractmethod
     def __call__(
         self,
@@ -16,14 +17,16 @@ class PolicyBase(nnx.Module, ABC):
         *,
         jax_key: jax.Array | None = None,
     ) -> jax.Array:
-        """
-        Compute the action for a given state.
+        """Computes the policy action given the current state.
 
         Args:
-            state (jax.Array): Input state vector of shape (state_dim,).
-            jax_key (jax.Array, optional): Optional PRNG key for stochastic policies.
+            state (jax.Array): Current state,
+                shape (state_dim,) or (batch_size, state_dim).
+            jax_key (jax.Array, optional):
+                Optional PRNG key for stochastic policies.
 
         Returns:
-            jax.Array: The action vector of shape (action_dim,).
+            jax.Array: Policy action,
+                shape (action_dim,) or (batch_size, action_dim).
         """
         pass

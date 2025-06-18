@@ -12,15 +12,15 @@ def instance() -> SystemCostQuadratic:
     state_cost_root = jax.random.normal(key, (4, 4))
     action_cost_root = jax.random.normal(key, (2, 2))
     return SystemCostQuadratic.factory(
-        state_cost=state_cost_root.T @ state_cost_root,
-        action_cost=action_cost_root.T @ action_cost_root,
+        state_cost_matrix=state_cost_root.T @ state_cost_root,
+        action_cost_matrix=action_cost_root.T @ action_cost_root,
     )
 
 
 def test_call_example_single():
     instance = SystemCostQuadratic.factory(
-        state_cost=jnp.array([[1.0, 2.0], [2.0, 3.0]]),
-        action_cost=jnp.array([4.0]),
+        state_cost_matrix=jnp.array([[1.0, 2.0], [2.0, 3.0]]),
+        action_cost_matrix=jnp.array([4.0]),
     )
     state = jnp.array([1.0, 2.0])
     action = jnp.array([3.0])
@@ -33,8 +33,8 @@ def test_call_example_single():
 
 def test_call_example_batch():
     instance = SystemCostQuadratic.factory(
-        state_cost=jnp.array([[1.0, 2.0], [2.0, 3.0]]),
-        action_cost=jnp.array([4.0]),
+        state_cost_matrix=jnp.array([[1.0, 2.0], [2.0, 3.0]]),
+        action_cost_matrix=jnp.array([4.0]),
     )
     state = jnp.array([[1.0, 2.0], [3.0, 4.0]])
     action = jnp.array([[3.0], [4.0]])

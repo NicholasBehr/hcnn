@@ -16,12 +16,12 @@ class SystemDynamicsBase(ABC):
 
         Args:
             state (jax.Array): Current state,
-                shape (state_dim,) or (batch_dim, state_dim).
+                shape (state_dim,) or (batch_size, state_dim).
             action (jax.Array): Action,
-                shape (action_dim,) or (batch_dim, action_dim).
+                shape (action_dim,) or (batch_size, action_dim).
 
         Returns:
             jax.Array: Next state,
-                shape (state_dim,) or (batch_dim, state_dim).
+                shape (state_dim,) or (batch_size, state_dim).
         """
         pass

@@ -39,4 +39,6 @@ class SystemCostQuadratic(SystemCostBase):
         )
 
     def __call__(self, state: jax.Array, action: jax.Array) -> jax.Array:
-        return jnp.dot(state, self.state_cost @ state) + jnp.dot(action, self.action_cost @ action)
+        a = jnp.sum((state @ self.state_cost) * state, axis=-1)
+        b = jnp.sum((action @ self.action_cost) * action, axis=-1)
+        return a + b

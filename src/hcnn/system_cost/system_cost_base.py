@@ -9,18 +9,19 @@ class SystemCostBase(ABC):
     state_dim: int
     action_dim: int
 
+    @jax.jit
     @abstractmethod
     def __call__(self, state: jax.Array, action: jax.Array) -> jax.Array:
-        """
-        Computes the stage cost for a given system state and action.
+        """Computes the cost given the current state and action.
 
         Args:
-            state (jax.Array): The current state vector of shape (state_dim,).
-            action (jax.Array): The action or control input vector of shape (action_dim,).
+            state (jax.Array): Current state,
+                shape (state_dim,) or (batch_dim, state_dim).
+            action (jax.Array): Action,
+                shape (action_dim,) or (batch_dim, action_dim).
 
         Returns:
-            jax.Array: Scalar array representing the instantaneous (stage) cost incurred by applying
-            the given action in the specified state. The returned array should have shape (1,).
-
+            jax.Array: Cost,
+                shape () or (batch_dim,).
         """
         pass

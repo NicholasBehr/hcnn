@@ -38,7 +38,7 @@ def test_dimension_mismatch_between_state_and_input():
         SystemDynamicsLinear.factory(state_matrix, input_matrix)
 
 
-def test_next_state_example1():
+def test_call_example_single():
     state_matrix = jnp.array([[1.0, 2.0], [3.0, 4.0]])
     input_matrix = jnp.array([[5.0], [6.0]])
     instance = SystemDynamicsLinear.factory(state_matrix, input_matrix)
@@ -52,7 +52,7 @@ def test_next_state_example1():
     assert jnp.allclose(next_state, expected)
 
 
-def test_next_states_example2():
+def test_call_example_batch():
     state_matrix = jnp.array([[1.0, 2.0], [3.0, 4.0]])
     input_matrix = jnp.array([[5.0], [6.0]])
     instance = SystemDynamicsLinear.factory(state_matrix, input_matrix)

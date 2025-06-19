@@ -16,6 +16,7 @@ class OptimizationProblemBase(ABC, Generic[PhiType]):
 
     ### INITIALIZATION ###
     # get initial guess for optimization variable x (vectorized 1d)
+    @jax.jit
     @abstractmethod
     def get_x0(self, phi: PhiType) -> jax.Array:
         pass
@@ -27,6 +28,7 @@ class OptimizationProblemBase(ABC, Generic[PhiType]):
 
     ### NONLINEAR PARAMETRIC CONSTRAINTS ###
     # l <= h(x, phi) <= u
+    @jax.jit
     @abstractmethod
     def constraint_fn(self, x: jax.Array, phi: PhiType) -> jax.Array:
         pass

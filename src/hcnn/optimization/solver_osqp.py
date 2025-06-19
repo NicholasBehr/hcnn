@@ -5,7 +5,11 @@ import jax
 import jax.numpy as jnp
 from flax import struct
 
-from hcnn.optimization import OptimizationProblemBase, OptimizationSolverBase, PhiType
+from hcnn.optimization import (
+    OptimizationProblemBase,
+    OptimizationSolverBase,
+    PhiType,
+)
 
 
 @struct.dataclass
@@ -30,7 +34,9 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
         iter_counter: jax.Array
 
         @staticmethod
-        def factory(problem: OptimizationProblemBase[PhiType], phi: PhiType) -> Self:
+        def factory(
+            problem: OptimizationProblemBase[PhiType], phi: PhiType
+        ) -> Self:
             x = problem.get_x0(phi)
             z = problem.constraint_fn(x, phi)
             return OptimizationSolverOSQP.Variables(
@@ -46,14 +52,26 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
                 # parameters
                 alpha=jnp.array(1.6, dtype=float),
                 sigma=jnp.array(1e-6, dtype=float),
-                rho_vec=0.3 * jnp.where(problem.lower_bound == problem.upper_bound, 1e3, 1.0),
+                rho_vec=0.3
+                * jnp.where(
+                    problem.lower_bound == problem.upper_bound, 1e3, 1.0
+                ),
                 iter_counter=jnp.array(0, dtype=int),
             )
 
-        def update_primal_dual(self, problem: OptimizationProblemBase[PhiType], tol: float, phi: PhiType) -> Self:
+        def update_primal_dual(
+            self,
+            problem: OptimizationProblemBase[PhiType],
+            tol: float,
+            phi: PhiType,
+        ) -> Self:
             ## form linearization around x_tilde
-            h, h_jvp = jax.linearize(lambda x: problem.constraint_fn(x, phi), self.x_tilde)
-            _, h_vjp = jax.vjp(lambda x: problem.constraint_fn(x, phi), self.x_tilde)
+            h, h_jvp = jax.linearize(
+                lambda x: problem.constraint_fn(x, phi), self.x_tilde
+            )
+            _, h_vjp = jax.vjp(
+                lambda x: problem.constraint_fn(x, phi), self.x_tilde
+            )
 
             ## x_tilde ##
             def cg_preconditioner(v: jax.Array) -> jax.Array:
@@ -73,10 +91,16 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
 
             zhjx = self.z - h + h_jvp(self.x_tilde)
             r_zhjx_y = self.rho_vec * zhjx - self.y
-            cg_rhs = self.sigma * self.x - problem.cost_linear + h_vjp(r_zhjx_y)[0]
+            cg_rhs = (
+                self.sigma * self.x - problem.cost_linear + h_vjp(r_zhjx_y)[0]
+            )
 
             new_x_tilde, _ = jax.scipy.sparse.linalg.cg(
-                A=cg_lhs, b=cg_rhs, x0=self.x_tilde, M=cg_preconditioner, tol=tol
+                A=cg_lhs,
+                b=cg_rhs,
+                x0=self.x_tilde,
+                M=cg_preconditioner,
+                tol=tol,
             )
 
             ## z_tilde ##
@@ -86,11 +110,17 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
             new_x = self.alpha * new_x_tilde + (1 - self.alpha) * self.x
 
             ## z ##
-            inner = self.alpha * new_z_tilde + (1 - self.alpha) * self.z + self.y / self.rho_vec
+            inner = (
+                self.alpha * new_z_tilde
+                + (1 - self.alpha) * self.z
+                + self.y / self.rho_vec
+            )
             new_z = jnp.clip(inner, problem.lower_bound, problem.upper_bound)
 
             ## y ##
-            new_y = self.y + self.rho_vec * (self.alpha * new_z_tilde + (1 - self.alpha) * self.z - new_z)
+            new_y = self.y + self.rho_vec * (
+                self.alpha * new_z_tilde + (1 - self.alpha) * self.z - new_z
+            )
 
             return self.replace(
                 x_tilde=new_x_tilde,
@@ -100,12 +130,18 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
                 y=new_y,
             )
 
-        def update_residuals(self, problem: OptimizationProblemBase[PhiType], phi: PhiType) -> Self:
+        def update_residuals(
+            self, problem: OptimizationProblemBase[PhiType], phi: PhiType
+        ) -> Self:
             ## form linearization around x
             h, h_vjp = jax.vjp(lambda x: problem.constraint_fn(x, phi), self.x)
 
             primal_residuals = h - self.z
-            dual_residuals = problem.cost_quad_diag * self.x + problem.cost_linear + h_vjp(self.y)[0]
+            dual_residuals = (
+                problem.cost_quad_diag * self.x
+                + problem.cost_linear
+                + h_vjp(self.y)[0]
+            )
 
             return self.replace(
                 primal_residuals=primal_residuals,
@@ -117,7 +153,9 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
             tau_incr = 2
             tau_decr = 2
 
-            prim_norm_sqr = jnp.dot(self.primal_residuals, self.primal_residuals)
+            prim_norm_sqr = jnp.dot(
+                self.primal_residuals, self.primal_residuals
+            )
             dual_norm_sqr = jnp.dot(self.dual_residuals, self.dual_residuals)
 
             cond_increase = prim_norm_sqr > mu_sqr * dual_norm_sqr
@@ -162,7 +200,9 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
             .update_residuals(problem=problem, phi=phi)
         )
 
-    def _solve_variables(self, problem: OptimizationProblemBase[PhiType], phi: PhiType) -> Variables:
+    def _solve_variables(
+        self, problem: OptimizationProblemBase[PhiType], phi: PhiType
+    ) -> Variables:
         variables = OptimizationSolverOSQP.Variables.factory(problem, phi)
         variables = jax.lax.while_loop(
             cond_fun=self.cond_fun,
@@ -171,7 +211,9 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
         )
         return variables
 
-    def _solve_for_unrolling(self, problem: OptimizationProblemBase[PhiType], phi: PhiType):
+    def _solve_for_unrolling(
+        self, problem: OptimizationProblemBase[PhiType], phi: PhiType
+    ):
         variables = OptimizationSolverOSQP.Variables.factory(problem, phi)
         for _ in range(35):
             variables = self.body_fun(variables, problem, phi)
@@ -180,13 +222,27 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
     def _solve(self, problem: OptimizationProblemBase[PhiType], phi: PhiType):
         return self._solve_variables(problem, phi).x
 
-    def _solve_fwd(self, problem: OptimizationProblemBase[PhiType], phi: PhiType):
+    def _solve_fwd(
+        self, problem: OptimizationProblemBase[PhiType], phi: PhiType
+    ):
         variables = self._solve_variables(problem, phi)
-        return variables.x, (variables.x, variables.z, variables.y, problem, phi)
+        return variables.x, (
+            variables.x,
+            variables.z,
+            variables.y,
+            problem,
+            phi,
+        )
 
     def _solve_bwd(
         self,
-        res: Tuple[jax.Array, jax.Array, jax.Array, OptimizationProblemBase[PhiType], PhiType],
+        res: Tuple[
+            jax.Array,
+            jax.Array,
+            jax.Array,
+            OptimizationProblemBase[PhiType],
+            PhiType,
+        ],
         g: jax.Array,
     ):
         ## Unpack and rename input
@@ -203,25 +259,38 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
 
         ## Precompute JVP, VJP and HVP for the constraint function h(x) = problem.constraint_fn_x(x)
         # h_jvp computes v -> dh/dx @ v
-        _, h_jvp = jax.linearize(lambda x: problem.constraint_fn(x, phi), x_star)
+        _, h_jvp = jax.linearize(
+            lambda x: problem.constraint_fn(x, phi), x_star
+        )
         # h_vjp computes w -> w^T @ dh/dx
         _, h_vjp = jax.vjp(lambda x: problem.constraint_fn(x, phi), x_star)
         # h_hvp computes y.T @ d^2h/dx^2 @ v
-        _, h_hvp = jax.linearize(jax.grad(lambda x: jnp.dot(y_star, problem.constraint_fn(x, phi))), x_star)
+        _, h_hvp = jax.linearize(
+            jax.grad(lambda x: jnp.dot(y_star, problem.constraint_fn(x, phi))),
+            x_star,
+        )
 
         def schur_lhs(u1: jax.Array) -> jax.Array:
-            return problem.cost_quad_diag * u1 + h_hvp(u1) + h_vjp(plus_u_minus_l * h_jvp(u1))[0]
+            return (
+                problem.cost_quad_diag * u1
+                + h_hvp(u1)
+                + h_vjp(plus_u_minus_l * h_jvp(u1))[0]
+            )
 
         # TODO ATTENTION need to verify lhs is PSD, but cg seems more stable than gmres
         # mainly A_xx at solution PSD?
-        u1, _ = jax.scipy.sparse.linalg.cg(A=schur_lhs, b=v1, maxiter=self.max_iter, tol=self.tol)
+        u1, _ = jax.scipy.sparse.linalg.cg(
+            A=schur_lhs, b=v1, maxiter=self.max_iter, tol=self.tol
+        )
         h_jvp_u1 = h_jvp(u1)
         u2 = plus_u_minus_l * h_jvp_u1
         u3 = frac_upper * h_jvp_u1
         u4 = frac_lower * h_jvp_u1
 
         ## Explicit VJP (step 2)
-        g_problem = jax.tree_util.tree_map(lambda x: jnp.zeros_like(x), problem)  # copy
+        g_problem = jax.tree_util.tree_map(
+            lambda x: jnp.zeros_like(x), problem
+        )  # copy
         g_problem = g_problem.replace(
             cost_quad_diag=-x_star * u1,
             cost_linear=-u1,
@@ -231,11 +300,17 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
 
         g_phi_1 = jax.grad(
             lambda phi_arg: jnp.dot(
-                jax.jvp(lambda x_inner: problem.constraint_fn(x_inner, phi_arg), (x_star,), (-u1,))[1],
+                jax.jvp(
+                    lambda x_inner: problem.constraint_fn(x_inner, phi_arg),
+                    (x_star,),
+                    (-u1,),
+                )[1],
                 y_star,
             )
         )(phi)
-        g_phi_2 = jax.vjp(lambda phi_arg: problem.constraint_fn(x_star, phi_arg), phi)[1](-u2)[0]
+        g_phi_2 = jax.vjp(
+            lambda phi_arg: problem.constraint_fn(x_star, phi_arg), phi
+        )[1](-u2)[0]
         g_phi = jax.tree_util.tree_map(jnp.add, g_phi_1, g_phi_2)
 
         return (g_problem, g_phi)

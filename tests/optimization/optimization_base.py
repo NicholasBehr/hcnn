@@ -7,9 +7,6 @@ from jax import test_util
 
 from hcnn.optimization import OptimizationProblemBase, OptimizationSolverBase
 
-# jax.config.update("jax_cuda_visible_devices", "0")
-jax.config.update("jax_platform_name", "cpu")
-
 
 @struct.dataclass
 class UnconstrainedProblem(OptimizationProblemBase[jax.Array]):
@@ -69,7 +66,9 @@ def test_vjp_unconstrained(solver: OptimizationSolverBase):
         problem, phi = UnconstrainedProblem.factory(cost_quad_diag, cost_linear)
 
         # solve
-        jac_prob, jac_phi = jax.jacrev(solver.solve, argnums=(0, 1))(problem, phi)
+        jac_prob, jac_phi = jax.jacrev(solver.solve, argnums=(0, 1))(
+            problem, phi
+        )
 
         # jac_prob_unroll = jax.jacrev(solver._solve_for_unrolling, argnums=(0,))(problem, phi)
 
@@ -134,9 +133,15 @@ def test_solve_box_projection(solver: OptimizationSolverBase):
         # create
         keys = jax.random.split(jax.random.key(i), 3)
         origin = jax.random.normal(keys[0], (dimension,))
-        lower_bound = jax.random.uniform(keys[1], (dimension,), minval=-5, maxval=5)
-        upper_bound = jax.random.uniform(keys[2], (dimension,), minval=lower_bound, maxval=10)
-        problem, phi = BoxProjectionProblem.factory(origin, lower_bound, upper_bound)
+        lower_bound = jax.random.uniform(
+            keys[1], (dimension,), minval=-5, maxval=5
+        )
+        upper_bound = jax.random.uniform(
+            keys[2], (dimension,), minval=lower_bound, maxval=10
+        )
+        problem, phi = BoxProjectionProblem.factory(
+            origin, lower_bound, upper_bound
+        )
 
         # solve
         x_star = solver.solve(problem, phi)
@@ -156,23 +161,31 @@ def test_vjp_box_projection(solver: OptimizationSolverBase):
         # create
         keys = jax.random.split(jax.random.key(i), 3)
         origin = jax.random.normal(keys[0], (dimension,))
-        lower_bound = jax.random.uniform(keys[1], (dimension,), minval=-5, maxval=5)
-        upper_bound = jax.random.uniform(keys[2], (dimension,), minval=lower_bound, maxval=10)
+        lower_bound = jax.random.uniform(
+            keys[1], (dimension,), minval=-5, maxval=5
+        )
+        upper_bound = jax.random.uniform(
+            keys[2], (dimension,), minval=lower_bound, maxval=10
+        )
 
         # solve
         def box_projection(origin, lower_bound, upper_bound):
-            problem, phi = BoxProjectionProblem.factory(origin, lower_bound, upper_bound)
+            problem, phi = BoxProjectionProblem.factory(
+                origin, lower_bound, upper_bound
+            )
             return solver.solve(problem, phi)
 
-        jac_o, jac_lb, jac_ub = jax.jacrev(box_projection, argnums=(0, 1, 2))(origin, lower_bound, upper_bound)
+        jac_o, jac_lb, jac_ub = jax.jacrev(box_projection, argnums=(0, 1, 2))(
+            origin, lower_bound, upper_bound
+        )
 
         # verify
         def box_projection_reference(origin, lower_bound, upper_bound):
             return jnp.clip(origin, lower_bound, upper_bound)
 
-        jac_o_ref, jac_lb_ref, jac_ub_ref = jax.jacrev(box_projection_reference, argnums=(0, 1, 2))(
-            origin, lower_bound, upper_bound
-        )
+        jac_o_ref, jac_lb_ref, jac_ub_ref = jax.jacrev(
+            box_projection_reference, argnums=(0, 1, 2)
+        )(origin, lower_bound, upper_bound)
         print(f"run {i}")
 
         assert jnp.allclose(
@@ -257,7 +270,9 @@ def test_solve_triangle_projection(solver: OptimizationSolverBase):
     )
 
     for origin, x_star_analytic in zip(origins, x_stars_analytic, strict=False):
-        problem, phi = TriangleProjectionProblem.factory(origin, point_a, point_b, point_c)
+        problem, phi = TriangleProjectionProblem.factory(
+            origin, point_a, point_b, point_c
+        )
 
         # solve
         x_star = solver.solve(problem, phi)
@@ -285,7 +300,9 @@ def test_vjp_triangle_projection(solver: OptimizationSolverBase):
     )
 
     for origin in origins:
-        problem, phi = TriangleProjectionProblem.factory(origin, point_a, point_b, point_c)
+        problem, phi = TriangleProjectionProblem.factory(
+            origin, point_a, point_b, point_c
+        )
 
         test_util.check_vjp(
             f=solver.solve,

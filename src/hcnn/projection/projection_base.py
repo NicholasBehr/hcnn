@@ -1,4 +1,4 @@
-from typing import Callable, Tuple
+from typing import Tuple
 
 import jax
 from flax import struct
@@ -23,7 +23,6 @@ class ProjectionPhi:
     split_constraints: Tuple
     jax_key: jax.Array = struct.field(pytree_node=False)
     horizon: int = struct.field(pytree_node=False)
-    x_to_rollout: Callable[[jax.Array], Rollout] = struct.field(pytree_node=False)
 
 
 @struct.dataclass

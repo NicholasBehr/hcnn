@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import pytest
 
 from hcnn.policy.policy_lqr import PolicyLQR
-from hcnn.system_dynamics.system_dynamics_linear import SystemDynamicsLinear
+from hcnn.system_dynamics import SystemDynamicsLinear
 from tests.policy.policy_base import *
 
 
@@ -25,16 +25,26 @@ def instance(dynamics_linear: SystemDynamicsLinear):
     )
 
 
-def test_valid_instance_creation(instance: PolicyLQR, dynamics_linear: SystemDynamicsLinear):
-    assert instance.riccati_matrix.shape == (dynamics_linear.state_dim, dynamics_linear.state_dim)
-    assert instance.gain_matrix.shape == (dynamics_linear.action_dim, dynamics_linear.state_dim)
+def test_valid_instance_creation(
+    instance: PolicyLQR, dynamics_linear: SystemDynamicsLinear
+):
+    assert instance.riccati_matrix.shape == (
+        dynamics_linear.state_dim,
+        dynamics_linear.state_dim,
+    )
+    assert instance.gain_matrix.shape == (
+        dynamics_linear.action_dim,
+        dynamics_linear.state_dim,
+    )
 
 
 def test_non_symmetric_state_cost_raises(dynamics_linear: SystemDynamicsLinear):
     state_cost = jnp.array([[1.0, 2.0], [0.0, 1.0]])
     input_cost = jnp.eye(1)
 
-    with pytest.raises(ValueError, match="State cost matrix must be symmetric!"):
+    with pytest.raises(
+        ValueError, match="State cost matrix must be symmetric!"
+    ):
         PolicyLQR.factory(dynamics_linear, state_cost, input_cost)
 
 
@@ -50,7 +60,9 @@ def test_non_symmetric_input_cost_raises(dynamics_linear: SystemDynamicsLinear):
     state_cost = jnp.eye(2)
     input_cost = jnp.array([[1.0, 2.0], [0.0, 1.0]])
 
-    with pytest.raises(ValueError, match="Input cost matrix must be symmetric!"):
+    with pytest.raises(
+        ValueError, match="Input cost matrix must be symmetric!"
+    ):
         PolicyLQR.factory(dynamics_linear, state_cost, input_cost)
 
 
@@ -65,7 +77,9 @@ def test_non_pd_input_cost_raises(dynamics_linear: SystemDynamicsLinear):
 def test_unstabilizable_system_raises():
     state_matrix = jnp.array([[1.2, 0.0], [0.0, 1.1]])
     input_matrix = jnp.zeros((2, 1))
-    system = SystemDynamicsLinear.factory(state_matrix=state_matrix, input_matrix=input_matrix)
+    system = SystemDynamicsLinear.factory(
+        state_matrix=state_matrix, input_matrix=input_matrix
+    )
 
     state_cost = jnp.eye(2)
     input_cost = jnp.eye(1)
@@ -76,17 +90,25 @@ def test_unstabilizable_system_raises():
 
 def test_undetectable_system_raises():
     state_matrix = jnp.array([[1.2, 0.0], [0.0, 1.1]])
-    input_matrix = jnp.eye(2)  # stabilizable, but Q will cause detectability to fail
-    system = SystemDynamicsLinear.factory(state_matrix=state_matrix, input_matrix=input_matrix)
+    input_matrix = jnp.eye(
+        2
+    )  # stabilizable, but Q will cause detectability to fail
+    system = SystemDynamicsLinear.factory(
+        state_matrix=state_matrix, input_matrix=input_matrix
+    )
 
-    state_cost = jnp.array([[1.0, 0.0], [0.0, 0.0]])  # makes Q sqrt only affect one state
+    state_cost = jnp.array(
+        [[1.0, 0.0], [0.0, 0.0]]
+    )  # makes Q sqrt only affect one state
     input_cost = jnp.eye(2)
 
     with pytest.raises(ValueError, match="is not detectable"):
         PolicyLQR.factory(system, state_cost, input_cost)
 
 
-def test_state_cost_shape_mismatch_raises(dynamics_linear: SystemDynamicsLinear):
+def test_state_cost_shape_mismatch_raises(
+    dynamics_linear: SystemDynamicsLinear,
+):
     state_cost = jnp.eye(3)  # should be 2x2
     input_cost = jnp.eye(1)
 
@@ -94,7 +116,9 @@ def test_state_cost_shape_mismatch_raises(dynamics_linear: SystemDynamicsLinear)
         PolicyLQR.factory(dynamics_linear, state_cost, input_cost)
 
 
-def test_input_cost_shape_mismatch_raises(dynamics_linear: SystemDynamicsLinear):
+def test_input_cost_shape_mismatch_raises(
+    dynamics_linear: SystemDynamicsLinear,
+):
     state_cost = jnp.eye(2)
     input_cost = jnp.eye(2)  # should be 1x1
 
@@ -109,7 +133,9 @@ def test_dare_solver_outputs_valid_riccati_and_gain():
     state_cost = jnp.eye(2)
     input_cost = jnp.array([[1.0]])
 
-    system = SystemDynamicsLinear.factory(state_matrix=state_matrix, input_matrix=input_matrix)
+    system = SystemDynamicsLinear.factory(
+        state_matrix=state_matrix, input_matrix=input_matrix
+    )
     policy = PolicyLQR.factory(system, state_cost, input_cost)
     riccati_matrix = policy.riccati_matrix
     gain_matrix = policy.gain_matrix
@@ -124,15 +150,22 @@ def test_dare_solver_outputs_valid_riccati_and_gain():
 
     # 3. Riccati matrix should approximately satisfy the DARE
     r_inv_bt_x = jnp.linalg.solve(
-        input_cost + input_matrix.T @ riccati_matrix @ input_matrix, input_matrix.T @ riccati_matrix
+        input_cost + input_matrix.T @ riccati_matrix @ input_matrix,
+        input_matrix.T @ riccati_matrix,
     )
     dare_lhs = riccati_matrix
     dare_rhs = (
         state_matrix.T @ riccati_matrix @ state_matrix
-        - state_matrix.T @ riccati_matrix @ input_matrix @ r_inv_bt_x @ state_matrix
+        - state_matrix.T
+        @ riccati_matrix
+        @ input_matrix
+        @ r_inv_bt_x
+        @ state_matrix
         + state_cost
     )
-    assert jnp.allclose(dare_lhs, dare_rhs, atol=1e-6), "DARE equation not satisfied"
+    assert jnp.allclose(dare_lhs, dare_rhs, atol=1e-6), (
+        "DARE equation not satisfied"
+    )
 
 
 def test_dare_solver_reference_case_1():
@@ -146,13 +179,19 @@ def test_dare_solver_reference_case_1():
     x_expected = jnp.array([[4.7687, 0.9438], [0.9438, 3.2369]])
     k_expected = jnp.array([[-0.2216, -0.1297]])
 
-    system = SystemDynamicsLinear.factory(state_matrix=state_matrix, input_matrix=input_matrix)
+    system = SystemDynamicsLinear.factory(
+        state_matrix=state_matrix, input_matrix=input_matrix
+    )
     policy = PolicyLQR.factory(system, state_cost, input_cost)
     x_computed = policy.riccati_matrix
     k_computed = policy.gain_matrix
 
-    assert jnp.allclose(x_computed, x_expected, atol=1e-3), "Riccati matrix X mismatch"
-    assert jnp.allclose(k_computed, k_expected, atol=1e-3), "LQR gain K mismatch"
+    assert jnp.allclose(x_computed, x_expected, atol=1e-3), (
+        "Riccati matrix X mismatch"
+    )
+    assert jnp.allclose(k_computed, k_expected, atol=1e-3), (
+        "LQR gain K mismatch"
+    )
 
 
 def test_dare_solver_reference_case_2():
@@ -166,10 +205,16 @@ def test_dare_solver_reference_case_2():
     x_expected = jnp.array([[8.1493, 4.0236], [4.0236, 4.0838]])
     k_expected = jnp.array([[0.949749, 1.2793549]])
 
-    system = SystemDynamicsLinear.factory(state_matrix=state_matrix, input_matrix=input_matrix)
+    system = SystemDynamicsLinear.factory(
+        state_matrix=state_matrix, input_matrix=input_matrix
+    )
     policy = PolicyLQR.factory(system, state_cost, input_cost)
     x_computed = policy.riccati_matrix
     k_computed = policy.gain_matrix
 
-    assert jnp.allclose(x_computed, x_expected, atol=1e-3), "Riccati matrix X mismatch"
-    assert jnp.allclose(k_computed, k_expected, atol=1e-3), "LQR gain K mismatch"
+    assert jnp.allclose(x_computed, x_expected, atol=1e-3), (
+        "Riccati matrix X mismatch"
+    )
+    assert jnp.allclose(k_computed, k_expected, atol=1e-3), (
+        "LQR gain K mismatch"
+    )

@@ -1,6 +1,6 @@
 import jax
 import jax.numpy as jnp
-from flax import struct
+from flax import nnx, struct
 
 from hcnn.policy import PolicyBase
 from hcnn.system_dynamics import SystemDynamicsLinear
@@ -12,10 +12,15 @@ class PolicyLQR(PolicyBase):
     gain_matrix: jax.Array
 
     @classmethod
-    def factory(cls, system_linear: SystemDynamicsLinear, state_cost: jax.Array, input_cost: jax.Array):
+    def factory(
+        cls,
+        system_linear: SystemDynamicsLinear,
+        state_cost: jax.Array,
+        input_cost: jax.Array,
+    ):
         tol: float = 1e-8
-        state_matrix = system_linear.state_matrix
-        input_matrix = system_linear.input_matrix
+        state_matrix = system_linear.state_matrix_transp.T
+        input_matrix = system_linear.input_matrix_transp.T
         state_cost = jnp.atleast_2d(state_cost)
         input_cost = jnp.atleast_2d(input_cost)
 
@@ -34,9 +39,15 @@ class PolicyLQR(PolicyBase):
         if not jnp.all(matrix_r_eigenvals >= +tol):
             raise ValueError("Input cost matrix is not PD!")
 
-        if state_cost.shape != (system_linear.state_dim, system_linear.state_dim):
+        if state_cost.shape != (
+            system_linear.state_dim,
+            system_linear.state_dim,
+        ):
             raise ValueError("State dimension missmatch!")
-        if input_cost.shape != (system_linear.action_dim, system_linear.action_dim):
+        if input_cost.shape != (
+            system_linear.action_dim,
+            system_linear.action_dim,
+        ):
             raise ValueError("Input dimension missmatch!")
 
         # (2) verify existence of solution
@@ -67,14 +78,18 @@ class PolicyLQR(PolicyBase):
         )
 
     @staticmethod
-    def is_stabilizable(state_matrix: jax.Array, input_matrix: jax.Array, tol: float = 1e-7) -> bool:
+    def is_stabilizable(
+        state_matrix: jax.Array, input_matrix: jax.Array, tol: float = 1e-7
+    ) -> bool:
         n = state_matrix.shape[0]
 
         for eigval in jnp.linalg.eigvals(state_matrix):
             # Only check modes with |λ| >= 1 (unstable)
             if jnp.abs(eigval) >= 1.0 - tol:
                 # Check if the controllability matrix [λI - A, B] has full rank
-                test_matrix = jnp.hstack((eigval * jnp.eye(n) - state_matrix, input_matrix))
+                test_matrix = jnp.hstack(
+                    (eigval * jnp.eye(n) - state_matrix, input_matrix)
+                )
                 if jnp.linalg.matrix_rank(test_matrix, rtol=tol) < n:
                     return False
         return True
@@ -124,10 +139,11 @@ class PolicyLQR(PolicyBase):
             riccati_matrix = new_riccati_matrix
         return riccati_matrix, gain_matrix
 
+    @nnx.jit
     def __call__(
         self,
         state: jax.Array,
         *,
         jax_key: jax.Array | None = None,
     ) -> jax.Array:
-        return -self.gain_matrix @ state
+        return -state @ self.gain_matrix.T

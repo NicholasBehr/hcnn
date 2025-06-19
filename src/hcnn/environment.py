@@ -3,14 +3,18 @@ import jax.numpy as jnp
 import optax
 from flax import nnx, struct
 
-from hcnn.optimization import OptimizationSolverBase
+from hcnn.optimization import OptimizationProblemBase, OptimizationSolverBase
 from hcnn.policy import PolicyBase
-from hcnn.projection import ProjectionBase, ProjectionPhi, RolloutPlan
+from hcnn.projection import ProjectionBase, ProjectionPhi, Rollout
 from hcnn.system_constraints import SystemConstraintsBase
 from hcnn.system_cost import SystemCostBase
 from hcnn.system_dynamics import SystemDynamicsBase
 from hcnn.training.dropout_mlp import DropoutMLP
-from hcnn.training.generalized_advantage import generalized_advantage_1, generalized_advantage_t, td_residuals
+from hcnn.training.generalized_advantage import (
+    generalized_advantage_1,
+    generalized_advantage_t,
+    td_residuals,
+)
 
 
 @struct.dataclass
@@ -23,6 +27,7 @@ class Environment:
     ## PROJECTION
     projection: ProjectionBase
     solver: OptimizationSolverBase
+    problem: OptimizationProblemBase
 
     # PARAMETERS
     td_gamma: float = 0.8
@@ -65,7 +70,7 @@ class Environment:
         return graphdef, state
 
     @staticmethod
-    @jax.jit
+    # @jax.jit
     def train_step(graphdef, state):
         (
             self,
@@ -79,9 +84,10 @@ class Environment:
             rngs,
         ) = nnx.merge(graphdef, state)
 
-        # Determine training 'location'
-        initial_state = jax.random.uniform(rngs(), (self.sys_dynamics.state_dim,), minval=-6, maxval=6)
-        jax_key = rngs()
+        batch_size = 20
+
+        initial_state = jax.random.uniform(rngs(), (batch_size, self.sys_dynamics.state_dim), minval=-6, maxval=6)
+        jax_key = jax.random.split(rngs(), batch_size)
 
         # Sample a rollout
         rollout, rollout_vjp = jax.vjp(
@@ -130,7 +136,7 @@ class Environment:
             )
             return jnp.mean(advantages_t**2)
 
-        def policy_loss_fn(value_residuals: jax.Array, rollout: RolloutPlan):
+        def policy_loss_fn(value_residuals: jax.Array, rollout: Rollout):
             advantage_1 = generalized_advantage_1(
                 deltas=value_residuals,
                 td_gamma=self.td_gamma,
@@ -198,7 +204,7 @@ class Environment:
         rollout = self.projection.get_rollout(x_star)
         return rollout
 
-    def calculate_value_residuals(self, value_to_go: DropoutMLP, rollout: RolloutPlan):
+    def calculate_value_residuals(self, value_to_go: DropoutMLP, rollout: Rollout):
         costs = jax.vmap(self.sys_cost)(rollout.states, rollout.actions)
         rewards = -costs
         values = value_to_go(rollout.states).squeeze()
@@ -207,7 +213,7 @@ class Environment:
         value_residuals = td_residuals(rewards=rewards, values=values, td_gamma=self.td_gamma)
         return value_residuals
 
-    def calculate_relax_residuals(self, relax_to_go: DropoutMLP, rollout: RolloutPlan):
+    def calculate_relax_residuals(self, relax_to_go: DropoutMLP, rollout: Rollout):
         rewards = rollout.relaxations
         values = relax_to_go(rollout.states).squeeze()
 

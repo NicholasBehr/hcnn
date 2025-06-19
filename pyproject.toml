@@ -3,12 +3,11 @@ name = "hcnn"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 dependencies = [
     "brax>=0.12.3",
     "flax>=0.10.5",
-    "jax[cuda12]>=0.6.0",
-    "nvidia-cublas-cu12==12.9.0.13",
+    "jax[cuda12]>=0.6.2",
 ]
 
 [build-system]
@@ -27,7 +26,7 @@ dev = [
 [tool.ruff]
 exclude = [".venv"]
 line-length = 80
-target-version = "py311"
+target-version = "py313"
 
 [tool.ruff.lint]
 select = [

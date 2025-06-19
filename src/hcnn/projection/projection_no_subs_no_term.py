@@ -46,7 +46,9 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
             cls._bounds_sys_constraints(horizon, sys_constraints),
             cls._bounds_non_neg_relax(horizon),
         ]
-        lower_bound_list, upper_bound_list = zip(*bound_tuple_list, strict=False)
+        lower_bound_list, upper_bound_list = zip(
+            *bound_tuple_list, strict=False
+        )
         lower_bound = jnp.concatenate(lower_bound_list)
         upper_bound = jnp.concatenate(upper_bound_list)
 
@@ -81,11 +83,21 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
             intervention = jnp.zeros_like(action)
             next_state = sys_dynamics.next_state(state, action)
             constraint = sys_constraints(state, action)
-            relaxation_plus = jnp.max(jnp.maximum(0.0, sys_constraints.lower_bound - constraint))
-            relaxations_minus = jnp.max(
-                jnp.max(jnp.maximum(0.0, constraint - sys_constraints.upper_bound)),
+            relaxation_plus = jnp.max(
+                jnp.maximum(0.0, sys_constraints.lower_bound - constraint)
             )
-            out = (action, state, intervention, relaxation_plus, relaxations_minus)
+            relaxations_minus = jnp.max(
+                jnp.max(
+                    jnp.maximum(0.0, constraint - sys_constraints.upper_bound)
+                ),
+            )
+            out = (
+                action,
+                state,
+                intervention,
+                relaxation_plus,
+                relaxations_minus,
+            )
             return next_state, out
 
         (_, rollout_tuple) = jax.lax.scan(
@@ -113,17 +125,29 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
         sys_constraints = nnx.merge(*phi.split_constraints)
 
         constraint_fun_list = [
-            ProjectionNoSubstitutionNoTerminal._constraints_initial_state(rollout, phi.initial_state),
-            ProjectionNoSubstitutionNoTerminal._constraints_sys_dynamics(rollout, sys_dynamics),
-            ProjectionNoSubstitutionNoTerminal._constraints_policy(rollout, policy, phi.jax_key),
-            ProjectionNoSubstitutionNoTerminal._constraints_sys_constraints(rollout, sys_constraints),
-            ProjectionNoSubstitutionNoTerminal._constraints_non_neg_relax(rollout),
+            ProjectionNoSubstitutionNoTerminal._constraints_initial_state(
+                rollout, phi.initial_state
+            ),
+            ProjectionNoSubstitutionNoTerminal._constraints_sys_dynamics(
+                rollout, sys_dynamics
+            ),
+            ProjectionNoSubstitutionNoTerminal._constraints_policy(
+                rollout, policy, phi.jax_key
+            ),
+            ProjectionNoSubstitutionNoTerminal._constraints_sys_constraints(
+                rollout, sys_constraints
+            ),
+            ProjectionNoSubstitutionNoTerminal._constraints_non_neg_relax(
+                rollout
+            ),
         ]
         return jnp.concatenate(constraint_fun_list)
 
     # (1) initial state
     @staticmethod
-    def _constraints_initial_state(rollout: Rollout, initial_state: jax.Array) -> jax.Array:
+    def _constraints_initial_state(
+        rollout: Rollout, initial_state: jax.Array
+    ) -> jax.Array:
         return rollout.states[0] - initial_state
 
     @staticmethod
@@ -153,7 +177,9 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
         return constraints.ravel()
 
     @staticmethod
-    def _bounds_sys_dynamics(horizon, sys_dynamics) -> tuple[jax.Array, jax.Array]:
+    def _bounds_sys_dynamics(
+        horizon, sys_dynamics
+    ) -> tuple[jax.Array, jax.Array]:
         return (
             jnp.zeros((horizon - 1) * sys_dynamics.state_dim),
             jnp.zeros((horizon - 1) * sys_dynamics.state_dim),
@@ -179,6 +205,8 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
             policy_constraints,
             data_slices,
         )
+
+        # constraints = rollout.actions - policy(rollout.states, jax_key=jax_key) - rollout.interventions
         return constraints.ravel()
 
     @staticmethod
@@ -190,7 +218,9 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
 
     # (4) system constraints
     @staticmethod
-    def _constraints_sys_constraints(rollout: Rollout, sys_constraints) -> jax.Array:
+    def _constraints_sys_constraints(
+        rollout: Rollout, sys_constraints
+    ) -> jax.Array:
         def sys_constraint_fn(data_slice):
             state, action, r_plus, r_minus = data_slice
             constraint = sys_constraints(state, action) + r_plus - r_minus
@@ -212,7 +242,9 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
         return constraints.ravel()
 
     @staticmethod
-    def _bounds_sys_constraints(horizon, sys_constraints) -> tuple[jax.Array, jax.Array]:
+    def _bounds_sys_constraints(
+        horizon, sys_constraints
+    ) -> tuple[jax.Array, jax.Array]:
         return (
             jnp.tile(sys_constraints.lower_bound, horizon),
             jnp.tile(sys_constraints.upper_bound, horizon),
@@ -221,7 +253,9 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
     # (5) non-negative relaxations
     @staticmethod
     def _constraints_non_neg_relax(rollout: Rollout) -> jax.Array:
-        return jnp.concatenate((rollout.relaxations_plus, rollout.relaxations_minus))
+        return jnp.concatenate(
+            (rollout.relaxations_plus, rollout.relaxations_minus)
+        )
 
     @staticmethod
     def _bounds_non_neg_relax(horizon) -> tuple[jax.Array, jax.Array]:

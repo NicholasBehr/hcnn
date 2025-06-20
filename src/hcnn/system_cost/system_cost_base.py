@@ -15,13 +15,10 @@ class SystemCostBase(ABC):
         """Computes the cost given the current state and action.
 
         Args:
-            state (jax.Array): Current state,
-                shape (state_dim,) or (batch_size, state_dim).
-            action (jax.Array): Action,
-                shape (action_dim,) or (batch_size, action_dim).
+            state (jax.Array): Current state, shape (..., state_dim).
+            action (jax.Array): Current action, shape (..., action_dim).
 
         Returns:
-            jax.Array: Cost,
-                shape () or (batch_size,).
+            jax.Array: Stage cost, shape (...,).
         """
         pass

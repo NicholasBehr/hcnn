@@ -2,104 +2,115 @@ import jax
 import jax.numpy as jnp
 
 
-def td_residuals(rewards: jax.Array, values: jax.Array, td_gamma: float) -> jax.Array:
-    """Compute the temporal difference residuals."""
-    return rewards[:-1] + td_gamma * values[1:] - values[:-1]
+def td_residuals(
+    rewards: jax.Array, values: jax.Array, td_gamma: float
+) -> jax.Array:
+    """Compute the temporal difference residuals.
+
+    Args:
+        rewards (jax.Array): Rewards for each step,
+            shape (..., horizon).
+        values (jax.Array): Value estimates for each step,
+            shape (..., horizon).
+        td_gamma (float): Discount factor for the temporal difference.
+
+    Returns:
+        jax.Array: Temporal difference residuals,
+            shape (..., horizon-1).
+    """
+    return rewards[..., :-1] + td_gamma * values[..., 1:] - values[..., :-1]
 
 
 @jax.jit
 def generalized_advantage_1(
-    deltas: jax.Array,
+    td_residuals: jax.Array,
     td_gamma: float,
     gae_lambda: float,
 ) -> jax.Array:
-    """Compute the Generalized Advantage Estimation (GAE) for a given slice of TD residuals."""
+    """Compute the Generalized Advantage Estimation (GAE).
 
-    # Number of elements in the current slice of td_residuals
-    num_elements = deltas.shape[0]
-    if num_elements == 0:
-        return jnp.array(0.0, dtype=jnp.result_type(float, deltas))
+    Args:
+        td_residuals (jax.Array): Temporal difference residuals,
+            shape (..., horizon-1).
+        td_gamma (float): Discount factor for the temporal difference.
+        gae_lambda (float): Lambda parameter for GAE.
 
-    # Standard discount factors: (gamma*lambda)^0, (gamma*lambda)^1, ...
-    discounts = (td_gamma * gae_lambda) ** jnp.arange(0, num_elements)
+    Returns:
+        jax.Array: Generalized advantage estimates,
+            shape (...).
+    """
+
+    # Number of elements along the horizon dimension
+    num_elements = td_residuals.shape[-1]
+
+    # Standard discount factors:
+    # (gamma*lambda)^0, (gamma*lambda)^1, ...
+    discounts = (td_gamma * gae_lambda) ** jnp.arange(num_elements)
 
     # Powers for the cutoff correction term: N, N-1, ..., 1
     # e.g., if num_elements = 3, this is [3, 2, 1]
     powers_for_cutoff = jnp.arange(num_elements, 0, -1)
 
-    # Cutoff correction term: (1 - lambda^N), (1 - lambda^(N-1)), ..., (1 - lambda^1)
+    # Cutoff correction term:
+    # (1 - lambda^N), (1 - lambda^(N-1)), ..., (1 - lambda^1)
     cutoff_correction = 1.0 - (gae_lambda**powers_for_cutoff)
 
-    # Element-wise product and sum
-    return jnp.sum(discounts * deltas * cutoff_correction)
+    # Element-wise product and sum.
+    return jnp.sum(discounts * td_residuals * cutoff_correction, axis=-1)
 
 
 @jax.jit
 def generalized_advantage_t(
-    deltas: jax.Array,
+    td_residuals: jax.Array,
     td_gamma: float,
     gae_lambda: float,
 ) -> jax.Array:
-    """Compute the Generalized Advantage Estimation (GAE) for all starting points, vectorized."""
+    """Compute the Generalized Advantage Estimation (GAE)
+    for all starting points with one or more steps to go.
 
-    if deltas.shape[0] == 0:
-        return jnp.array([], dtype=jnp.result_type(float, deltas))
+    Args:
+        td_residuals (jax.Array): Temporal difference residuals,
+            shape (..., horizon-1).
+        td_gamma (float): Discount factor for the temporal difference.
+        gae_lambda (float): Lambda parameter for GAE.
 
-    # Step 1: Prepare the c_array for the scan.
-    # c_j = deltas[j] * (1 - gae_lambda**(m-j))
-    # The exponent (m-j) for gae_lambda corresponds to the number of terms
-    # from index j to the end of the deltas array.
-    # powers_lambda_exponent will be [m, m-1, ..., 1]
-    powers_lambda_exponent = jnp.arange(deltas.shape[0], 0, -1)
+    Returns:
+        jax.Array: Generalized advantage estimates for each starting point,
+            shape (..., horizon-1).
+    """
+    # Return early if the horizon is empty.
+    if td_residuals.shape[-1] == 0:
+        return td_residuals
 
-    # cutoff_term_for_cj[j] evaluates to (1 - gae_lambda**(m-j))
-    cutoff_term_for_cj = 1.0 - (gae_lambda**powers_lambda_exponent)
+    horizon_len = td_residuals.shape[-1]
+    powers = jnp.arange(horizon_len, 0, -1)
+    cutoff_correction = 1.0 - (gae_lambda**powers)
 
-    c_array = deltas * cutoff_term_for_cj  # Element-wise product
+    weighted_residuals = td_residuals * cutoff_correction
+    scan_factor = td_gamma * gae_lambda
 
-    # Step 2: Perform a backward scan.
-    # The recurrence relation for advantages a_s is:
-    # a_s = sum_{k=0}^{m-s-1} (td_gamma*gae_lambda)^k * deltas[s+k] * (1 - gae_lambda^{m-s-k})
-    # This can be rewritten as a_s = c_s + (td_gamma*gae_lambda) * a_{s+1} (if c included deltas)
-    # More precisely, a_s = sum_{j=s}^{m-1} (td_gamma*gae_lambda)^{j-s} * (deltas[j] * (1 - gae_lambda^{m-j}))
-    # Let c_j = deltas[j] * (1 - gae_lambda^{m-j}).
-    # Then a_s = sum_{k=0}^{m-1-s} (td_gamma*gae_lambda)^k * c_{s+k}.
-    # This is a_s = c_s + (td_gamma*gae_lambda) * c_{s+1} + (td_gamma*gae_lambda)^2 * c_{s+2} + ...
-    # This can be computed with a backward scan: a_j = c_j + (td_gamma*gae_lambda) * a_{j+1}, with a_m = 0.
+    def scan_body(carry_advantage, weighted_residual_t):
+        # Implements the recursive formula:
+        # A_t = weighted_residual_t + (gamma * lambda) * A_{t+1}
+        advantage_t = weighted_residual_t + scan_factor * carry_advantage
+        return advantage_t, advantage_t
 
-    scan_combination_factor = td_gamma * gae_lambda
+    # The initial carry for the scan is the advantage at the step after the last
+    # residual, which is 0. For a batch, this is a vector of zeros.
+    initial_carry = jnp.zeros_like(td_residuals[..., 0])
 
-    def scan_body(advantage_at_next_step, c_at_current_step):
-        """
-        Args:
-            advantage_at_next_step (a_{j+1}): Carry from the previous scan step (scanning in reverse).
-            c_at_current_step (c_j): Current element from c_array.
-        Returns:
-            Tuple (new_carry, y_element): (a_j, a_j)
-        """
-        # Calculate a_j = c_j + scan_factor * a_{j+1}
-        advantage_at_current_step = c_at_current_step + scan_combination_factor * advantage_at_next_step
+    # jax.lax.scan iterates over the first axis. We want to scan over the
+    # time axis (the last axis). So we move the time axis to the front.
+    weighted_residuals_time_first = jnp.moveaxis(weighted_residuals, -1, 0)
 
-        # The new carry for the (j-1)th step is a_j.
-        # The value to be collected for the j-th output is a_j.
-        return advantage_at_current_step, advantage_at_current_step
-
-    # initial_carry_for_scan represents a_m (advantage after the last delta term), which is 0.0.
-    initial_carry_for_scan = 0.0
-
-    # jax.lax.scan with reverse=True processes c_array from last element to first.
-    # c_array[m-1] is processed first, with carry = initial_carry_for_scan (a_m = 0).
-    # This computes a_{m-1} = c_array[m-1] + scan_factor * 0.
-    # Then c_array[m-2] is processed, with carry = a_{m-1}.
-    # This computes a_{m-2} = c_array[m-2] + scan_factor * a_{m-1}.
-    # ...
-    # The final carry from scan will be a_0.
-    # collected_advantages will be an array [a_0, a_1, ..., a_{m-1}].
-    _, collected_advantages = jax.lax.scan(
+    _, advantages_time_first = jax.lax.scan(
         scan_body,
-        initial_carry_for_scan,
-        c_array,  # Input sequence for the scan
+        initial_carry,
+        weighted_residuals_time_first,
         reverse=True,
     )
 
-    return collected_advantages
+    # Move the time axis back to its original position.
+    advantages = jnp.moveaxis(advantages_time_first, 0, -1)
+
+    return advantages

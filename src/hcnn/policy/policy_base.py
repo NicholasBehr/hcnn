@@ -20,13 +20,11 @@ class PolicyBase(nnx.Module, ABC):
         """Computes the policy action given the current state.
 
         Args:
-            state (jax.Array): Current state,
-                shape (state_dim,) or (batch_size, state_dim).
+            state (jax.Array): Current state, shape (..., state_dim).
             jax_key (jax.Array, optional):
                 Optional PRNG key for stochastic policies.
 
         Returns:
-            jax.Array: Policy action,
-                shape (action_dim,) or (batch_size, action_dim).
+            jax.Array: Policy action, shape (..., action_dim).
         """
         pass

@@ -15,13 +15,10 @@ class SystemDynamicsBase(ABC):
         """Computes the next state given the current state and action.
 
         Args:
-            state (jax.Array): Current state,
-                shape (state_dim,) or (batch_size, state_dim).
-            action (jax.Array): Action,
-                shape (action_dim,) or (batch_size, action_dim).
+            state (jax.Array): Current state, shape (..., state_dim).
+            action (jax.Array): Action, shape (..., action_dim).
 
         Returns:
-            jax.Array: Next state,
-                shape (state_dim,) or (batch_size, state_dim).
+            jax.Array: Next state, (..., state_dim).
         """
         pass

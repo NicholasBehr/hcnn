@@ -37,19 +37,28 @@ def test_call_single(instance: SystemConstraintsBase):
 
 def test_call_batch(instance: SystemConstraintsBase):
     batch_size = 200
+    horizon = 20
     key = jax.random.key(0)
 
     # Generate a random state and action
     if instance.state_dim is None:
         state = jnp.ones((1,))
     else:
-        state = jax.random.normal(key, (batch_size, instance.state_dim))
+        state = jax.random.normal(
+            key, (batch_size, horizon, instance.state_dim)
+        )
 
     if instance.action_dim is None:
         action = jnp.ones((1,))
     else:
-        action = jax.random.normal(key, (batch_size, instance.action_dim))
+        action = jax.random.normal(
+            key, (batch_size, horizon, instance.action_dim)
+        )
 
     constraint_eval = instance(state, action)
 
-    assert constraint_eval.shape == (batch_size, instance.constraint_dim)
+    assert constraint_eval.shape == (
+        batch_size,
+        horizon,
+        instance.constraint_dim,
+    )

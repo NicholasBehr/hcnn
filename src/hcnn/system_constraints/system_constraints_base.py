@@ -20,14 +20,11 @@ class SystemConstraintsBase(ABC):
         for the given state and action.
 
         Args:
-            state (jax.Array): State,
-                shape (state_dim,) or (batch_size, state_dim).
-            action (jax.Array): Action,
-                shape (action_dim,) or (batch_size, action_dim).
+            state (jax.Array): State, shape (..., state_dim).
+            action (jax.Array): Action, shape (..., action_dim).
 
         Returns:
-            jax.Array: Constraint values,
-                shape (constraint_dim,) or (batch_size, constraint_dim).
+            jax.Array: Constraint values, shape (..., constraint_dim).
 
         The constraint is considered satisfied if, for each element i:
             lower_bound[i] <= g(state, action)[i] <= upper_bound[i]

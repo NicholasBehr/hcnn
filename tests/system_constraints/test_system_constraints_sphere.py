@@ -1,23 +1,39 @@
 import jax
 import pytest
 
-from hcnn.system_constraints import SystemConstraintsSphere
-from tests.system_constraints.system_constraints_base import *
+from hcnn.system_constraints.system_constraints_sphere import (
+    SystemConstraintsSphere,
+)
+from tests.system_constraints.test_system_constraints_base import (
+    TestSystemConstraintsBase,
+)
 
 
-@pytest.fixture
-def instance() -> SystemConstraintsSphere:
-    key = jax.random.key(0)
-    return SystemConstraintsSphere.factory(
-        center=jax.random.normal(key, (4,)),
-        radius=jax.random.normal(key),
-    )
+class TestSystemConstraintsSphere(TestSystemConstraintsBase):
+    """Test class for SystemConstraintsSphere."""
 
+    @pytest.fixture
+    def sys_constraints(self, state_dim) -> SystemConstraintsSphere:
+        key = jax.random.key(0)
+        return SystemConstraintsSphere.factory(
+            center=jax.random.normal(key, (state_dim,)),
+            radius=jax.random.normal(key),
+        )
 
-def test_valid_instance_creation(instance: SystemConstraintsSphere):
-    assert instance.state_dim == 4
-    assert instance.action_dim is None
-    assert instance.constraint_dim == 1
-    assert instance.lower_bound.shape == (1,)
-    assert instance.upper_bound.shape == (1,)
-    assert instance.center.shape == (4,)
+    @pytest.fixture(autouse=True)
+    def setup(
+        self,
+        sys_constraints: SystemConstraintsSphere,
+        state_dim: int,
+        action_dim: int,
+    ):
+        self.sys_constraints = sys_constraints
+        self.state_dim = state_dim
+        self.action_dim = action_dim
+
+    def test_instance_creation(self):
+        assert isinstance(self.sys_constraints, SystemConstraintsSphere)
+        assert self.sys_constraints.state_dim == self.state_dim
+        assert self.sys_constraints.action_dim is None
+        assert self.sys_constraints.constraint_dim == 1
+        assert self.sys_constraints.center.shape == (self.state_dim,)

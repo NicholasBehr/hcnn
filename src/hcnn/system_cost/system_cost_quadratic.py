@@ -2,7 +2,7 @@ import jax
 from flax import struct
 from jax import numpy as jnp
 
-from hcnn.system_cost import SystemCostBase
+from hcnn.system_cost.system_cost_base import SystemCostBase
 
 
 @struct.dataclass

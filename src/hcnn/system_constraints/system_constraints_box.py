@@ -2,7 +2,9 @@ import jax
 import jax.numpy as jnp
 from flax import struct
 
-from hcnn.system_constraints import SystemConstraintsBase
+from hcnn.system_constraints.system_constraints_base import (
+    SystemConstraintsBase,
+)
 
 
 @struct.dataclass

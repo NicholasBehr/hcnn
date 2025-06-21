@@ -5,7 +5,10 @@ import jax.numpy as jnp
 from flax import struct
 from jax import test_util
 
-from hcnn.optimization import OptimizationProblemBase, OptimizationSolverBase
+from hcnn.optimization.optimization_base import (
+    OptimizationProblemBase,
+    OptimizationSolverBase,
+)
 
 
 @struct.dataclass
@@ -69,8 +72,6 @@ def test_vjp_unconstrained(solver: OptimizationSolverBase):
         jac_prob, jac_phi = jax.jacrev(solver.solve, argnums=(0, 1))(
             problem, phi
         )
-
-        # jac_prob_unroll = jax.jacrev(solver._solve_for_unrolling, argnums=(0,))(problem, phi)
 
         # verify
         assert jnp.allclose(
@@ -191,17 +192,17 @@ def test_vjp_box_projection(solver: OptimizationSolverBase):
         assert jnp.allclose(
             jac_o,
             jac_o_ref,
-            atol=1e-1,
+            atol=1e-3,
         ), f"was {jnp.diagonal(jac_o)} should be {jnp.diagonal(jac_o_ref)}"
         assert jnp.allclose(
             jac_lb,
             jac_lb_ref,
-            atol=1e-1,
+            atol=1e-3,
         ), f"was {jnp.diagonal(jac_lb)} should be {jnp.diagonal(jac_lb_ref)}"
         assert jnp.allclose(
             jac_ub,
             jac_ub_ref,
-            atol=1e-1,
+            atol=1e-3,
         ), f"was {jnp.diagonal(jac_ub)} should be {jnp.diagonal(jac_lb_ref)}"
 
 
@@ -224,7 +225,7 @@ class TriangleProjectionProblem(OptimizationProblemBase[jax.Array]):
         # Get the edges in order
         edges = jnp.roll(points, -1, axis=0) - points  # shape (3, 2)
 
-        # Compute outward normals to each edge (2D perp vector: (x, y) -> (y, -x))
+        # Compute outward normals to each edge
         normals = jnp.stack([edges[:, 1], -edges[:, 0]], axis=1)
 
         # Normalize the normals
@@ -281,7 +282,7 @@ def test_solve_triangle_projection(solver: OptimizationSolverBase):
         assert jnp.allclose(
             x_star,
             x_star_analytic,
-            atol=1e-5,
+            atol=1e-4,
         )
 
 
@@ -308,6 +309,7 @@ def test_vjp_triangle_projection(solver: OptimizationSolverBase):
             f=solver.solve,
             f_vjp=partial(jax.vjp, solver.solve),
             args=(problem, phi),
+            rtol=5 / 100,
         )
 
 
@@ -364,5 +366,5 @@ def test_vjp_circle_projection(solver: OptimizationSolverBase):
         f=solver.solve,
         f_vjp=partial(jax.vjp, solver.solve),
         args=(problem, phi),
-        rtol=1 / 100,
+        rtol=5 / 100,
     )

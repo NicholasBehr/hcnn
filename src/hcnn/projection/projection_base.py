@@ -5,10 +5,12 @@ import jax
 import jax.numpy as jnp
 from flax import nnx, struct
 
-from hcnn.optimization import OptimizationProblemBase
-from hcnn.policy import PolicyBase
-from hcnn.system_constraints import SystemConstraintsBase
-from hcnn.system_dynamics import SystemDynamicsBase
+from hcnn.optimization.optimization_base import OptimizationProblemBase
+from hcnn.policy.policy_base import PolicyBase
+from hcnn.system_constraints.system_constraints_base import (
+    SystemConstraintsBase,
+)
+from hcnn.system_dynamics.system_dynamics_base import SystemDynamicsBase
 
 
 @struct.dataclass
@@ -22,22 +24,20 @@ class Rollout:
 
 @struct.dataclass
 class ProjectionPhi:
-    # initial state of the system
     initial_state: jax.Array
-
-    # variable part of policy
-    policy_params: nnx.State
-
-    # rnd key for reproducible rollouts
+    policy_state: nnx.State
     jax_key: jax.Array = struct.field(pytree_node=False)
 
     @classmethod
     def factory(
-        cls, initial_state: jax.Array, policy: PolicyBase, jax_key: jax.Array
+        cls,
+        initial_state: jax.Array,
+        policy: PolicyBase,
+        jax_key: jax.Array,
     ):
         return cls(
             initial_state=initial_state,
-            policy_params=nnx.state(policy, nnx.Param),
+            policy_state=nnx.state(policy),
             jax_key=jax_key,
         )
 
@@ -46,15 +46,12 @@ class ProjectionPhi:
 class ProjectionBase(OptimizationProblemBase[ProjectionPhi]):
     state_dim: int = struct.field(pytree_node=False)
     action_dim: int = struct.field(pytree_node=False)
+    constraint_dim: int = struct.field(pytree_node=False)
     horizon: int = struct.field(pytree_node=False)
 
-    # constant part of policy
     policy_graphdef: nnx.GraphDef
-    policy_non_params: nnx.State
-
-    # constant dynamics and constraints
-    split_dynamics: Tuple[nnx.GraphDef, nnx.State]
-    split_constraints: Tuple[nnx.GraphDef, nnx.State]
+    sys_dynamics: SystemDynamicsBase
+    sys_constraints: SystemConstraintsBase
 
     @jax.jit
     @abstractmethod
@@ -124,8 +121,8 @@ class ProjectionBase(OptimizationProblemBase[ProjectionPhi]):
     ) -> jax.Array:
         constraints = (
             sys_constraints(rollout.states, rollout.actions)
-            + rollout.relaxations_plus[:, None]
-            - rollout.relaxations_minus[:, None]
+            + rollout.relaxations_plus
+            - rollout.relaxations_minus
         )
         return constraints.ravel()
 
@@ -145,7 +142,7 @@ class ProjectionBase(OptimizationProblemBase[ProjectionPhi]):
     ) -> jax.Array:
         return jnp.concatenate(
             [rollout.relaxations_plus, rollout.relaxations_minus]
-        )
+        ).ravel()
 
     @staticmethod
     def bounds_non_neg_relax(

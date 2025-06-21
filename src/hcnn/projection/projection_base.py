@@ -63,7 +63,7 @@ class ProjectionBase(OptimizationProblemBase[ProjectionPhi]):
     def constraints_initial_state(
         rollout: Rollout, initial_state: jax.Array
     ) -> jax.Array:
-        return initial_state - rollout.states[0]
+        return rollout.states[0] - initial_state
 
     @staticmethod
     def bounds_initial_state(state_dim) -> Tuple[jax.Array, jax.Array]:
@@ -119,10 +119,12 @@ class ProjectionBase(OptimizationProblemBase[ProjectionPhi]):
     def constraints_sys_constraints(
         rollout: Rollout, sys_constraints: SystemConstraintsBase
     ) -> jax.Array:
-        constraints = (
-            sys_constraints(rollout.states, rollout.actions)
-            + rollout.relaxations_plus
-            - rollout.relaxations_minus
+        constraints = jnp.array(
+            (
+                sys_constraints(rollout.states, rollout.actions)
+                + rollout.relaxations_plus
+                - rollout.relaxations_minus
+            )
         )
         return constraints.ravel()
 
@@ -131,8 +133,8 @@ class ProjectionBase(OptimizationProblemBase[ProjectionPhi]):
         horizon: int, sys_constraints: SystemConstraintsBase
     ) -> tuple[jax.Array, jax.Array]:
         return (
-            jnp.tile(sys_constraints.lower_bound, horizon),
-            jnp.tile(sys_constraints.upper_bound, horizon),
+            jnp.repeat(sys_constraints.lower_bound, horizon),
+            jnp.repeat(sys_constraints.upper_bound, horizon),
         )
 
     # (5) non-negative relaxations
@@ -147,8 +149,9 @@ class ProjectionBase(OptimizationProblemBase[ProjectionPhi]):
     @staticmethod
     def bounds_non_neg_relax(
         horizon: int,
+        constraint_dim: int,
     ) -> tuple[jax.Array, jax.Array]:
         return (
-            jnp.zeros(2 * horizon),
-            jnp.ones(2 * horizon) * jnp.inf,
+            jnp.zeros(2 * horizon * constraint_dim),
+            jnp.ones(2 * horizon * constraint_dim) * jnp.inf,
         )

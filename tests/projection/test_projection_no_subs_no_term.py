@@ -1,45 +1,14 @@
-import jax
 import jax.numpy as jnp
 import pytest
 
-from hcnn.projection.projection_base import ProjectionPhi
 from hcnn.projection.projection_no_subs_no_term import (
     ProjectionNoSubstitutionNoTerminal,
 )
-from tests.policy.test_policy_base import PolicyBase, PolicyMock
-from tests.system_constraints.test_system_constraints_base import (
-    SystemConstraintsBase,
-    SystemConstraintsMock,
-)
-from tests.system_dynamics.test_system_dynamics_base import (
-    SystemDynamicsBase,
-    SystemDynamicsMock,
-)
+from tests.projection.test_projection_base import TestProjectionBase
 
 
-class TestProjectionNoSubstitutionNoTerminal:
+class TestProjectionNoSubstitutionNoTerminal(TestProjectionBase):
     """Test class for ProjectionNoSubstitutionNoTerminal."""
-
-    @pytest.fixture
-    def policy(self, state_dim, action_dim) -> PolicyBase:
-        return PolicyMock.factory(
-            state_dim=state_dim,
-            action_dim=action_dim,
-        )
-
-    @pytest.fixture
-    def sys_dynamics(self, state_dim, action_dim) -> SystemDynamicsBase:
-        return SystemDynamicsMock(
-            state_dim=state_dim,
-            action_dim=action_dim,
-        )
-
-    @pytest.fixture
-    def sys_constraints(self, state_dim, action_dim) -> SystemConstraintsBase:
-        return SystemConstraintsMock.factory(
-            state_dim=state_dim,
-            action_dim=action_dim,
-        )
 
     @pytest.fixture
     def projection(
@@ -56,38 +25,6 @@ class TestProjectionNoSubstitutionNoTerminal:
             horizon=horizon,
             relaxation_penalty=1.0,
         )
-
-    @pytest.fixture
-    def phi(
-        self,
-        policy,
-        state_dim,
-    ) -> ProjectionPhi:
-        keys = jax.random.split(jax.random.key(0), 2)
-        return ProjectionPhi.factory(
-            initial_state=jax.random.normal(keys[0], (state_dim,)),
-            policy=policy,
-            jax_key=keys[1],
-        )
-
-    @pytest.fixture(autouse=True)
-    def setup(
-        self,
-        policy: PolicyBase,
-        sys_dynamics: SystemDynamicsBase,
-        sys_constraints: SystemConstraintsBase,
-        projection: ProjectionNoSubstitutionNoTerminal,
-        phi: ProjectionPhi,
-    ):
-        self.state_dim = projection.state_dim
-        self.action_dim = projection.action_dim
-        self.constraint_dim = projection.constraint_dim
-        self.horizon = projection.horizon
-        self.policy = policy
-        self.sys_dynamics = sys_dynamics
-        self.sys_constraints = sys_constraints
-        self.projection = projection
-        self.phi = phi
 
     def test_get_x0(self):
         x = self.projection.get_x0(self.phi)

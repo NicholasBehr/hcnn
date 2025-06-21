@@ -58,7 +58,9 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
             cls.bounds_sys_constraints(
                 horizon=horizon, sys_constraints=sys_constraints
             ),
-            cls.bounds_non_neg_relax(horizon=horizon),
+            cls.bounds_non_neg_relax(
+                horizon=horizon, constraint_dim=constraint_dim
+            ),
         ]
         lower_bound_list, upper_bound_list = zip(
             *bound_tuple_list, strict=False

@@ -7,7 +7,7 @@ from hcnn.optimization import OptimizationProblemBase, OptimizationSolverBase
 from hcnn.policy import PolicyBase
 from hcnn.projection import ProjectionBase, ProjectionPhi, Rollout
 from hcnn.system_constraints import SystemConstraintsBase
-from hcnn.system_cost import SystemCostBase
+from hcnn.system_costs import SystemCostBase
 from hcnn.system_dynamics import SystemDynamicsBase
 from hcnn.training.dropout_mlp import DropoutMLP
 from hcnn.training.generalized_advantage import (
@@ -41,9 +41,15 @@ class Environment:
         rngs: nnx.Rngs,
     ):
         # optimizers
-        policy_optimizer = nnx.Optimizer(policy, optax.nadamw(learning_rate=1e-3))
-        value_to_go_optimizer = nnx.Optimizer(value_to_go, optax.nadamw(learning_rate=1e-2))
-        relax_to_go_optimizer = nnx.Optimizer(relax_to_go, optax.nadamw(learning_rate=1e-2))
+        policy_optimizer = nnx.Optimizer(
+            policy, optax.nadamw(learning_rate=1e-3)
+        )
+        value_to_go_optimizer = nnx.Optimizer(
+            value_to_go, optax.nadamw(learning_rate=1e-2)
+        )
+        relax_to_go_optimizer = nnx.Optimizer(
+            relax_to_go, optax.nadamw(learning_rate=1e-2)
+        )
 
         # metrics
         metrics = nnx.MultiMetric(
@@ -86,7 +92,12 @@ class Environment:
 
         batch_size = 20
 
-        initial_state = jax.random.uniform(rngs(), (batch_size, self.sys_dynamics.state_dim), minval=-6, maxval=6)
+        initial_state = jax.random.uniform(
+            rngs(),
+            (batch_size, self.sys_dynamics.state_dim),
+            minval=-6,
+            maxval=6,
+        )
         jax_key = jax.random.split(rngs(), batch_size)
 
         # Sample a rollout
@@ -100,10 +111,16 @@ class Environment:
         )
 
         # Calculate value residuals
-        value_to_go_graphdef, value_to_go_param, value_to_go_non_param = nnx.split(value_to_go, nnx.Param, ...)
+        value_to_go_graphdef, value_to_go_param, value_to_go_non_param = (
+            nnx.split(value_to_go, nnx.Param, ...)
+        )
         value_residuals, value_residuals_vjp = jax.vjp(
             lambda value_to_go_params, rollout: self.calculate_value_residuals(
-                value_to_go=nnx.merge(value_to_go_graphdef, value_to_go_params, value_to_go_non_param),
+                value_to_go=nnx.merge(
+                    value_to_go_graphdef,
+                    value_to_go_params,
+                    value_to_go_non_param,
+                ),
                 rollout=rollout,
             ),
             value_to_go_param,
@@ -111,10 +128,16 @@ class Environment:
         )
 
         # Calculate relax residuals
-        relax_to_go_graphdef, relax_to_go_param, relax_to_go_non_param = nnx.split(relax_to_go, nnx.Param, ...)
+        relax_to_go_graphdef, relax_to_go_param, relax_to_go_non_param = (
+            nnx.split(relax_to_go, nnx.Param, ...)
+        )
         relax_residuals, relax_residuals_vjp = jax.vjp(
             lambda relax_to_go_params: self.calculate_relax_residuals(
-                relax_to_go=nnx.merge(relax_to_go_graphdef, relax_to_go_params, relax_to_go_non_param),
+                relax_to_go=nnx.merge(
+                    relax_to_go_graphdef,
+                    relax_to_go_params,
+                    relax_to_go_non_param,
+                ),
                 rollout=rollout,
             ),
             relax_to_go_param,
@@ -147,11 +170,15 @@ class Environment:
             return loss
 
         # Calculate the value_to_go loss
-        value_to_go_loss, dval_dres = jax.value_and_grad(value_to_go_loss_fn)(value_residuals)
+        value_to_go_loss, dval_dres = jax.value_and_grad(value_to_go_loss_fn)(
+            value_residuals
+        )
         dval_dparam = value_residuals_vjp(dval_dres)[0]
 
         # Calculate the relax_to_go loss
-        relax_to_go_loss, drelax_dres = jax.value_and_grad(relax_to_go_loss_fn)(relax_residuals)
+        relax_to_go_loss, drelax_dres = jax.value_and_grad(relax_to_go_loss_fn)(
+            relax_residuals
+        )
         drelax_dparam = relax_residuals_vjp(drelax_dres)[0]
 
         # Calculate the policy loss
@@ -160,7 +187,9 @@ class Environment:
             argnums=(0, 1),
         )(value_residuals, rollout)
         dpol_droll2 = value_residuals_vjp(dpol_dres)[1]
-        dpol_droll = jax.tree_util.tree_map(lambda x, y: x + y, dpol_droll1, dpol_droll2)
+        dpol_droll = jax.tree_util.tree_map(
+            lambda x, y: x + y, dpol_droll1, dpol_droll2
+        )
         dpol_dparam = rollout_vjp(dpol_droll)[0]
 
         # Update the value_to_go and policy parameters
@@ -172,7 +201,9 @@ class Environment:
             policy_loss=policy_loss,
             value_to_go_loss=value_to_go_loss,
             relax_to_go_loss=relax_to_go_loss,
-            cost=jnp.mean(jax.vmap(self.sys_cost)(rollout.states, rollout.actions)),
+            cost=jnp.mean(
+                jax.vmap(self.sys_cost)(rollout.states, rollout.actions)
+            ),
         )
 
         return nnx.state(
@@ -204,19 +235,27 @@ class Environment:
         rollout = self.projection.get_rollout(x_star)
         return rollout
 
-    def calculate_value_residuals(self, value_to_go: DropoutMLP, rollout: Rollout):
+    def calculate_value_residuals(
+        self, value_to_go: DropoutMLP, rollout: Rollout
+    ):
         costs = jax.vmap(self.sys_cost)(rollout.states, rollout.actions)
         rewards = -costs
         values = value_to_go(rollout.states).squeeze()
 
         # Compute the temporal difference (TD) errors
-        value_residuals = td_residuals(rewards=rewards, values=values, td_gamma=self.td_gamma)
+        value_residuals = td_residuals(
+            rewards=rewards, values=values, td_gamma=self.td_gamma
+        )
         return value_residuals
 
-    def calculate_relax_residuals(self, relax_to_go: DropoutMLP, rollout: Rollout):
+    def calculate_relax_residuals(
+        self, relax_to_go: DropoutMLP, rollout: Rollout
+    ):
         rewards = rollout.relaxations
         values = relax_to_go(rollout.states).squeeze()
 
         # Compute the temporal difference (TD) errors
-        value_residuals = td_residuals(rewards=rewards, values=values, td_gamma=self.td_gamma)
+        value_residuals = td_residuals(
+            rewards=rewards, values=values, td_gamma=self.td_gamma
+        )
         return value_residuals

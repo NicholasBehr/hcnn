@@ -14,9 +14,9 @@ from tests.system_constraints.test_system_constraints_base import (
     SystemConstraintsBase,
     SystemConstraintsMock,
 )
-from tests.system_cost.test_system_cost_base import (
-    SystemCostBase,
+from tests.system_costs.test_system_costs_base import (
     SystemCostMock,
+    SystemCostsBase,
 )
 from tests.system_dynamics.test_system_dynamics_base import (
     SystemDynamicsBase,
@@ -84,7 +84,7 @@ def projection(
 
 
 @pytest.fixture
-def sys_cost(state_dim, action_dim) -> SystemCostBase:
+def sys_cost(state_dim, action_dim) -> SystemCostsBase:
     return SystemCostMock(
         state_dim=state_dim,
         action_dim=action_dim,

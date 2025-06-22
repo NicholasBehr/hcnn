@@ -2,8 +2,8 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from hcnn.system_cost.system_cost_quadratic import SystemCostQuadratic
-from tests.system_cost.test_system_cost_base import TestSystemCostBase
+from hcnn.system_costs.system_cost_quadratic import SystemCostQuadratic
+from tests.system_costs.test_system_costs_base import TestSystemCostBase
 
 
 class TestSystemCostQuadratic(TestSystemCostBase):

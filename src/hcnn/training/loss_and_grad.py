@@ -8,7 +8,7 @@ from hcnn.projection.projection_base import (
     ProjectionPhi,
     Rollout,
 )
-from hcnn.system_cost.system_cost_base import SystemCostBase
+from hcnn.system_costs.system_costs_base import SystemCostsBase
 from hcnn.training.dropout_mlp import DropoutMLP
 from hcnn.training.generalized_advantage import (
     generalized_advantage_1,
@@ -21,7 +21,7 @@ from hcnn.training.generalized_advantage import (
 class LossAndGrad:
     projection: ProjectionBase
     solver: OptimizationSolverBase
-    sys_cost: SystemCostBase
+    sys_cost: SystemCostsBase
     value_to_go_graphdef: nnx.GraphDef
     relax_to_go_graphdef: nnx.GraphDef
 
@@ -29,7 +29,7 @@ class LossAndGrad:
     def factory(
         cls,
         projection: ProjectionBase,
-        sys_cost: SystemCostBase,
+        sys_cost: SystemCostsBase,
         solver: OptimizationSolverBase,
         value_to_go: DropoutMLP,
         relax_to_go: DropoutMLP,
@@ -190,7 +190,7 @@ class LossAndGrad:
         td_gamma: float,
     ) -> tuple[jax.Array, nnx.State]:
         """
-        Calculates the relaxation residuals for the given states and relaxations.
+        Calculates the relaxation residuals for the given states and relaxations
 
         Args:
             states (jax.Array): shape (..., horizon, state_dim).

@@ -2,11 +2,11 @@ import jax
 from flax import struct
 from jax import numpy as jnp
 
-from hcnn.system_cost.system_cost_base import SystemCostBase
+from hcnn.system_costs.system_costs_base import SystemCostsBase
 
 
 @struct.dataclass
-class SystemCostQuadratic(SystemCostBase):
+class SystemCostQuadratic(SystemCostsBase):
     state_cost_matrix: jax.Array  # float 2d matrix
     action_cost_matrix: jax.Array  # float 2d matrix
 

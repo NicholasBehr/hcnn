@@ -5,7 +5,7 @@ from flax import struct
 
 
 @struct.dataclass
-class SystemCostBase(ABC):
+class SystemCostsBase(ABC):
     state_dim: int
     action_dim: int
 

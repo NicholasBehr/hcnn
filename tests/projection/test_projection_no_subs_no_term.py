@@ -14,12 +14,14 @@ class TestProjectionNoSubstitutionNoTerminal(TestProjectionBase):
     def projection(
         self,
         policy,
+        relax_to_go,
         sys_dynamics,
         sys_constraints,
         horizon,
     ) -> ProjectionNoSubstitutionNoTerminal:
         return ProjectionNoSubstitutionNoTerminal.factory(
             policy=policy,
+            relax_to_go=relax_to_go,
             sys_dynamics=sys_dynamics,
             sys_constraints=sys_constraints,
             horizon=horizon,

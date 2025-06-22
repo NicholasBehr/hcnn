@@ -12,6 +12,7 @@ from hcnn.projection.projection_base import (
 from hcnn.projection.projection_no_subs_no_term import (
     ProjectionNoSubstitutionNoTerminal,
 )
+from hcnn.training.dropout_mlp import DropoutMLP
 from tests.policy.test_policy_base import PolicyBase, PolicyMock
 from tests.system_constraints.test_system_constraints_base import (
     SystemConstraintsBase,
@@ -133,15 +134,25 @@ class TestProjectionBase:
         )
 
     @pytest.fixture
+    def relax_to_go(self, state_dim):
+        return DropoutMLP(
+            layer_sizes=(state_dim, 64, 1),
+            dropout_rate=0.1,
+            rngs=nnx.Rngs(42),
+        )
+
+    @pytest.fixture
     def projection(
         self,
         policy,
+        relax_to_go,
         sys_dynamics,
         sys_constraints,
         horizon,
     ) -> ProjectionMock:
         return ProjectionMock.factory(
             policy=policy,
+            relax_to_go=relax_to_go,
             sys_dynamics=sys_dynamics,
             sys_constraints=sys_constraints,
             horizon=horizon,
@@ -151,12 +162,14 @@ class TestProjectionBase:
     def phi(
         self,
         policy,
+        relax_to_go,
         state_dim,
     ) -> ProjectionPhi:
         keys = jax.random.split(jax.random.key(0), 2)
-        return ProjectionPhi.factory(
+        return ProjectionPhi(
             initial_state=jax.random.normal(keys[0], (state_dim,)),
-            policy=policy,
+            policy_state=nnx.state(policy),
+            relax_to_go_state=nnx.state(relax_to_go),
             jax_key=keys[1],
         )
 

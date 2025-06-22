@@ -3,11 +3,11 @@ import jax.numpy as jnp
 import pytest
 from flax import struct
 
-from hcnn.system_cost.system_cost_base import SystemCostBase
+from hcnn.system_costs.system_costs_base import SystemCostsBase
 
 
 @struct.dataclass
-class SystemCostMock(SystemCostBase):
+class SystemCostMock(SystemCostsBase):
     @jax.jit
     def __call__(self, state: jax.Array, action: jax.Array) -> jax.Array:
         return jnp.sum(state, axis=-1) + jnp.sum(action, axis=-1)
@@ -17,20 +17,20 @@ class TestSystemCostBase:
     """Test class for SystemCostBase."""
 
     @pytest.fixture
-    def sys_cost(self, state_dim, action_dim) -> SystemCostBase:
+    def sys_cost(self, state_dim, action_dim) -> SystemCostsBase:
         return SystemCostMock(
             state_dim=state_dim,
             action_dim=action_dim,
         )
 
     @pytest.fixture(autouse=True)
-    def setup(self, sys_cost: SystemCostBase):
+    def setup(self, sys_cost: SystemCostsBase):
         self.sys_cost = sys_cost
         self.state_dim = sys_cost.state_dim
         self.action_dim = sys_cost.action_dim
 
     def test_instance_creation(self):
-        assert isinstance(self.sys_cost, SystemCostBase)
+        assert isinstance(self.sys_cost, SystemCostsBase)
         assert isinstance(self.sys_cost.state_dim, int)
         assert isinstance(self.sys_cost.action_dim, int)
 

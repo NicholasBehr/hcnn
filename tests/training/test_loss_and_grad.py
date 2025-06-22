@@ -372,3 +372,27 @@ def test_rollout(  # noqa: PLR0913 test clarity
         horizon,
         constraint_dim,
     )
+
+
+def test_call(
+    loss_and_grad: LossAndGrad,
+    policy: PolicyBase,
+    relax_to_go: DropoutMLP,
+    value_to_go: DropoutMLP,
+    state_dim,
+):
+    batch_size = 512
+    key = jax.random.key(42)
+    keys = jax.random.split(key, 2)
+    initial_states = jax.random.normal(keys[0], (batch_size, state_dim))
+    jax_keys = jax.random.split(keys[1], batch_size)
+
+    (a, b, c) = loss_and_grad(
+        policy_state=nnx.state(policy),
+        relax_to_go_state=nnx.state(relax_to_go),
+        value_to_go_state=nnx.state(value_to_go),
+        initial_states=initial_states,
+        jax_keys=jax_keys,
+        td_gamma=0.8,
+        gae_lambda=0.99,
+    )

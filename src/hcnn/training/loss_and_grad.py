@@ -3,7 +3,11 @@ import jax.numpy as jnp
 from flax import nnx, struct
 
 from hcnn.optimization.optimization_base import OptimizationSolverBase
-from hcnn.projection.projection_base import ProjectionBase, ProjectionPhi
+from hcnn.projection.projection_base import (
+    ProjectionBase,
+    ProjectionPhi,
+    Rollout,
+)
 from hcnn.system_cost.system_cost_base import SystemCostBase
 from hcnn.training.dropout_mlp import DropoutMLP
 from hcnn.training.generalized_advantage import (
@@ -70,7 +74,7 @@ class LossAndGrad:
 
         # minimize discounted interventions and maximize advantage
         # (i.e., minimize the negative of the advantage)
-        return jnp.mean(discounted_interventions**2 - advantage_1)
+        return jnp.mean(discounted_interventions**2) - jnp.mean(advantage_1)
 
     def value_to_go_loss(
         self,
@@ -234,7 +238,7 @@ class LossAndGrad:
     def calculate_rollout(
         self,
         policy_state: nnx.State,
-        relax_to_go_state: nnx.State,  # Kept for API compatibility
+        relax_to_go_state: nnx.State,  # Kept for API future compatibility
         initial_states: jax.Array,
         jax_keys: jax.Array,
     ):
@@ -273,4 +277,148 @@ class LossAndGrad:
             initial_states,
             policy_state,
             jax_keys,
+        )
+
+    def __call__(  # noqa: PLR0913
+        self,
+        policy_state: nnx.State,
+        relax_to_go_state: nnx.State,
+        value_to_go_state: nnx.State,
+        initial_states: jax.Array,
+        jax_keys: jax.Array,
+        td_gamma: float,
+        gae_lambda: float,
+    ):
+        """
+        Computes the loss and gradients for the policy, value-to-go, and
+        relax-to-go models.
+
+        Args:
+            policy_state (nnx.State): The state of the policy model.
+            relax_to_go_state (nnx.State): The state of the relax-to-go model.
+            value_to_go_state (nnx.State): The state of the value-to-go model.
+            initial_states (jax.Array): Initial states for the rollout.
+                shape (batch_size, state_dim).
+            jax_keys (jax.Array): JAX random keys for stochastic policies.
+                shape (batch_size,).
+            td_gamma (float): Temporal difference discount factor.
+            gae_lambda (float): Generalized advantage estimation lambda.
+
+        Returns:
+            tuple: A tuple containing:
+                - tuple: Loss values for policy, relax_to_go, and value_to_go.
+                - tuple: Gradients for policy_state, relax_to_go_state,
+                    and value_to_go_state.
+                - tuple: Updated states for policy, relax_to_go, value_to_go.
+        """
+        # Calculate the rollout
+        rollout, rollout_vjp = jax.vjp(
+            lambda policy_state: self.calculate_rollout(
+                policy_state=policy_state,
+                relax_to_go_state=relax_to_go_state,
+                initial_states=initial_states,
+                jax_keys=jax_keys,
+            ),
+            policy_state,
+        )
+
+        (value_residuals, value_to_go_state), value_res_vjp = jax.vjp(
+            lambda states, actions, value_to_go_state: self.value_residuals(
+                states=states,
+                actions=actions,
+                value_to_go_state=value_to_go_state,
+                td_gamma=td_gamma,
+            ),
+            rollout.states,
+            rollout.actions,
+            value_to_go_state,
+        )
+
+        (relax_residuals, relax_to_go_state), relax_res_vjp = jax.vjp(
+            lambda states,
+            relax_plus,
+            relax_minus,
+            relax_to_go_state: self.relax_residuals(
+                states=states,
+                relaxations_plus=relax_plus,
+                relaxations_minus=relax_minus,
+                relax_to_go_state=relax_to_go_state,
+                td_gamma=td_gamma,
+            ),
+            rollout.states,
+            rollout.relaxations_plus,
+            rollout.relaxations_minus,
+            relax_to_go_state,
+        )
+
+        policy_loss, (policy_val_res_grad, policy_interv_grad) = (
+            jax.value_and_grad(
+                self.policy_loss,
+                argnums=(0, 1),
+            )(
+                value_residuals,
+                rollout.interventions,
+                td_gamma=td_gamma,
+                gae_lambda=gae_lambda,
+            )
+        )
+
+        value_to_go_loss, value_val_res_grad = jax.value_and_grad(
+            self.value_to_go_loss,
+        )(
+            value_residuals,
+            td_gamma=td_gamma,
+            gae_lambda=gae_lambda,
+        )
+
+        relax_to_go_loss, relax_rel_res_grad = jax.value_and_grad(
+            self.relax_to_go_loss,
+        )(
+            relax_residuals,
+            td_gamma=td_gamma,
+            gae_lambda=gae_lambda,
+        )
+
+        # Calculate the gradients for the policy state
+        policy_value_to_go_state_grad = jax.tree_util.tree_map(
+            lambda x: jnp.zeros_like(x), value_to_go_state
+        )  # the outgoing value_to_go_state does not affect the policy loss
+        (policy_states_grad, policy_actions_grad, _) = value_res_vjp(
+            (policy_val_res_grad, policy_value_to_go_state_grad)
+        )
+        policy_rollout_grad = Rollout(
+            states=policy_states_grad,
+            actions=policy_actions_grad,
+            interventions=policy_interv_grad,
+            relaxations_plus=jnp.zeros_like(rollout.relaxations_plus),
+            relaxations_minus=jnp.zeros_like(rollout.relaxations_minus),
+        )
+        policy_policy_state_grad = rollout_vjp(policy_rollout_grad)
+
+        # Calculate the gradients for the value_to_go state
+        value_value_to_go_state_grad = jax.tree_util.tree_map(
+            lambda x: jnp.zeros_like(x), value_to_go_state
+        )  # the outgoing value_to_go_state does not affect the value loss
+        (_, _, value_value_to_go_state_grad) = value_res_vjp(
+            (value_val_res_grad, value_value_to_go_state_grad)
+        )
+
+        # Calculate the gradients for the relax_to_go state
+        relax_relax_to_go_state_grad = jax.tree_util.tree_map(
+            lambda x: jnp.zeros_like(x), relax_to_go_state
+        )  # the outgoing relax_to_go_state does not affect the relax loss
+        (_, _, _, relax_relax_to_go_state_grad) = relax_res_vjp(
+            (relax_rel_res_grad, relax_relax_to_go_state_grad)
+        )
+        # We purposfully do not propagate gradients through the rollout here!
+        # We dont want to change the rollout to improve the relax to go loss.
+
+        return (
+            (policy_loss, relax_to_go_loss, value_to_go_loss),
+            (
+                policy_policy_state_grad,
+                relax_relax_to_go_state_grad,
+                value_value_to_go_state_grad,
+            ),
+            (policy_state, relax_to_go_state, value_to_go_state),
         )

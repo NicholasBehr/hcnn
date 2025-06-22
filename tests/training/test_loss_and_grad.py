@@ -49,14 +49,34 @@ def sys_constraints(state_dim, action_dim) -> SystemConstraintsBase:
 
 
 @pytest.fixture
+def value_to_go(state_dim):
+    return DropoutMLP(
+        layer_sizes=(state_dim, 64, 1),
+        dropout_rate=0.1,
+        rngs=nnx.Rngs(42),
+    )
+
+
+@pytest.fixture
+def relax_to_go(state_dim):
+    return DropoutMLP(
+        layer_sizes=(state_dim, 64, 1),
+        dropout_rate=0.1,
+        rngs=nnx.Rngs(42),
+    )
+
+
+@pytest.fixture
 def projection(
     policy,
+    relax_to_go,
     sys_dynamics,
     sys_constraints,
     horizon,
 ) -> ProjectionMock:
     return ProjectionMock.factory(
         policy=policy,
+        relax_to_go=relax_to_go,
         sys_dynamics=sys_dynamics,
         sys_constraints=sys_constraints,
         horizon=horizon,
@@ -87,24 +107,6 @@ def phi(
 @pytest.fixture
 def solver():
     return OptimizationSolverShallow(tol=0.01)
-
-
-@pytest.fixture
-def value_to_go(state_dim):
-    return DropoutMLP(
-        layer_sizes=(state_dim, 64, 1),
-        dropout_rate=0.1,
-        rngs=nnx.Rngs(42),
-    )
-
-
-@pytest.fixture
-def relax_to_go(state_dim):
-    return DropoutMLP(
-        layer_sizes=(state_dim, 64, 1),
-        dropout_rate=0.1,
-        rngs=nnx.Rngs(42),
-    )
 
 
 @pytest.fixture

@@ -18,9 +18,10 @@ from hcnn.system_dynamics.system_dynamics_base import SystemDynamicsBase
 @struct.dataclass
 class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
     @classmethod
-    def factory(
+    def factory(  # noqa: PLR0913
         cls,
         policy: PolicyBase,
+        relax_to_go: nnx.Dropout,
         sys_dynamics: SystemDynamicsBase,
         sys_constraints: SystemConstraintsBase,
         horizon: int,
@@ -78,6 +79,7 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
             constraint_dim=constraint_dim,
             horizon=horizon,
             policy_graphdef=nnx.split(policy)[0],
+            relax_to_go_graphdef=nnx.split(relax_to_go)[0],
             sys_dynamics=sys_dynamics,
             sys_constraints=sys_constraints,
         )

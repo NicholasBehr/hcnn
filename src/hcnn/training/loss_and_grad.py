@@ -238,7 +238,7 @@ class LossAndGrad:
     def calculate_rollout(
         self,
         policy_state: nnx.State,
-        relax_to_go_state: nnx.State,  # Kept for API future compatibility
+        relax_to_go_state: nnx.State,
         initial_states: jax.Array,
         jax_keys: jax.Array,
     ):
@@ -260,10 +260,13 @@ class LossAndGrad:
             Rollout: The calculated rollout.
         """
 
-        def sample_rollout(initial_state, policy_state, jax_key):
+        def sample_rollout(
+            initial_state, policy_state, relax_to_go_state, jax_key
+        ):
             phi = ProjectionPhi(
                 initial_state=initial_state,
                 policy_state=policy_state,
+                relax_to_go_state=relax_to_go_state,
                 jax_key=jax_key,
             )
             x_star = self.solver.solve(self.projection, phi)
@@ -271,11 +274,12 @@ class LossAndGrad:
 
         return jax.vmap(
             sample_rollout,
-            in_axes=(0, None, 0),
+            in_axes=(0, None, None, 0),
             out_axes=0,
         )(
             initial_states,
             policy_state,
+            relax_to_go_state,
             jax_keys,
         )
 

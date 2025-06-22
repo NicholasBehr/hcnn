@@ -29,6 +29,7 @@ class ProjectionMock(ProjectionBase):
     def factory(
         cls,
         policy,
+        relax_to_go,
         sys_dynamics,
         sys_constraints,
         horizon,
@@ -37,6 +38,7 @@ class ProjectionMock(ProjectionBase):
         action_dim = sys_dynamics.action_dim
         constraint_dim = sys_constraints.constraint_dim
         policy_graphdef = nnx.split(policy)[0]
+        relax_to_go_graphdef = nnx.split(relax_to_go)[0]
         return cls(
             cost_quad_diag=jnp.zeros(
                 (state_dim + 2 * action_dim + 2 * constraint_dim) * horizon
@@ -67,6 +69,7 @@ class ProjectionMock(ProjectionBase):
             constraint_dim=constraint_dim,
             horizon=horizon,
             policy_graphdef=policy_graphdef,
+            relax_to_go_graphdef=relax_to_go_graphdef,
             sys_dynamics=sys_dynamics,
             sys_constraints=sys_constraints,
         )

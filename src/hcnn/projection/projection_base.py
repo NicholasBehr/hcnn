@@ -26,20 +26,8 @@ class Rollout:
 class ProjectionPhi:
     initial_state: jax.Array
     policy_state: nnx.State
+    relax_to_go_state: nnx.State
     jax_key: jax.Array = struct.field(pytree_node=False)
-
-    @classmethod
-    def factory(
-        cls,
-        initial_state: jax.Array,
-        policy: PolicyBase,
-        jax_key: jax.Array,
-    ):
-        return cls(
-            initial_state=initial_state,
-            policy_state=nnx.state(policy),
-            jax_key=jax_key,
-        )
 
 
 @struct.dataclass
@@ -50,6 +38,7 @@ class ProjectionBase(OptimizationProblemBase[ProjectionPhi]):
     horizon: int = struct.field(pytree_node=False)
 
     policy_graphdef: nnx.GraphDef
+    relax_to_go_graphdef: nnx.GraphDef
     sys_dynamics: SystemDynamicsBase
     sys_constraints: SystemConstraintsBase
 

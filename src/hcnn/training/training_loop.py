@@ -187,6 +187,12 @@ def train_epoch(
             td_gamma=0.9,
             gae_lambda=0.99,
         )
+
+        # Update model states
+        nnx.update(train.policy, new_states[0])
+        nnx.update(train.cost_to_go, new_states[1])
+        nnx.update(train.relax_to_go, new_states[2])
+
         # Update metrics
         train.metrics.update(
             policy_loss=loss_tuple[0],
@@ -199,11 +205,6 @@ def train_epoch(
         train.opt_policy.update(grad_tuple[0])
         train.opt_cost.update(grad_tuple[1])
         train.opt_relax.update(grad_tuple[2])
-
-        # Update model states
-        nnx.update(train.policy, new_states[0])
-        nnx.update(train.cost_to_go, new_states[1])
-        nnx.update(train.relax_to_go, new_states[2])
 
         return nnx.state(train)
 
@@ -313,8 +314,10 @@ def train(project=None, config=None):
             )
 
             train = nnx.merge(train_graphdef, train_state)
-            wandb.log(train.metrics.compute())
+            metric_dict = train.metrics.compute()
             train.metrics.reset()
+            wandb.log(metric_dict)
+            print(metric_dict["mean_loss"])
             train_state = nnx.state(train)
 
 
@@ -349,17 +352,17 @@ if __name__ == "__main__":
         "solver_name": "shallow",
         "solver_max_iter": 500,
         "solver_tol": 0.01,
-        "optimizer_policy_name": "nadamw",
-        "optimizer_policy_learning_rate": 1e-3,
-        "optimizer_cost_name": "nadamw",
+        "optimizer_policy_name": "adabelief",
+        "optimizer_policy_learning_rate": 1e-2,
+        "optimizer_cost_name": "adabelief",
         "optimizer_cost_learning_rate": 1e-2,
-        "optimizer_relax_name": "nadamw",
+        "optimizer_relax_name": "adabelief",
         "optimizer_relax_learning_rate": 1e-2,
-        "samples_per_epoch": 2048,
+        "samples_per_epoch": 128,
         "batchsize": 64,
         "td_gamma": 0.9,
         "gae_lambda": 0.99,
-        "epochs": 20,
+        "epochs": 50,
     }
 
     # Start the training loop

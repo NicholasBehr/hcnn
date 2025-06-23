@@ -21,15 +21,21 @@ class Rollout:
 
 
 @struct.dataclass
-class ProjectionPhi:
+class ProjectionPhiD:
+    policy_params: nnx.State
+    relax_to_go_params: nnx.State
+
+
+@struct.dataclass
+class ProjectionPhiND:
+    policy_non_params: nnx.State
+    relax_to_go_non_params: nnx.State
     initial_state: jax.Array
-    policy_state: nnx.State
-    relax_to_go_state: nnx.State
     jax_key: jax.Array
 
 
 @struct.dataclass
-class ProjectionBase(OptimizationProblemBase[ProjectionPhi]):
+class ProjectionBase(OptimizationProblemBase[ProjectionPhiD, ProjectionPhiND]):
     state_dim: int = struct.field(pytree_node=False)
     action_dim: int = struct.field(pytree_node=False)
     constraint_dim: int = struct.field(pytree_node=False)

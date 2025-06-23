@@ -5,11 +5,12 @@ from typing import Generic, TypeVar
 import jax
 from flax import struct
 
-PhiType = TypeVar("PhiType")
+PhiTypeDiff = TypeVar("PhiTypeDiff")
+PhiTypeNoDiff = TypeVar("PhiTypeNoDiff")
 
 
 @struct.dataclass
-class OptimizationProblemBase(ABC, Generic[PhiType]):
+class OptimizationProblemBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
     """
     Optimization Problem Definition
     """
@@ -18,7 +19,7 @@ class OptimizationProblemBase(ABC, Generic[PhiType]):
     # get initial guess for optimization variable x (vectorized 1d)
     @jax.jit
     @abstractmethod
-    def get_x0(self, phi: PhiType) -> jax.Array:
+    def get_x0(self, phi_d: PhiTypeDiff, phi_nd: PhiTypeNoDiff) -> jax.Array:
         pass
 
     ### QUADRATIC COST ###
@@ -30,7 +31,9 @@ class OptimizationProblemBase(ABC, Generic[PhiType]):
     # l <= h(x, phi) <= u
     @jax.jit
     @abstractmethod
-    def constraint_fn(self, x: jax.Array, phi: PhiType) -> jax.Array:
+    def constraint_fn(
+        self, x: jax.Array, phi_d: PhiTypeDiff, phi_nd: PhiTypeNoDiff
+    ) -> jax.Array:
         pass
 
     lower_bound: jax.Array  # l in constraint (vectorized 1d)
@@ -38,14 +41,17 @@ class OptimizationProblemBase(ABC, Generic[PhiType]):
 
 
 @struct.dataclass
-class OptimizationSolverBase(ABC, Generic[PhiType]):
+class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
     """
     Quadratic Cost with Nonlinear Constraints Problem Solver
     """
 
     @partial(jax.jit, static_argnames="self")
     def solve(
-        self, problem: OptimizationProblemBase, phi: PhiType
+        self,
+        problem: OptimizationProblemBase,
+        phi_d: PhiTypeDiff,
+        phi_nd: PhiTypeNoDiff,
     ) -> jax.Array:
         """
         Solve the given optimization problem and return the optimal solution.
@@ -72,11 +78,16 @@ class OptimizationSolverBase(ABC, Generic[PhiType]):
         """
 
         # argument "self" needs to be passed explicitly for custom vjp to work
-        return self._solve_vjp(self, problem=problem, phi=phi)
+        return self._solve_vjp(
+            self, problem=problem, phi_d=phi_d, phi_nd=phi_nd
+        )
 
     @partial(jax.custom_vjp, nondiff_argnums=(0,))
     @abstractmethod
     def _solve_vjp(
-        self, problem: OptimizationProblemBase, phi: PhiType
+        self,
+        problem: OptimizationProblemBase,
+        phi_d: PhiTypeDiff,
+        phi_nd: PhiTypeNoDiff,
     ) -> jax.Array:
         pass

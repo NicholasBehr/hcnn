@@ -8,12 +8,15 @@ from flax import struct
 from .optimization_base import (
     OptimizationProblemBase,
     OptimizationSolverBase,
-    PhiType,
+    PhiTypeDiff,
+    PhiTypeNoDiff,
 )
 
 
 @struct.dataclass
-class OptimizationSolverShallow(OptimizationSolverBase[PhiType]):
+class OptimizationSolverShallow(
+    OptimizationSolverBase[PhiTypeDiff, PhiTypeNoDiff]
+):
     max_iter: int = 500
     tol: float = 1e-4
 
@@ -35,10 +38,12 @@ class OptimizationSolverShallow(OptimizationSolverBase[PhiType]):
 
         @staticmethod
         def factory(
-            problem: OptimizationProblemBase[PhiType], phi: PhiType
+            problem: OptimizationProblemBase[PhiTypeDiff, PhiTypeNoDiff],
+            phi_d: PhiTypeDiff,
+            phi_nd: PhiTypeNoDiff,
         ) -> Self:
-            x = problem.get_x0(phi)
-            z = problem.constraint_fn(x, phi)
+            x = problem.get_x0(phi_d, phi_nd)
+            z = problem.constraint_fn(x, phi_d, phi_nd)
             return OptimizationSolverShallow.Variables(
                 # primal
                 x=x,
@@ -60,14 +65,17 @@ class OptimizationSolverShallow(OptimizationSolverBase[PhiType]):
             )
 
         def update_primal_dual(
-            self, problem: OptimizationProblemBase[PhiType], phi: PhiType
+            self,
+            problem: OptimizationProblemBase[PhiTypeDiff, PhiTypeNoDiff],
+            phi_d: PhiTypeDiff,
+            phi_nd: PhiTypeNoDiff,
         ) -> Self:
             ## form linearization around x_tilde
             h, h_jvp = jax.linearize(
-                lambda x: problem.constraint_fn(x, phi), self.x_tilde
+                lambda x: problem.constraint_fn(x, phi_d, phi_nd), self.x_tilde
             )
             _, h_vjp = jax.vjp(
-                lambda x: problem.constraint_fn(x, phi), self.x_tilde
+                lambda x: problem.constraint_fn(x, phi_d, phi_nd), self.x_tilde
             )
 
             ## x_tilde ##
@@ -129,10 +137,15 @@ class OptimizationSolverShallow(OptimizationSolverBase[PhiType]):
             )
 
         def update_residuals(
-            self, problem: OptimizationProblemBase[PhiType], phi: PhiType
+            self,
+            problem: OptimizationProblemBase[PhiTypeDiff, PhiTypeNoDiff],
+            phi_d: PhiTypeDiff,
+            phi_nd: PhiTypeNoDiff,
         ) -> Self:
             ## form linearization around x
-            h, h_vjp = jax.vjp(lambda x: problem.constraint_fn(x, phi), self.x)
+            h, h_vjp = jax.vjp(
+                lambda x: problem.constraint_fn(x, phi_d, phi_nd), self.x
+            )
 
             primal_residuals = h - self.z
             dual_residuals = (
@@ -188,40 +201,57 @@ class OptimizationSolverShallow(OptimizationSolverBase[PhiType]):
     def body_fun(
         self,
         variables: Variables,
-        problem: OptimizationProblemBase[PhiType],
-        phi: PhiType,
+        problem: OptimizationProblemBase[PhiTypeDiff, PhiTypeNoDiff],
+        phi_d: PhiTypeDiff,
+        phi_nd: PhiTypeNoDiff,
     ) -> Variables:
         return (
             variables.replace(iter_counter=variables.iter_counter + 1)
             .update_rho()
-            .update_primal_dual(problem=problem, phi=phi)
-            .update_residuals(problem=problem, phi=phi)
+            .update_primal_dual(problem=problem, phi_d=phi_d, phi_nd=phi_nd)
+            .update_residuals(problem=problem, phi_d=phi_d, phi_nd=phi_nd)
         )
 
     def _solve_variables(
-        self, problem: OptimizationProblemBase[PhiType], phi: PhiType
+        self,
+        problem: OptimizationProblemBase[PhiTypeDiff, PhiTypeNoDiff],
+        phi_d: PhiTypeDiff,
+        phi_nd: PhiTypeNoDiff,
     ) -> Variables:
-        variables = OptimizationSolverShallow.Variables.factory(problem, phi)
+        variables = OptimizationSolverShallow.Variables.factory(
+            problem, phi_d, phi_nd
+        )
         variables = jax.lax.while_loop(
             cond_fun=self.cond_fun,
-            body_fun=partial(self.body_fun, problem=problem, phi=phi),
+            body_fun=partial(
+                self.body_fun, problem=problem, phi_d=phi_d, phi_nd=phi_nd
+            ),
             init_val=variables,
         )
         return variables
 
-    def _solve(self, problem: OptimizationProblemBase[PhiType], phi: PhiType):
-        return self._solve_variables(problem, phi).x
+    def _solve(
+        self,
+        problem: OptimizationProblemBase[PhiTypeDiff, PhiTypeNoDiff],
+        phi_d: PhiTypeDiff,
+        phi_nd: PhiTypeNoDiff,
+    ):
+        return self._solve_variables(problem, phi_d, phi_nd).x
 
     def _solve_fwd(
-        self, problem: OptimizationProblemBase[PhiType], phi: PhiType
+        self,
+        problem: OptimizationProblemBase[PhiTypeDiff, PhiTypeNoDiff],
+        phi_d: PhiTypeDiff,
+        phi_nd: PhiTypeNoDiff,
     ):
-        variables = self._solve_variables(problem, phi)
+        variables = self._solve_variables(problem, phi_d, phi_nd)
         return variables.x, (
             variables.x,
             variables.z,
             variables.y,
             problem,
-            phi,
+            phi_d,
+            phi_nd,
         )
 
     def _solve_bwd(
@@ -230,13 +260,14 @@ class OptimizationSolverShallow(OptimizationSolverBase[PhiType]):
             jax.Array,
             jax.Array,
             jax.Array,
-            OptimizationProblemBase[PhiType],
-            PhiType,
+            OptimizationProblemBase[PhiTypeDiff, PhiTypeNoDiff],
+            PhiTypeDiff,
+            PhiTypeNoDiff,
         ],
         g: jax.Array,
     ):
         ## Unpack and rename input
-        x_star, z_star, y_star, problem, phi = res
+        x_star, z_star, y_star, problem, phi_d, phi_nd = res
         y_plus = jnp.maximum(y_star, 0)
         y_minus = jnp.minimum(y_star, 0)
         v1 = g
@@ -250,13 +281,19 @@ class OptimizationSolverShallow(OptimizationSolverBase[PhiType]):
         ## Precompute JVP, VJP and HVP for the constraint function h(x) = problem.constraint_fn_x(x)
         # h_jvp computes v -> dh/dx @ v
         _, h_jvp = jax.linearize(
-            lambda x: problem.constraint_fn(x, phi), x_star
+            lambda x: problem.constraint_fn(x, phi_d, phi_nd), x_star
         )
         # h_vjp computes w -> w^T @ dh/dx
-        _, h_vjp = jax.vjp(lambda x: problem.constraint_fn(x, phi), x_star)
+        _, h_vjp = jax.vjp(
+            lambda x: problem.constraint_fn(x, phi_d, phi_nd), x_star
+        )
         # h_hvp computes y.T @ d^2h/dx^2 @ v
         _, h_hvp = jax.linearize(
-            jax.grad(lambda x: jnp.dot(y_star, problem.constraint_fn(x, phi))),
+            jax.grad(
+                lambda x: jnp.dot(
+                    y_star, problem.constraint_fn(x, phi_d, phi_nd)
+                )
+            ),
             x_star,
         )
 
@@ -288,22 +325,25 @@ class OptimizationSolverShallow(OptimizationSolverBase[PhiType]):
             lower_bound=-y_minus * u4,
         )
 
-        g_phi_1 = jax.grad(
-            lambda phi_arg: jnp.dot(
+        g_phi_d_1 = jax.grad(
+            lambda phi_d_arg: jnp.dot(
                 jax.jvp(
-                    lambda x_inner: problem.constraint_fn(x_inner, phi_arg),
+                    lambda x_inner: problem.constraint_fn(
+                        x_inner, phi_d_arg, phi_nd
+                    ),
                     (x_star,),
                     (-u1,),
                 )[1],
                 y_star,
             ),
-        )(phi)
-        g_phi_2 = jax.vjp(
-            lambda phi_arg: problem.constraint_fn(x_star, phi_arg), phi
+        )(phi_d)
+        g_phi_d_2 = jax.vjp(
+            lambda phi_d_arg: problem.constraint_fn(x_star, phi_d_arg, phi_nd),
+            phi_d,
         )[1](-u2)[0]
-        g_phi = jax.tree_util.tree_map(jnp.add, g_phi_1, g_phi_2)
+        g_phi_d = jax.tree_util.tree_map(jnp.add, g_phi_d_1, g_phi_d_2)
 
-        return (g_problem, g_phi)
+        return (g_problem, g_phi_d, None)
 
     _solve_vjp = jax.custom_vjp(_solve, nondiff_argnums=(0,))
     _solve_vjp.defvjp(_solve_fwd, _solve_bwd)

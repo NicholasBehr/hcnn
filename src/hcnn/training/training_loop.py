@@ -1,4 +1,5 @@
 import os
+from functools import partial
 
 import jax
 import jax.numpy as jnp
@@ -151,23 +152,31 @@ class TrainBundle(nnx.Module):
             setattr(self, key, value)
 
 
-# @jax.jit
+@partial(
+    jax.jit,
+    static_argnames=["samples_per_epoch", "batchsize", "train_graphdef"],
+)
 def train_epoch(
-    config,
+    samples_per_epoch,
+    batchsize,
     train_graphdef,
     train_state,
 ):
     # Calculate the number of batches per epoch
-    batch_per_epoch = config.samples_per_epoch // config.batchsize
+    batch_per_epoch = samples_per_epoch // batchsize
 
-    # Hydrate the train state with the graph definition
-    train = nnx.merge(train_graphdef, train_state)
+    def train_step(_, train_state):
+        train = nnx.merge(train_graphdef, train_state)
 
-    def train_step(train):
         # sample initial states and JAX keys
-        # TODO replace by sampler
-        initial_states = jax.random.normal(train.rngs.default(), (8, 2))
-        jax_keys = jax.random.split(train.rngs.default(), (8,))
+        # TODO replace by real sampler
+        initial_states = jax.random.uniform(
+            train.rngs.default(),
+            (batchsize, train.policy.state_dim),
+            minval=-1,
+            maxval=+1,
+        )
+        jax_keys = jax.random.split(train.rngs.default(), (batchsize,))
 
         loss_tuple, grad_tuple, new_states = train.loss_and_grad(
             policy_state=nnx.state(train.policy),
@@ -183,7 +192,7 @@ def train_epoch(
             policy_loss=loss_tuple[0],
             cost_to_go_loss=loss_tuple[1],
             relax_to_go_loss=loss_tuple[2],
-            mean_loss=jnp.mean(loss_tuple),
+            mean_loss=jnp.mean(jnp.array(loss_tuple)),
         )
 
         # Update the states of the models
@@ -193,10 +202,17 @@ def train_epoch(
 
         # Update model states
         nnx.update(train.policy, new_states[0])
-        nnx.update(train.cost, new_states[1])
-        nnx.update(train.policy, new_states[2])
+        nnx.update(train.cost_to_go, new_states[1])
+        nnx.update(train.relax_to_go, new_states[2])
 
-    train_step(train)
+        return nnx.state(train)
+
+    return jax.lax.fori_loop(
+        lower=0,
+        upper=batch_per_epoch,
+        body_fun=train_step,
+        init_val=train_state,
+    )
 
 
 def train(project=None, config=None):
@@ -287,9 +303,19 @@ def train(project=None, config=None):
 
         train_graphdef, train_state = nnx.split(train)
 
-        train_epoch(config, train_graphdef, train_state)
+        for i in range(config.epochs):
+            print(f"iter: {i}")
+            train_state = train_epoch(
+                config.samples_per_epoch,
+                config.batchsize,
+                train_graphdef,
+                train_state,
+            )
 
-        wandb.log({"test_out": 42})
+            train = nnx.merge(train_graphdef, train_state)
+            wandb.log(train.metrics.compute())
+            train.metrics.reset()
+            train_state = nnx.state(train)
 
 
 if __name__ == "__main__":
@@ -329,10 +355,11 @@ if __name__ == "__main__":
         "optimizer_cost_learning_rate": 1e-2,
         "optimizer_relax_name": "nadamw",
         "optimizer_relax_learning_rate": 1e-2,
-        "samples_per_epoch": 16,
-        "batchsize": 1,
+        "samples_per_epoch": 2048,
+        "batchsize": 64,
         "td_gamma": 0.9,
         "gae_lambda": 0.99,
+        "epochs": 20,
     }
 
     # Start the training loop

@@ -161,10 +161,18 @@ class TestProjectionBase:
         state_dim,
     ) -> ProjectionPhi:
         keys = jax.random.split(jax.random.key(0), 2)
+        policy_graphdef, policy_params, policy_non_params = nnx.split(
+            policy, nnx.Param, ...
+        )
+        relax_to_go_graphdef, relax_to_go_params, relax_to_go_non_params = (
+            nnx.split(relax_to_go, nnx.Param, ...)
+        )
         return ProjectionPhi(
+            policy_params=policy_params,
+            relax_to_go_params=relax_to_go_params,
+            policy_non_params=policy_non_params,
+            relax_to_go_non_params=relax_to_go_non_params,
             initial_state=jax.random.normal(keys[0], (state_dim,)),
-            policy_state=nnx.state(policy),
-            relax_to_go_state=nnx.state(relax_to_go),
             jax_key=keys[1],
         )
 

@@ -6,7 +6,8 @@ from jax import flatten_util
 from hcnn.policy import PolicyBase
 from hcnn.projection.projection_base import (
     ProjectionBase,
-    ProjectionPhi,
+    ProjectionPhiD,
+    ProjectionPhiND,
     Rollout,
 )
 from hcnn.system_constraints import SystemConstraintsBase
@@ -95,8 +96,12 @@ class ProjectionNoSubsNoTerm(ProjectionBase):
         return unravel_pytree(x)
 
     @jax.jit
-    def get_x0(self, phi: ProjectionPhi) -> jax.Array:
-        policy = nnx.merge(self.policy_graphdef, phi.policy_state)
+    def get_x0(
+        self, phi_d: ProjectionPhiD, phi_nd: ProjectionPhiND
+    ) -> jax.Array:
+        policy = nnx.merge(
+            self.policy_graphdef, phi_d.policy_params, phi_nd.policy_non_params
+        )
 
         @nnx.scan(
             in_axes=(None, None, nnx.Carry, None),
@@ -115,8 +120,8 @@ class ProjectionNoSubsNoTerm(ProjectionBase):
         _, (actions, states) = next_state_action_row(
             policy=policy,
             sys_dynamics=self.sys_dynamics,
-            state=phi.initial_state,
-            jax_key=phi.jax_key,
+            state=phi_nd.initial_state,
+            jax_key=phi_nd.jax_key,
         )
         constraint_values = self.sys_constraints(states, actions)
         relaxations_plus = jnp.maximum(
@@ -136,19 +141,23 @@ class ProjectionNoSubsNoTerm(ProjectionBase):
         return flatten_util.ravel_pytree(rollout)[0]
 
     @jax.jit
-    def constraint_fn(self, x: jax.Array, phi: ProjectionPhi) -> jax.Array:
+    def constraint_fn(
+        self, x: jax.Array, phi_d: ProjectionPhiD, phi_nd: ProjectionPhiND
+    ) -> jax.Array:
         rollout = self.x_to_rollout(x)
-        policy = nnx.merge(self.policy_graphdef, phi.policy_state)
+        policy = nnx.merge(
+            self.policy_graphdef, phi_d.policy_params, phi_nd.policy_non_params
+        )
 
         constraints_list = [
             self.constraints_initial_state(
-                rollout=rollout, initial_state=phi.initial_state
+                rollout=rollout, initial_state=phi_nd.initial_state
             ),
             self.constraints_sys_dynamics(
                 rollout=rollout, sys_dynamics=self.sys_dynamics
             ),
             self.constraints_policy(
-                rollout=rollout, policy=policy, jax_key=phi.jax_key
+                rollout=rollout, policy=policy, jax_key=phi_nd.jax_key
             ),
             self.constraints_sys_constraints(
                 rollout=rollout, sys_constraints=self.sys_constraints

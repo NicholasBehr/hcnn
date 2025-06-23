@@ -8,12 +8,12 @@ from flax import struct
 from .optimization_base import (
     OptimizationProblemBase,
     OptimizationSolverBase,
-    PhiType,
+    PhiTypeDiff,
 )
 
 
 @struct.dataclass
-class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
+class OptimizationSolverOSQP(OptimizationSolverBase[PhiTypeDiff]):
     max_iter: int = 500
     tol: float = 1e-4
 
@@ -35,7 +35,7 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
 
         @staticmethod
         def factory(
-            problem: OptimizationProblemBase[PhiType], phi: PhiType
+            problem: OptimizationProblemBase[PhiTypeDiff], phi: PhiTypeDiff
         ) -> Self:
             x = problem.get_x0(phi)
             z = problem.constraint_fn(x, phi)
@@ -61,9 +61,9 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
 
         def update_primal_dual(
             self,
-            problem: OptimizationProblemBase[PhiType],
+            problem: OptimizationProblemBase[PhiTypeDiff],
             tol: float,
-            phi: PhiType,
+            phi: PhiTypeDiff,
         ) -> Self:
             ## form linearization around x_tilde
             h, h_jvp = jax.linearize(
@@ -131,7 +131,9 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
             )
 
         def update_residuals(
-            self, problem: OptimizationProblemBase[PhiType], phi: PhiType
+            self,
+            problem: OptimizationProblemBase[PhiTypeDiff],
+            phi: PhiTypeDiff,
         ) -> Self:
             ## form linearization around x
             h, h_vjp = jax.vjp(lambda x: problem.constraint_fn(x, phi), self.x)
@@ -190,8 +192,8 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
     def body_fun(
         self,
         variables: Variables,
-        problem: OptimizationProblemBase[PhiType],
-        phi: PhiType,
+        problem: OptimizationProblemBase[PhiTypeDiff],
+        phi: PhiTypeDiff,
     ) -> Variables:
         return (
             variables.replace(iter_counter=variables.iter_counter + 1)
@@ -201,7 +203,7 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
         )
 
     def _solve_variables(
-        self, problem: OptimizationProblemBase[PhiType], phi: PhiType
+        self, problem: OptimizationProblemBase[PhiTypeDiff], phi: PhiTypeDiff
     ) -> Variables:
         variables = OptimizationSolverOSQP.Variables.factory(problem, phi)
         variables = jax.lax.while_loop(
@@ -212,18 +214,20 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
         return variables
 
     def _solve_for_unrolling(
-        self, problem: OptimizationProblemBase[PhiType], phi: PhiType
+        self, problem: OptimizationProblemBase[PhiTypeDiff], phi: PhiTypeDiff
     ):
         variables = OptimizationSolverOSQP.Variables.factory(problem, phi)
         for _ in range(35):
             variables = self.body_fun(variables, problem, phi)
         return variables.x
 
-    def _solve(self, problem: OptimizationProblemBase[PhiType], phi: PhiType):
+    def _solve(
+        self, problem: OptimizationProblemBase[PhiTypeDiff], phi: PhiTypeDiff
+    ):
         return self._solve_variables(problem, phi).x
 
     def _solve_fwd(
-        self, problem: OptimizationProblemBase[PhiType], phi: PhiType
+        self, problem: OptimizationProblemBase[PhiTypeDiff], phi: PhiTypeDiff
     ):
         variables = self._solve_variables(problem, phi)
         return variables.x, (
@@ -240,8 +244,8 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiType]):
             jax.Array,
             jax.Array,
             jax.Array,
-            OptimizationProblemBase[PhiType],
-            PhiType,
+            OptimizationProblemBase[PhiTypeDiff],
+            PhiTypeDiff,
         ],
         g: jax.Array,
     ):

@@ -316,15 +316,22 @@ def test_rollout_fwd(  # noqa: PLR0913 test clarity
     horizon,
 ):
     constraint_dim = loss_and_grad.projection.sys_constraints.constraint_dim
-    batch_size = 512
+    batch_size = 32
     key = jax.random.key(42)
     keys = jax.random.split(key, 2)
     initial_states = jax.random.normal(keys[0], (batch_size, state_dim))
     jax_keys = jax.random.split(keys[1], batch_size)
 
+    policy_state = nnx.state(policy)
+    relax_to_go_state = nnx.state(relax_to_go)
+
     rollout = loss_and_grad.calculate_rollout(
-        policy_state=nnx.state(policy),
-        relax_to_go_state=nnx.state(relax_to_go),
+        policy_params=nnx.filter_state(policy_state, nnx.Param),
+        relax_to_go_params=nnx.filter_state(relax_to_go_state, nnx.Param),
+        policy_non_params=nnx.filter_state(policy_state, nnx.Not(nnx.Param)),
+        relax_to_go_non_params=nnx.filter_state(
+            relax_to_go_state, nnx.Not(nnx.Param)
+        ),
         initial_states=initial_states,
         jax_keys=jax_keys,
     )
@@ -362,23 +369,31 @@ def test_rollout_bwd(
     relax_to_go: DropoutMLP,
     state_dim,
 ):
-    batch_size = 512
+    batch_size = 32
     key = jax.random.key(42)
     keys = jax.random.split(key, 2)
     initial_states = jax.random.normal(keys[0], (batch_size, state_dim))
     jax_keys = jax.random.split(keys[1], batch_size)
 
-    policy_graphdef, policy_state = nnx.split(policy)
-    relax_to_go_graphdef, relax_to_go_state = nnx.split(relax_to_go)
+    policy_state = nnx.state(policy)
+    relax_to_go_state = nnx.state(relax_to_go)
 
     rollout, rollout_vjp = jax.vjp(
-        lambda policy_state: loss_and_grad.calculate_rollout(
-            policy_state=policy_state,
-            relax_to_go_state=relax_to_go_state,
+        lambda policy_params,
+        relax_to_go_params: loss_and_grad.calculate_rollout(
+            policy_params=policy_params,
+            relax_to_go_params=relax_to_go_params,
+            policy_non_params=nnx.filter_state(
+                policy_state, nnx.Not(nnx.Param)
+            ),
+            relax_to_go_non_params=nnx.filter_state(
+                relax_to_go_state, nnx.Not(nnx.Param)
+            ),
             initial_states=initial_states,
             jax_keys=jax_keys,
         ),
-        policy_state,
+        nnx.filter_state(policy_state, nnx.Param),
+        nnx.filter_state(relax_to_go_state, nnx.Param),
     )
 
     rollout_grad = jax.tree_util.tree_map(lambda x: jnp.ones_like(x), rollout)
@@ -393,7 +408,7 @@ def test_call_fwd(
     cost_to_go: DropoutMLP,
     state_dim,
 ):
-    batch_size = 512
+    batch_size = 32
     key = jax.random.key(42)
     keys = jax.random.split(key, 2)
     initial_states = jax.random.normal(keys[0], (batch_size, state_dim))

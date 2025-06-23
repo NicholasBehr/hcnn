@@ -5,7 +5,8 @@ from flax import nnx, struct
 from hcnn.optimization import OptimizationSolverBase
 from hcnn.projection import (
     ProjectionBase,
-    ProjectionPhi,
+    ProjectionPhiD,
+    ProjectionPhiND,
     Rollout,
 )
 from hcnn.system_costs import SystemCostsBase
@@ -235,8 +236,10 @@ class LossAndGrad:
 
     def calculate_rollout(
         self,
-        policy_state: nnx.State,
-        relax_to_go_state: nnx.State,
+        policy_params: nnx.State,
+        relax_to_go_params: nnx.State,
+        policy_non_params: nnx.State,
+        relax_to_go_non_params: nnx.State,
         initial_states: jax.Array,
         jax_keys: jax.Array,
     ):
@@ -262,13 +265,17 @@ class LossAndGrad:
             initial_state,
             jax_key,
         ):
-            phi = ProjectionPhi(
-                policy_state=policy_state,
-                relax_to_go_state=relax_to_go_state,
+            phi_d = ProjectionPhiD(
+                policy_params=policy_params,
+                relax_to_go_params=relax_to_go_params,
+            )
+            phi_nd = ProjectionPhiND(
+                policy_non_params=policy_non_params,
+                relax_to_go_non_params=relax_to_go_non_params,
                 initial_state=initial_state,
                 jax_key=jax_key,
             )
-            x_star = self.solver.solve(self.projection, phi)
+            x_star = self.solver.solve(self.projection, phi_d, phi_nd)
             rollout = self.projection.x_to_rollout(x_star)
             return rollout
 
@@ -310,14 +317,23 @@ class LossAndGrad:
                 - tuple: Updated states for policy, relax_to_go, cost_to_go.
         """
         # Calculate the rollout
+        policy_params = nnx.filter_state(policy_state, nnx.Param)
+        relax_to_go_params = nnx.filter_state(relax_to_go_state, nnx.Param)
+        policy_non_params = nnx.filter_state(policy_state, nnx.Not(nnx.Param))
+        relax_to_go_non_params = nnx.filter_state(
+            relax_to_go_state, nnx.Not(nnx.Param)
+        )
         rollout, rollout_vjp = jax.vjp(
-            lambda policy_state: self.calculate_rollout(
-                policy_state=policy_state,
-                relax_to_go_state=relax_to_go_state,
+            lambda policy_params, relax_to_go_params: self.calculate_rollout(
+                policy_params=policy_params,
+                relax_to_go_params=relax_to_go_params,
+                policy_non_params=policy_non_params,
+                relax_to_go_non_params=relax_to_go_non_params,
                 initial_states=initial_states,
                 jax_keys=jax_keys,
             ),
-            policy_state,
+            policy_params,
+            relax_to_go_params,
         )
 
         (cost_residuals, cost_to_go_state), cost_res_vjp = jax.vjp(
@@ -391,7 +407,7 @@ class LossAndGrad:
             relaxations_plus=jnp.zeros_like(rollout.relaxations_plus),
             relaxations_minus=jnp.zeros_like(rollout.relaxations_minus),
         )
-        policy_policy_state_grad = rollout_vjp(policy_rollout_grad)
+        policy_policy_state_grad, _ = rollout_vjp(policy_rollout_grad)
 
         ## Calculate the gradients for the cost_to_go state ##
         cost_cost_to_go_state_grad = jax.tree_util.tree_map(
@@ -399,6 +415,9 @@ class LossAndGrad:
         )  # the outgoing cost_to_go_state does not affect the cost loss
         (_, _, cost_cost_to_go_state_grad) = cost_res_vjp(
             (cost_val_res_grad, cost_cost_to_go_state_grad)
+        )
+        cost_cost_to_go_state_grad = nnx.filter_state(
+            cost_cost_to_go_state_grad, nnx.Param
         )
 
         ## Calculate the gradients for the relax_to_go state ##
@@ -410,6 +429,9 @@ class LossAndGrad:
         )
         # We purposfully do not propagate gradients through the rollout here!
         # We dont want to change the rollout to improve the relax to go loss.
+        relax_relax_to_go_state_grad = nnx.filter_state(
+            relax_relax_to_go_state_grad, nnx.Param
+        )
 
         return (
             (policy_loss, relax_to_go_loss, cost_to_go_loss),

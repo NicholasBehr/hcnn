@@ -1,8 +1,9 @@
 import jax
 from flax import nnx, struct
 
-from hcnn.policy.policy_base import PolicyBase
 from hcnn.training.dropout_mlp import DropoutMLP
+
+from .policy_base import PolicyBase
 
 
 @struct.dataclass

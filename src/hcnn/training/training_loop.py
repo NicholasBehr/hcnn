@@ -2,11 +2,9 @@ import os
 
 import wandb
 
-from hcnn.system_constraints.system_constraints_base import (
-    SystemConstraintsBase,
-)
-from hcnn.system_costs.system_costs_base import SystemCostsBase
-from hcnn.system_dynamics.system_dynamics_base import SystemDynamicsBase
+from hcnn.system_constraints import SystemConstraintsBase
+from hcnn.system_costs import SystemCostsBase
+from hcnn.system_dynamics import SystemDynamicsBase
 
 
 def build_system(

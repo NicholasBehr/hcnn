@@ -2,8 +2,9 @@ import jax
 import jax.numpy as jnp
 from flax import nnx, struct
 
-from hcnn.policy.policy_base import PolicyBase
-from hcnn.system_dynamics.system_dynamics_linear import SystemDynamicsLinear
+from hcnn.system_dynamics import SystemDynamicsLinear
+
+from .policy_base import PolicyBase
 
 
 @struct.dataclass

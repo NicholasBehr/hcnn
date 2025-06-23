@@ -5,12 +5,10 @@ import jax
 import jax.numpy as jnp
 from flax import nnx, struct
 
-from hcnn.optimization.optimization_base import OptimizationProblemBase
-from hcnn.policy.policy_base import PolicyBase
-from hcnn.system_constraints.system_constraints_base import (
-    SystemConstraintsBase,
-)
-from hcnn.system_dynamics.system_dynamics_base import SystemDynamicsBase
+from hcnn.optimization import OptimizationProblemBase
+from hcnn.policy import PolicyBase
+from hcnn.system_constraints import SystemConstraintsBase
+from hcnn.system_dynamics import SystemDynamicsBase
 
 
 @struct.dataclass

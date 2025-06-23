@@ -4,24 +4,19 @@ import pytest
 from flax import nnx, struct
 from jax import flatten_util
 
-from hcnn.projection.projection_base import (
+from hcnn.policy import PolicyBase
+from hcnn.projection import (
     ProjectionBase,
+    ProjectionNoSubsNoTerm,
     ProjectionPhi,
     Rollout,
 )
-from hcnn.projection.projection_no_subs_no_term import (
-    ProjectionNoSubstitutionNoTerminal,
-)
+from hcnn.system_constraints import SystemConstraintsBase
+from hcnn.system_dynamics import SystemDynamicsBase
 from hcnn.training.dropout_mlp import DropoutMLP
-from tests.policy.test_policy_base import PolicyBase, PolicyMock
-from tests.system_constraints.test_system_constraints_base import (
-    SystemConstraintsBase,
-    SystemConstraintsMock,
-)
-from tests.system_dynamics.test_system_dynamics_base import (
-    SystemDynamicsBase,
-    SystemDynamicsMock,
-)
+from tests.policy import PolicyMock
+from tests.system_constraints import SystemConstraintsMock
+from tests.system_dynamics import SystemDynamicsMock
 
 
 @struct.dataclass
@@ -179,7 +174,7 @@ class TestProjectionBase:
         policy: PolicyBase,
         sys_dynamics: SystemDynamicsBase,
         sys_constraints: SystemConstraintsBase,
-        projection: ProjectionNoSubstitutionNoTerminal,
+        projection: ProjectionNoSubsNoTerm,
         phi: ProjectionPhi,
     ):
         self.state_dim = projection.state_dim

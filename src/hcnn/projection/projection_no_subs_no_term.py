@@ -3,20 +3,18 @@ import jax.numpy as jnp
 from flax import nnx, struct
 from jax import flatten_util
 
-from hcnn.policy.policy_base import PolicyBase
+from hcnn.policy import PolicyBase
 from hcnn.projection.projection_base import (
     ProjectionBase,
     ProjectionPhi,
     Rollout,
 )
-from hcnn.system_constraints.system_constraints_base import (
-    SystemConstraintsBase,
-)
-from hcnn.system_dynamics.system_dynamics_base import SystemDynamicsBase
+from hcnn.system_constraints import SystemConstraintsBase
+from hcnn.system_dynamics import SystemDynamicsBase
 
 
 @struct.dataclass
-class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
+class ProjectionNoSubsNoTerm(ProjectionBase):
     @classmethod
     def factory(  # noqa: PLR0913
         cls,
@@ -69,7 +67,7 @@ class ProjectionNoSubstitutionNoTerminal(ProjectionBase):
         lower_bound = jnp.concatenate(lower_bound_list)
         upper_bound = jnp.concatenate(upper_bound_list)
 
-        return ProjectionNoSubstitutionNoTerminal(
+        return ProjectionNoSubsNoTerm(
             cost_quad_diag=cost_quad_diag,
             cost_linear=cost_linear,
             lower_bound=lower_bound,

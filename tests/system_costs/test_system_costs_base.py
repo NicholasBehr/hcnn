@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import pytest
 from flax import struct
 
-from hcnn.system_costs.system_costs_base import SystemCostsBase
+from hcnn.system_costs import SystemCostsBase
 
 
 @struct.dataclass

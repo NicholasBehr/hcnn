@@ -2,26 +2,19 @@ import jax
 import pytest
 from flax import nnx
 
-from hcnn.optimization.solver_shallow import OptimizationSolverShallow
-from hcnn.projection.projection_base import (
-    ProjectionPhi,
-)
+from hcnn.optimization import OptimizationSolverShallow
+from hcnn.policy import PolicyBase
+from hcnn.projection import ProjectionPhi
+from hcnn.system_constraints import SystemConstraintsBase
+from hcnn.system_costs import SystemCostsBase
+from hcnn.system_dynamics import SystemDynamicsBase
 from hcnn.training.dropout_mlp import DropoutMLP
 from hcnn.training.loss_and_grad import LossAndGrad
-from tests.policy.test_policy_base import PolicyBase, PolicyMock
-from tests.projection.test_projection_base import ProjectionMock
-from tests.system_constraints.test_system_constraints_base import (
-    SystemConstraintsBase,
-    SystemConstraintsMock,
-)
-from tests.system_costs.test_system_costs_base import (
-    SystemCostMock,
-    SystemCostsBase,
-)
-from tests.system_dynamics.test_system_dynamics_base import (
-    SystemDynamicsBase,
-    SystemDynamicsMock,
-)
+from tests.policy import PolicyMock
+from tests.projection import ProjectionMock
+from tests.system_constraints import SystemConstraintsMock
+from tests.system_costs import SystemCostMock
+from tests.system_dynamics import SystemDynamicsMock
 
 
 @pytest.fixture
@@ -49,7 +42,7 @@ def sys_constraints(state_dim, action_dim) -> SystemConstraintsBase:
 
 
 @pytest.fixture
-def value_to_go(state_dim):
+def cost_to_go(state_dim):
     return DropoutMLP(
         layer_sizes=(state_dim, 64, 1),
         dropout_rate=0.1,
@@ -114,14 +107,14 @@ def loss_and_grad(
     projection,
     solver,
     sys_cost,
-    value_to_go,
+    cost_to_go,
     relax_to_go,
 ) -> LossAndGrad:
     return LossAndGrad.factory(
         projection=projection,
         sys_cost=sys_cost,
         solver=solver,
-        value_to_go=value_to_go,
+        cost_to_go=cost_to_go,
         relax_to_go=relax_to_go,
     )
 
@@ -133,7 +126,7 @@ def test_policy_loss_single(loss_and_grad: LossAndGrad):
     rollout_interventions = jax.random.normal(key, (horizon,))
 
     loss = loss_and_grad.policy_loss(
-        value_residuals=value_residuals,
+        cost_residuals=value_residuals,
         rollout_interventions=rollout_interventions,
         td_gamma=0.8,
         gae_lambda=0.99,
@@ -154,7 +147,7 @@ def test_policy_loss_batch(loss_and_grad: LossAndGrad):
     )
 
     loss = loss_and_grad.policy_loss(
-        value_residuals=value_residuals,
+        cost_residuals=value_residuals,
         rollout_interventions=rollout_interventions,
         td_gamma=0.8,
         gae_lambda=0.99,
@@ -168,8 +161,8 @@ def test_value_to_go_loss_single(loss_and_grad: LossAndGrad):
     key = jax.random.key(42)
     td_residuals = jax.random.normal(key, (horizon - 1,))
 
-    loss = loss_and_grad.value_to_go_loss(
-        value_residuals=td_residuals,
+    loss = loss_and_grad.cost_to_go_loss(
+        cost_residuals=td_residuals,
         td_gamma=0.8,
         gae_lambda=0.99,
     )
@@ -183,8 +176,8 @@ def test_value_to_go_loss_batch(loss_and_grad: LossAndGrad):
     key = jax.random.key(42)
     td_residuals = jax.random.normal(key, (batch_size, batch_size, horizon - 1))
 
-    loss = loss_and_grad.value_to_go_loss(
-        value_residuals=td_residuals,
+    loss = loss_and_grad.cost_to_go_loss(
+        cost_residuals=td_residuals,
         td_gamma=0.8,
         gae_lambda=0.99,
     )
@@ -222,7 +215,7 @@ def test_relax_to_go_loss_batch(loss_and_grad: LossAndGrad):
 
 
 def test_value_residuals_single(
-    loss_and_grad: LossAndGrad, value_to_go: DropoutMLP, state_dim, action_dim
+    loss_and_grad: LossAndGrad, cost_to_go: DropoutMLP, state_dim, action_dim
 ):
     horizon = 20
     key = jax.random.key(42)
@@ -230,10 +223,10 @@ def test_value_residuals_single(
     states = jax.random.normal(keys[0], (horizon, state_dim))
     actions = jax.random.normal(keys[1], (horizon, action_dim))
 
-    value_residuals, _ = loss_and_grad.value_residuals(
+    value_residuals, _ = loss_and_grad.cost_residuals(
         states=states,
         actions=actions,
-        value_to_go_state=nnx.state(value_to_go),
+        cost_to_go_state=nnx.state(cost_to_go),
         td_gamma=0.8,
     )
 
@@ -241,7 +234,7 @@ def test_value_residuals_single(
 
 
 def test_value_residuals_batch(
-    loss_and_grad: LossAndGrad, value_to_go: DropoutMLP, state_dim, action_dim
+    loss_and_grad: LossAndGrad, cost_to_go: DropoutMLP, state_dim, action_dim
 ):
     horizon = 20
     batch_size = 200
@@ -254,10 +247,10 @@ def test_value_residuals_batch(
         keys[1], (batch_size, batch_size, horizon, action_dim)
     )
 
-    value_residuals, _ = loss_and_grad.value_residuals(
+    value_residuals, _ = loss_and_grad.cost_residuals(
         states=states,
         actions=actions,
-        value_to_go_state=nnx.state(value_to_go),
+        cost_to_go_state=nnx.state(cost_to_go),
         td_gamma=0.8,
     )
 
@@ -380,7 +373,7 @@ def test_call(
     loss_and_grad: LossAndGrad,
     policy: PolicyBase,
     relax_to_go: DropoutMLP,
-    value_to_go: DropoutMLP,
+    cost_to_go: DropoutMLP,
     state_dim,
 ):
     batch_size = 512
@@ -392,7 +385,7 @@ def test_call(
     (a, b, c) = loss_and_grad(
         policy_state=nnx.state(policy),
         relax_to_go_state=nnx.state(relax_to_go),
-        value_to_go_state=nnx.state(value_to_go),
+        cost_to_go_state=nnx.state(cost_to_go),
         initial_states=initial_states,
         jax_keys=jax_keys,
         td_gamma=0.8,

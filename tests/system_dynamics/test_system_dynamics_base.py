@@ -2,7 +2,7 @@ import jax
 import pytest
 from flax import struct
 
-from hcnn.system_dynamics.system_dynamics_base import SystemDynamicsBase
+from hcnn.system_dynamics import SystemDynamicsBase
 
 
 @struct.dataclass

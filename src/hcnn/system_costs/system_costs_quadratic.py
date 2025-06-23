@@ -6,7 +6,7 @@ from hcnn.system_costs.system_costs_base import SystemCostsBase
 
 
 @struct.dataclass
-class SystemCostQuadratic(SystemCostsBase):
+class SystemCostsQuadratic(SystemCostsBase):
     state_cost_matrix: jax.Array  # float 2d matrix
     action_cost_matrix: jax.Array  # float 2d matrix
 
@@ -33,7 +33,7 @@ class SystemCostQuadratic(SystemCostsBase):
         assert state_cost_matrix.shape == (state_dim, state_dim)
         assert action_cost_matrix.shape == (action_dim, action_dim)
 
-        return SystemCostQuadratic(
+        return SystemCostsQuadratic(
             state_dim=state_dim,
             action_dim=action_dim,
             state_cost_matrix=state_cost_matrix,

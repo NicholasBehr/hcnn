@@ -2,7 +2,7 @@ import jax.numpy as jnp
 import pytest
 
 from hcnn.projection.projection_no_subs_no_term import (
-    ProjectionNoSubstitutionNoTerminal,
+    ProjectionNoSubsNoTerm,
 )
 from tests.projection.test_projection_base import TestProjectionBase
 
@@ -18,8 +18,8 @@ class TestProjectionNoSubstitutionNoTerminal(TestProjectionBase):
         sys_dynamics,
         sys_constraints,
         horizon,
-    ) -> ProjectionNoSubstitutionNoTerminal:
-        return ProjectionNoSubstitutionNoTerminal.factory(
+    ) -> ProjectionNoSubsNoTerm:
+        return ProjectionNoSubsNoTerm.factory(
             policy=policy,
             relax_to_go=relax_to_go,
             sys_dynamics=sys_dynamics,

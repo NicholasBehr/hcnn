@@ -1,10 +1,9 @@
 import jax.numpy as jnp
 import pytest
 
-from hcnn.system_constraints.system_constraints_box import SystemConstraintsBox
-from tests.system_constraints.test_system_constraints_base import (
-    TestSystemConstraintsBase,
-)
+from hcnn.system_constraints import SystemConstraintsBox
+
+from .test_system_constraints_base import TestSystemConstraintsBase
 
 
 class TestSystemConstraintsBox(TestSystemConstraintsBase):

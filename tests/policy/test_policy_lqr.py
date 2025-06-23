@@ -2,9 +2,10 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from hcnn.policy.policy_lqr import PolicyLQR
-from hcnn.system_dynamics.system_dynamics_linear import SystemDynamicsLinear
-from tests.policy.test_policy_base import TestPolicyBase
+from hcnn.policy import PolicyLQR
+from hcnn.system_dynamics import SystemDynamicsLinear
+
+from .test_policy_base import TestPolicyBase
 
 
 class TestPolicyLQR(TestPolicyBase):

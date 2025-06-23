@@ -2,9 +2,10 @@ import jax
 import pytest
 from flax import nnx
 
-from hcnn.policy.policy_mlp import PolicyMLP
+from hcnn.policy import PolicyMLP
 from hcnn.training.dropout_mlp import DropoutMLP
-from tests.policy.test_policy_base import TestPolicyBase
+
+from .test_policy_base import TestPolicyBase
 
 
 class TestPolicyMLP(TestPolicyBase):

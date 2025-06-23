@@ -2,7 +2,7 @@ import jax
 import pytest
 from flax import nnx, struct
 
-from hcnn.policy.policy_base import PolicyBase
+from hcnn.policy import PolicyBase
 
 
 @struct.dataclass

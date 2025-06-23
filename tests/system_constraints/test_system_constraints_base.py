@@ -3,9 +3,7 @@ import jax.numpy as jnp
 import pytest
 from flax import struct
 
-from hcnn.system_constraints.system_constraints_base import (
-    SystemConstraintsBase,
-)
+from hcnn.system_constraints import SystemConstraintsBase
 
 
 @struct.dataclass

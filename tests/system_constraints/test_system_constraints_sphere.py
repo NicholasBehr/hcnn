@@ -1,12 +1,9 @@
 import jax
 import pytest
 
-from hcnn.system_constraints.system_constraints_sphere import (
-    SystemConstraintsSphere,
-)
-from tests.system_constraints.test_system_constraints_base import (
-    TestSystemConstraintsBase,
-)
+from hcnn.system_constraints import SystemConstraintsSphere
+
+from .test_system_constraints_base import TestSystemConstraintsBase
 
 
 class TestSystemConstraintsSphere(TestSystemConstraintsBase):

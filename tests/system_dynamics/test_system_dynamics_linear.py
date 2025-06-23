@@ -2,10 +2,9 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from hcnn.system_dynamics.system_dynamics_linear import SystemDynamicsLinear
-from tests.system_dynamics.test_system_dynamics_base import (
-    TestSystemDynamicsBase,
-)
+from hcnn.system_dynamics import SystemDynamicsLinear
+
+from .test_system_dynamics_base import TestSystemDynamicsBase
 
 
 class TestSystemDynamicsLinear(TestSystemDynamicsBase):

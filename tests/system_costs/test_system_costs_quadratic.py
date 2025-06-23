@@ -2,19 +2,20 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from hcnn.system_costs.system_cost_quadratic import SystemCostQuadratic
-from tests.system_costs.test_system_costs_base import TestSystemCostBase
+from hcnn.system_costs import SystemCostsQuadratic
+
+from .test_system_costs_base import TestSystemCostBase
 
 
-class TestSystemCostQuadratic(TestSystemCostBase):
+class TestSystemCostsQuadratic(TestSystemCostBase):
     """Test class for SystemCostQuadratic."""
 
     @pytest.fixture
-    def sys_cost(self, state_dim, action_dim) -> SystemCostQuadratic:
+    def sys_cost(self, state_dim, action_dim) -> SystemCostsQuadratic:
         key = jax.random.key(0)
         state_cost_root = jax.random.normal(key, (state_dim, state_dim))
         action_cost_root = jax.random.normal(key, (action_dim, action_dim))
-        return SystemCostQuadratic.factory(
+        return SystemCostsQuadratic.factory(
             state_cost_matrix=state_cost_root.T @ state_cost_root,
             action_cost_matrix=action_cost_root.T @ action_cost_root,
         )
@@ -22,7 +23,7 @@ class TestSystemCostQuadratic(TestSystemCostBase):
     @pytest.fixture(autouse=True)
     def setup(
         self,
-        sys_cost: SystemCostQuadratic,
+        sys_cost: SystemCostsQuadratic,
         state_dim: int,
         action_dim: int,
     ):
@@ -31,7 +32,7 @@ class TestSystemCostQuadratic(TestSystemCostBase):
         self.action_dim = action_dim
 
     def test_instance_creation(self):
-        assert isinstance(self.sys_cost, SystemCostQuadratic)
+        assert isinstance(self.sys_cost, SystemCostsQuadratic)
         assert self.sys_cost.state_cost_matrix.shape == (
             self.state_dim,
             self.state_dim,
@@ -42,7 +43,7 @@ class TestSystemCostQuadratic(TestSystemCostBase):
         )
 
     def test_call_example_single(self):
-        instance = SystemCostQuadratic.factory(
+        instance = SystemCostsQuadratic.factory(
             state_cost_matrix=jnp.array([[1.0, 2.0], [2.0, 3.0]]),
             action_cost_matrix=jnp.array([4.0]),
         )
@@ -55,7 +56,7 @@ class TestSystemCostQuadratic(TestSystemCostBase):
         assert jnp.allclose(cost, expected)
 
     def test_call_example_batch(self):
-        instance = SystemCostQuadratic.factory(
+        instance = SystemCostsQuadratic.factory(
             state_cost_matrix=jnp.array([[1.0, 2.0], [2.0, 3.0]]),
             action_cost_matrix=jnp.array([4.0]),
         )

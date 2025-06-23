@@ -1,7 +1,8 @@
 import pytest
 
-from hcnn.optimization.solver_shallow import OptimizationSolverShallow
-from tests.optimization.optimization_base import *  # noqa: F403
+from hcnn.optimization import OptimizationSolverShallow
+
+from .optimization_base import *  # noqa: F403
 
 
 @pytest.fixture

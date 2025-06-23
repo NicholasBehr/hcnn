@@ -1,4 +1,4 @@
-from typing import Any, List
+from typing import List
 
 import jax.numpy as jnp
 from flax import nnx
@@ -7,10 +7,17 @@ from flax import nnx
 class DropoutMLP(nnx.Module):
     """A simple Multi-Layer Perceptron (MLP) module with Dropout."""
 
-    layers: List[nnx.Linear | nnx.Dropout | Any]
+    layers: List[nnx.Linear | nnx.Dropout | nnx.Module]
     rngs: nnx.Rngs
 
-    def __init__(self, layer_sizes: list[int], dropout_rate: float = 0.0, *, rngs: nnx.Rngs):
+    def __init__(
+        self,
+        layer_sizes: list[int],
+        dropout_rate: float = 0.0,
+        activation: nnx.Module = nnx.celu,
+        *,
+        rngs: nnx.Rngs,
+    ):
         """Initializes the MLP module.
 
         Args:
@@ -19,6 +26,8 @@ class DropoutMLP(nnx.Module):
             dropout_rate: The dropout rate to apply after each hidden layer.
                 Must be in range [0.0, 1.0].
                 Defaults to 0.0 (no dropout).
+            activation: The activation function to use after each hidden layer.
+                Defaults to nnx.celu.
             rngs: NNX Rngs object for parameter initialization and dropout.
         """
         if dropout_rate < 0.0 or dropout_rate > 1.0:
@@ -32,13 +41,15 @@ class DropoutMLP(nnx.Module):
 
             # Add activation after each hidden layer
             if i < len(layer_sizes) - 2:
-                self.layers.append(nnx.celu)
+                self.layers.append(activation)
 
                 # Add Dropout layer after the activation in hidden layers
                 if dropout_rate > 0.0:
                     self.layers.append(nnx.Dropout(dropout_rate))
 
-    def __call__(self, x: jnp.ndarray, *, rngs: nnx.Rngs | None = None) -> jnp.ndarray:
+    def __call__(
+        self, x: jnp.ndarray, *, rngs: nnx.Rngs | None = None
+    ) -> jnp.ndarray:
         """Performs the forward pass through the MLP.
 
         Args:

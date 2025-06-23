@@ -25,7 +25,7 @@ class ProjectionPhi:
     initial_state: jax.Array
     policy_state: nnx.State
     relax_to_go_state: nnx.State
-    jax_key: jax.Array = struct.field(pytree_node=False)
+    jax_key: jax.Array
 
 
 @struct.dataclass

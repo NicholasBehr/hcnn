@@ -22,7 +22,7 @@ from .generalized_advantage import (
 class LossAndGrad:
     projection: ProjectionBase
     solver: OptimizationSolverBase
-    sys_cost: SystemCostsBase
+    sys_costs: SystemCostsBase
     cost_to_go_graphdef: nnx.GraphDef
     relax_to_go_graphdef: nnx.GraphDef
 
@@ -30,15 +30,15 @@ class LossAndGrad:
     def factory(
         cls,
         projection: ProjectionBase,
-        sys_cost: SystemCostsBase,
         solver: OptimizationSolverBase,
+        sys_costs: SystemCostsBase,
         cost_to_go: DropoutMLP,
         relax_to_go: DropoutMLP,
     ):
-        return cls(
+        return LossAndGrad(
             projection=projection,
             solver=solver,
-            sys_cost=sys_cost,
+            sys_costs=sys_costs,
             cost_to_go_graphdef=nnx.split(cost_to_go)[0],
             relax_to_go_graphdef=nnx.split(relax_to_go)[0],
         )
@@ -155,7 +155,7 @@ class LossAndGrad:
             - nnx.State: The updated state of the cost-to-go model.
         """
         # Shape of stage_cost is (..., horizon)
-        stage_cost = self.sys_cost(states, actions)
+        stage_cost = self.sys_costs(states, actions)
 
         # Hydrate cost_to_go model
         cost_to_go = nnx.merge(self.cost_to_go_graphdef, cost_to_go_state)
@@ -259,25 +259,21 @@ class LossAndGrad:
         """
 
         def sample_rollout(
-            initial_state, policy_state, relax_to_go_state, jax_key
+            initial_state,
+            jax_key,
         ):
             phi = ProjectionPhi(
-                initial_state=initial_state,
                 policy_state=policy_state,
                 relax_to_go_state=relax_to_go_state,
+                initial_state=initial_state,
                 jax_key=jax_key,
             )
             x_star = self.solver.solve(self.projection, phi)
-            return self.projection.x_to_rollout(x_star)
+            rollout = self.projection.x_to_rollout(x_star)
+            return rollout
 
-        return jax.vmap(
-            sample_rollout,
-            in_axes=(0, None, None, 0),
-            out_axes=0,
-        )(
+        return jax.vmap(sample_rollout)(
             initial_states,
-            policy_state,
-            relax_to_go_state,
             jax_keys,
         )
 

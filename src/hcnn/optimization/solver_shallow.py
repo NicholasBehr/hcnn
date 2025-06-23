@@ -296,7 +296,7 @@ class OptimizationSolverShallow(OptimizationSolverBase[PhiType]):
                     (-u1,),
                 )[1],
                 y_star,
-            )
+            ),
         )(phi)
         g_phi_2 = jax.vjp(
             lambda phi_arg: problem.constraint_fn(x_star, phi_arg), phi

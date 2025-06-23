@@ -1,10 +1,10 @@
 import jax
+import jax.numpy as jnp
 import pytest
 from flax import nnx
 
 from hcnn.optimization import OptimizationSolverShallow
 from hcnn.policy import PolicyBase
-from hcnn.projection import ProjectionPhi
 from hcnn.system_constraints import SystemConstraintsBase
 from hcnn.system_costs import SystemCostsBase
 from hcnn.system_dynamics import SystemDynamicsBase
@@ -77,23 +77,10 @@ def projection(
 
 
 @pytest.fixture
-def sys_cost(state_dim, action_dim) -> SystemCostsBase:
+def sys_costs(state_dim, action_dim) -> SystemCostsBase:
     return SystemCostMock(
         state_dim=state_dim,
         action_dim=action_dim,
-    )
-
-
-@pytest.fixture
-def phi(
-    policy,
-    state_dim,
-) -> ProjectionPhi:
-    keys = jax.random.split(jax.random.key(0), 2)
-    return ProjectionPhi.factory(
-        initial_state=jax.random.normal(keys[0], (state_dim,)),
-        policy=policy,
-        jax_key=keys[1],
     )
 
 
@@ -106,13 +93,13 @@ def solver():
 def loss_and_grad(
     projection,
     solver,
-    sys_cost,
+    sys_costs,
     cost_to_go,
     relax_to_go,
 ) -> LossAndGrad:
     return LossAndGrad.factory(
         projection=projection,
-        sys_cost=sys_cost,
+        sys_costs=sys_costs,
         solver=solver,
         cost_to_go=cost_to_go,
         relax_to_go=relax_to_go,
@@ -320,7 +307,7 @@ def test_relax_residuals_batch(
     )
 
 
-def test_rollout(  # noqa: PLR0913 test clarity
+def test_rollout_fwd(  # noqa: PLR0913 test clarity
     loss_and_grad: LossAndGrad,
     policy: PolicyBase,
     relax_to_go: DropoutMLP,
@@ -369,7 +356,37 @@ def test_rollout(  # noqa: PLR0913 test clarity
     )
 
 
-def test_call(
+def test_rollout_bwd(
+    loss_and_grad: LossAndGrad,
+    policy: PolicyBase,
+    relax_to_go: DropoutMLP,
+    state_dim,
+):
+    batch_size = 512
+    key = jax.random.key(42)
+    keys = jax.random.split(key, 2)
+    initial_states = jax.random.normal(keys[0], (batch_size, state_dim))
+    jax_keys = jax.random.split(keys[1], batch_size)
+
+    policy_graphdef, policy_state = nnx.split(policy)
+    relax_to_go_graphdef, relax_to_go_state = nnx.split(relax_to_go)
+
+    rollout, rollout_vjp = jax.vjp(
+        lambda policy_state: loss_and_grad.calculate_rollout(
+            policy_state=policy_state,
+            relax_to_go_state=relax_to_go_state,
+            initial_states=initial_states,
+            jax_keys=jax_keys,
+        ),
+        policy_state,
+    )
+
+    rollout_grad = jax.tree_util.tree_map(lambda x: jnp.ones_like(x), rollout)
+
+    out = rollout_vjp(rollout_grad)
+
+
+def test_call_fwd(
     loss_and_grad: LossAndGrad,
     policy: PolicyBase,
     relax_to_go: DropoutMLP,

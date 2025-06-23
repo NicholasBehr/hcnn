@@ -16,7 +16,7 @@ class TestPolicyLQR(TestPolicyBase):
         key = jax.random.key(0)
         return SystemDynamicsLinear.factory(
             state_matrix=jax.random.normal(key, (state_dim, state_dim)),
-            input_matrix=jax.random.normal(key, (state_dim, action_dim)),
+            action_matrix=jax.random.normal(key, (state_dim, action_dim)),
         )
 
     @pytest.fixture
@@ -97,7 +97,7 @@ class TestPolicyLQR(TestPolicyBase):
         state_matrix = jnp.array([[1.2, 0.0], [0.0, 1.1]])
         input_matrix = jnp.zeros((2, 1))
         system = SystemDynamicsLinear.factory(
-            state_matrix=state_matrix, input_matrix=input_matrix
+            state_matrix=state_matrix, action_matrix=input_matrix
         )
 
         state_cost = jnp.eye(2)
@@ -110,7 +110,7 @@ class TestPolicyLQR(TestPolicyBase):
         state_matrix = jnp.array([[1.2, 0.0], [0.0, 1.1]])
         input_matrix = jnp.eye(2)
         system = SystemDynamicsLinear.factory(
-            state_matrix=state_matrix, input_matrix=input_matrix
+            state_matrix=state_matrix, action_matrix=input_matrix
         )
 
         state_cost = jnp.array([[1.0, 0.0], [0.0, 0.0]])
@@ -140,7 +140,7 @@ class TestPolicyLQR(TestPolicyBase):
         input_cost = jnp.array([[1.0]])
 
         system = SystemDynamicsLinear.factory(
-            state_matrix=state_matrix, input_matrix=input_matrix
+            state_matrix=state_matrix, action_matrix=input_matrix
         )
         policy = PolicyLQR.factory(system, state_cost, input_cost)
         riccati_matrix = policy.riccati_matrix
@@ -182,7 +182,7 @@ class TestPolicyLQR(TestPolicyBase):
         k_expected = jnp.array([[-0.2216, -0.1297]])
 
         system = SystemDynamicsLinear.factory(
-            state_matrix=state_matrix, input_matrix=input_matrix
+            state_matrix=state_matrix, action_matrix=input_matrix
         )
         policy = PolicyLQR.factory(system, state_cost, input_cost)
         x_computed = policy.riccati_matrix
@@ -205,7 +205,7 @@ class TestPolicyLQR(TestPolicyBase):
         k_expected = jnp.array([[0.949749, 1.2793549]])
 
         system = SystemDynamicsLinear.factory(
-            state_matrix=state_matrix, input_matrix=input_matrix
+            state_matrix=state_matrix, action_matrix=input_matrix
         )
         policy = PolicyLQR.factory(system, state_cost, input_cost)
         x_computed = policy.riccati_matrix

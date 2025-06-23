@@ -13,7 +13,7 @@ class TestSystemDynamicsLinear(TestSystemDynamicsBase):
         key = jax.random.key(0)
         return SystemDynamicsLinear.factory(
             state_matrix=jax.random.normal(key, (state_dim, state_dim)),
-            input_matrix=jax.random.normal(key, (state_dim, action_dim)),
+            action_matrix=jax.random.normal(key, (state_dim, action_dim)),
         )
 
     @pytest.fixture(autouse=True)
@@ -35,7 +35,7 @@ class TestSystemDynamicsLinear(TestSystemDynamicsBase):
             self.state_dim,
             self.state_dim,
         )
-        assert self.sys_dynamics.input_matrix_transp.shape == (
+        assert self.sys_dynamics.action_matrix_transp.shape == (
             self.action_dim,
             self.state_dim,
         )

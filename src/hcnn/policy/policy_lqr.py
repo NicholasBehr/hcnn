@@ -1,6 +1,6 @@
 import jax
 import jax.numpy as jnp
-from flax import nnx, struct
+from flax import struct
 
 from hcnn.system_dynamics import SystemDynamicsLinear
 
@@ -21,7 +21,7 @@ class PolicyLQR(PolicyBase):
     ):
         tol: float = 1e-8
         state_matrix = system_linear.state_matrix_transp.T
-        input_matrix = system_linear.input_matrix_transp.T
+        input_matrix = system_linear.action_matrix_transp.T
         state_cost = jnp.atleast_2d(state_cost)
         input_cost = jnp.atleast_2d(input_cost)
 
@@ -140,7 +140,6 @@ class PolicyLQR(PolicyBase):
             riccati_matrix = new_riccati_matrix
         return riccati_matrix, gain_matrix
 
-    @nnx.jit
     def __call__(
         self,
         state: jax.Array,

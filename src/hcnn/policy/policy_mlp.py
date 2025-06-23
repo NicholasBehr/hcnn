@@ -17,12 +17,16 @@ class PolicyMLP(PolicyBase):
         action_dim: int,
         hidden_layer_sizes: list[int],
         dropout_rate: float = 0.0,
+        activation: nnx.Module = nnx.celu,
         *,
         rngs: nnx.Rngs,
     ) -> "PolicyMLP":
         layer_sizes = [state_dim] + hidden_layer_sizes + [action_dim]
         dropout_mlp = DropoutMLP(
-            layer_sizes=layer_sizes, dropout_rate=dropout_rate, rngs=rngs
+            layer_sizes=layer_sizes,
+            dropout_rate=dropout_rate,
+            activation=activation,
+            rngs=rngs,
         )
         return PolicyMLP(
             state_dim=state_dim,
@@ -30,7 +34,6 @@ class PolicyMLP(PolicyBase):
             dropout_mlp=dropout_mlp,
         )
 
-    @nnx.jit
     def __call__(
         self,
         state: jax.Array,

@@ -14,14 +14,18 @@ class SystemCostsQuadratic(SystemCostsBase):
     def factory(
         cls, state_cost_matrix: jax.Array, action_cost_matrix: jax.Array
     ):
-        # verify floating
-        assert jnp.issubdtype(state_cost_matrix.dtype, jnp.floating)
-        assert jnp.issubdtype(action_cost_matrix.dtype, jnp.floating)
+        # Get JAX's default float type to respect 32/64 bit config
+        float_dtype = jnp.ones(1).dtype
 
+        # Cast to floating respecting JAX config
+        state_cost_matrix = jnp.asarray(state_cost_matrix, dtype=float_dtype)
+        action_cost_matrix = jnp.asarray(action_cost_matrix, dtype=float_dtype)
+
+        # ensure 2d
         state_cost_matrix = jnp.atleast_2d(state_cost_matrix)
         action_cost_matrix = jnp.atleast_2d(action_cost_matrix)
 
-        # verify 2d
+        # verify exacly 2d
         two_dim = 2
         assert jnp.ndim(state_cost_matrix) == two_dim
         assert jnp.ndim(action_cost_matrix) == two_dim
@@ -40,7 +44,6 @@ class SystemCostsQuadratic(SystemCostsBase):
             action_cost_matrix=action_cost_matrix,
         )
 
-    @jax.jit
     def __call__(self, state: jax.Array, action: jax.Array) -> jax.Array:
         state_cost = jnp.sum(
             (state @ self.state_cost_matrix) * state,

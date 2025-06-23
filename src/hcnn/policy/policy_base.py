@@ -9,7 +9,6 @@ class PolicyBase(nnx.Module, ABC):
     state_dim: int = struct.field(pytree_node=False)
     action_dim: int = struct.field(pytree_node=False)
 
-    @nnx.jit
     @abstractmethod
     def __call__(
         self,

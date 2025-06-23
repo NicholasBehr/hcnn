@@ -12,7 +12,6 @@ class SystemConstraintsBase(ABC):
     lower_bound: jax.Array  # 1d float array
     upper_bound: jax.Array  # 1d float array
 
-    @jax.jit
     @abstractmethod
     def __call__(self, state: jax.Array, action: jax.Array) -> jax.Array:
         """

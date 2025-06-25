@@ -3,6 +3,7 @@ from functools import partial
 
 import jax
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
 import optax
 from flax import nnx
 
@@ -26,7 +27,7 @@ activation_map = {
 def build_system_dynamics(config) -> SystemDynamicsBase:
     if config.system_name == "double_integrator":
         return SystemDynamicsLinear.factory(
-            state_matrix=jnp.array([[0, 1], [0, 0]]),
+            state_matrix=jnp.array([[1, 1], [0, 1]]),
             action_matrix=jnp.array([[0], [1]]),
         )
     else:
@@ -46,10 +47,10 @@ def build_system_costs(config) -> SystemCostsBase:
 def build_system_constraints(config) -> SystemConstraintsBase:
     if config.system_name == "double_integrator":
         return SystemConstraintsBox.factory(
-            state_l=jnp.array([-1, -1]),
-            state_u=jnp.array([1, 1]),
+            state_l=jnp.array([-10, -10]),
+            state_u=jnp.array([+10, +10]),
             action_l=jnp.array([-1]),
-            action_u=jnp.array([1]),
+            action_u=jnp.array([+1]),
         )
     else:
         raise ValueError(f"Unknown system: {config.system_name}")
@@ -154,11 +155,13 @@ class TrainBundle(nnx.Module):
 
 @partial(
     jax.jit,
-    static_argnames=["samples_per_epoch", "batchsize", "train_graphdef"],
+    static_argnames=["samples_per_epoch", "batchsize"],
 )
 def train_epoch(
     samples_per_epoch,
     batchsize,
+    td_gamma,
+    gae_lambda,
     train_graphdef,
     train_state,
 ):
@@ -173,8 +176,8 @@ def train_epoch(
         initial_states = jax.random.uniform(
             train.rngs.default(),
             (batchsize, train.policy.state_dim),
-            minval=-1,
-            maxval=+1,
+            minval=-12,
+            maxval=+12,
         )
         jax_keys = jax.random.split(train.rngs.default(), (batchsize,))
 
@@ -184,8 +187,8 @@ def train_epoch(
             cost_to_go_state=nnx.state(train.cost_to_go),
             initial_states=initial_states,
             jax_keys=jax_keys,
-            td_gamma=0.9,
-            gae_lambda=0.99,
+            td_gamma=td_gamma,
+            gae_lambda=gae_lambda,
         )
 
         # Update model states
@@ -194,11 +197,17 @@ def train_epoch(
         nnx.update(train.relax_to_go, new_states[2])
 
         # Update metrics
+        policy_loss = loss_tuple[0]
+        cost_to_go_loss = loss_tuple[1]
+        relax_to_go_loss = loss_tuple[2]
+        aggregate_loss = (
+            jnp.abs(policy_loss) + cost_to_go_loss + relax_to_go_loss
+        )
         train.metrics.update(
-            policy_loss=loss_tuple[0],
-            cost_to_go_loss=loss_tuple[1],
-            relax_to_go_loss=loss_tuple[2],
-            mean_loss=jnp.mean(jnp.array(loss_tuple)),
+            policy_loss=policy_loss,
+            cost_to_go_loss=cost_to_go_loss,
+            relax_to_go_loss=relax_to_go_loss,
+            aggregate_loss=aggregate_loss,
         )
 
         # Update the states of the models
@@ -287,7 +296,7 @@ def train(project=None, config=None):
             policy_loss=nnx.metrics.Average("policy_loss"),
             cost_to_go_loss=nnx.metrics.Average("cost_to_go_loss"),
             relax_to_go_loss=nnx.metrics.Average("relax_to_go_loss"),
-            mean_loss=nnx.metrics.Average("mean_loss"),
+            aggregate_loss=nnx.metrics.Average("aggregate_loss"),
         )
 
         train = TrainBundle(
@@ -304,21 +313,64 @@ def train(project=None, config=None):
 
         train_graphdef, train_state = nnx.split(train)
 
-        for i in range(config.epochs):
-            print(f"iter: {i}")
+        for epoch in range(config.epochs):
+            print(f"epoch: {epoch}")
+            td_gamma = config.td_gamma_start + (
+                config.td_gamma_end - config.td_gamma_start
+            ) * nnx.sigmoid(
+                (epoch - config.td_gamma_transition_epoch)
+                / config.td_gamma_transition_width
+            )
+            wandb.log(step=epoch, data={"td_gamma": td_gamma})
             train_state = train_epoch(
-                config.samples_per_epoch,
-                config.batchsize,
-                train_graphdef,
-                train_state,
+                samples_per_epoch=config.samples_per_epoch,
+                batchsize=config.batchsize,
+                td_gamma=td_gamma,
+                gae_lambda=config.gae_lambda,
+                train_graphdef=train_graphdef,
+                train_state=train_state,
             )
 
             train = nnx.merge(train_graphdef, train_state)
             metric_dict = train.metrics.compute()
             train.metrics.reset()
-            wandb.log(metric_dict)
-            print(metric_dict["mean_loss"])
             train_state = nnx.state(train)
+
+            wandb.log(step=epoch, data=metric_dict)
+            print(metric_dict["aggregate_loss"])
+
+            # Plot the model
+            samples_per_axis = 50
+            axis_samples = jnp.linspace(-12, 12, samples_per_axis)
+            X, Y = jnp.meshgrid(axis_samples, axis_samples, indexing="xy")
+            states = jnp.stack((X.flatten(), Y.flatten()), axis=-1)
+
+            train.cost_to_go.eval()
+            train.relax_to_go.eval()
+            costs = train.cost_to_go(states)
+            relax = train.relax_to_go(states)
+            train.cost_to_go.train()
+            train.relax_to_go.train()
+
+            costs = costs.squeeze().reshape(samples_per_axis, samples_per_axis)
+            relax = relax.squeeze().reshape(samples_per_axis, samples_per_axis)
+            x = states[:, 0].reshape(samples_per_axis, samples_per_axis)
+            y = states[:, 1].reshape(samples_per_axis, samples_per_axis)
+
+            # Create two separate figures instead of subplots
+            # Plot cost-to-go
+            plt.figure(figsize=(9, 7))
+            plt.pcolormesh(x, y, costs, cmap="viridis", shading="gouraud")
+            plt.colorbar()
+            wandb.log(step=epoch, data={"costs-to-go": wandb.Image(plt)})
+            plt.close()
+
+            # Plot relax-to-go
+            plt.figure(figsize=(9, 7))
+            plt.pcolormesh(x, y, relax, cmap="viridis", shading="gouraud")
+            plt.colorbar()
+            wandb.log(step=epoch, data={"relax-to-go": wandb.Image(plt)})
+            plt.close()
 
 
 if __name__ == "__main__":
@@ -327,6 +379,8 @@ if __name__ == "__main__":
     # restrict access to one GPU (check availability nvidia-smi)
     os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 
+    jax.config.update("jax_debug_nans", False)
+
     # Specify the project name and configuration
     # This can be overridden by wandb.agent when running a sweep
     project = "double_integrator"
@@ -334,35 +388,38 @@ if __name__ == "__main__":
         "system_name": "double_integrator",
         "seed": 42,
         "policy_name": "dropout_mlp",
-        "policy_hidden_dim": 8,
-        "policy_hidden_depth": 4,
-        "policy_dropout_rate": 0.2,
+        "policy_hidden_dim": 4,
+        "policy_hidden_depth": 3,
+        "policy_dropout_rate": 0.25,
         "policy_activation": "celu",
-        "cost_to_go_hidden_dim": 8,
-        "cost_to_go_hidden_depth": 4,
-        "cost_to_go_dropout_rate": 0.2,
+        "cost_to_go_hidden_dim": 4,
+        "cost_to_go_hidden_depth": 3,
+        "cost_to_go_dropout_rate": 0.25,
         "cost_to_go_activation": "celu",
-        "relax_to_go_hidden_dim": 8,
-        "relax_to_go_hidden_depth": 4,
-        "relax_to_go_dropout_rate": 0.2,
+        "relax_to_go_hidden_dim": 4,
+        "relax_to_go_hidden_depth": 3,
+        "relax_to_go_dropout_rate": 0.25,
         "relax_to_go_activation": "celu",
         "projection_name": "no_substitution_no_terminal",
-        "projection_horizon": 20,
-        "projection_relaxation_penalty": 7.0,
+        "projection_horizon": 25,
+        "projection_relaxation_penalty": 100.0,
         "solver_name": "shallow",
-        "solver_max_iter": 500,
-        "solver_tol": 0.01,
-        "optimizer_policy_name": "adabelief",
+        "solver_max_iter": 5_000,
+        "solver_tol": 0.1,
+        "optimizer_policy_name": "nadamw",
         "optimizer_policy_learning_rate": 1e-2,
-        "optimizer_cost_name": "adabelief",
+        "optimizer_cost_name": "nadamw",
         "optimizer_cost_learning_rate": 1e-2,
-        "optimizer_relax_name": "adabelief",
+        "optimizer_relax_name": "nadamw",
         "optimizer_relax_learning_rate": 1e-2,
-        "samples_per_epoch": 128,
-        "batchsize": 64,
-        "td_gamma": 0.9,
+        "samples_per_epoch": 1024 * 50,
+        "batchsize": 1024,
+        "td_gamma_start": 0.1,
+        "td_gamma_end": 0.95,
+        "td_gamma_transition_epoch": 50,
+        "td_gamma_transition_width": 2,
         "gae_lambda": 0.99,
-        "epochs": 50,
+        "epochs": 200,
     }
 
     # Start the training loop

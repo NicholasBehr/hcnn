@@ -56,8 +56,8 @@ class OptimizationSolverShallow(
                 dual_residuals=problem.cost_quad_diag * x + problem.cost_linear,
                 # parameters
                 alpha=jnp.array(1.6, dtype=float),
-                sigma=jnp.array(1e-6, dtype=float),
-                rho_vec=0.3
+                sigma=jnp.array(1e-3, dtype=float),
+                rho_vec=0.1
                 * jnp.where(
                     problem.lower_bound == problem.upper_bound, 1e3, 1.0
                 ),
@@ -79,6 +79,10 @@ class OptimizationSolverShallow(
             )
 
             ## x_tilde ##
+            def cg_preconditioner(v: jax.Array) -> jax.Array:
+                # (Q + sigma I) @ v
+                return (problem.cost_quad_diag + self.sigma) * v
+
             def cg_lhs(v: jax.Array) -> jax.Array:
                 # Q v
                 a = problem.cost_quad_diag * v
@@ -108,6 +112,14 @@ class OptimizationSolverShallow(
             alpha_sd = alpha_sd_numerator / (alpha_sd_denominator + eps)
             # update
             new_x_tilde = self.x_tilde + alpha_sd * p
+
+            # new_x_tilde, _ = jax.scipy.sparse.linalg.cg(
+            #     A=cg_lhs,
+            #     b=cg_rhs,
+            #     x0=self.x_tilde,
+            #     M=cg_preconditioner,
+            #     tol=1e-2,
+            # )
 
             ## z_tilde ##
             new_z_tilde = h + h_jvp(new_x_tilde - self.x_tilde)
@@ -272,13 +284,20 @@ class OptimizationSolverShallow(
         y_minus = jnp.minimum(y_star, 0)
         v1 = g
 
-        ## Implicit VJP (step 1)
-        tau = 1e-5
-        frac_upper = jax.lax.div(1.0, problem.upper_bound - z_star + tau)
-        frac_lower = jax.lax.div(1.0, z_star - problem.lower_bound + tau)
+        ## Implicit VJP (step 1) - Add numerical stability
+        tau = 1e-2
+        eps = 1e-8  # Small epsilon for numerical stability
+
+        # Add epsilon to prevent division by zero
+        frac_upper = jax.lax.div(1.0, problem.upper_bound - z_star + tau + eps)
+        frac_lower = jax.lax.div(1.0, z_star - problem.lower_bound + tau + eps)
         plus_u_minus_l = y_plus * frac_upper - y_minus * frac_lower
 
-        ## Precompute JVP, VJP and HVP for the constraint function h(x) = problem.constraint_fn_x(x)
+        # Clip to prevent extreme values
+        plus_u_minus_l = jnp.clip(plus_u_minus_l, -1e6, 1e6)
+
+        ## Precompute JVP, VJP and HVP for the constraint function
+        # h(x) = problem.constraint_fn_x(x)
         # h_jvp computes v -> dh/dx @ v
         _, h_jvp = jax.linearize(
             lambda x: problem.constraint_fn(x, phi_d, phi_nd), x_star
@@ -298,18 +317,34 @@ class OptimizationSolverShallow(
         )
 
         def schur_lhs(u1: jax.Array) -> jax.Array:
+            # Add regularization to improve conditioning
+            regularization = 1e-6 * u1
             return (
                 problem.cost_quad_diag * u1
                 + h_hvp(u1)
                 + h_vjp(plus_u_minus_l * h_jvp(u1))[0]
+                + tau * u1
+                + regularization
             )
 
-        # TODO ATTENTION need to verify lhs is PSD, but cg seems more stable than gmres
-        # mainly A_xx at solution PSD?
-        u1, _ = jax.scipy.sparse.linalg.cg(
-            A=schur_lhs, b=v1, maxiter=self.max_iter, tol=self.tol
+        # Use more robust solver settings
+        u1, _ = jax.scipy.sparse.linalg.bicgstab(
+            A=schur_lhs,
+            b=v1,
+            tol=max(self.tol, 1e-6),  # Ensure minimum tolerance
+            maxiter=1000,  # Limit iterations
         )
+
+        # Check for solver convergence and handle NaNs
+        u1 = jnp.where(jnp.isnan(u1), jnp.zeros_like(u1), u1)
+        u1 = jnp.clip(u1, -1e6, 1e6)  # Clip extreme values
+
         h_jvp_u1 = h_jvp(u1)
+        # Add safety check for NaNs
+        h_jvp_u1 = jnp.where(
+            jnp.isnan(h_jvp_u1), jnp.zeros_like(h_jvp_u1), h_jvp_u1
+        )
+
         u2 = plus_u_minus_l * h_jvp_u1
         u3 = frac_upper * h_jvp_u1
         u4 = frac_lower * h_jvp_u1

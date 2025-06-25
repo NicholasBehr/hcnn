@@ -13,7 +13,6 @@ from hcnn.system_costs import SystemCostsBase
 
 from .dropout_mlp import DropoutMLP
 from .generalized_advantage import (
-    generalized_advantage_1,
     generalized_advantage_t,
     td_residuals,
 )
@@ -63,7 +62,7 @@ class LossAndGrad:
         Returns:
             jax.Array: Policy loss value, shape ().
         """
-        advantage_1 = generalized_advantage_1(
+        advantage_t = generalized_advantage_t(
             td_residuals=cost_residuals,
             td_gamma=td_gamma,
             gae_lambda=gae_lambda,
@@ -76,7 +75,7 @@ class LossAndGrad:
 
         # minimize discounted interventions and maximize advantage
         # (i.e., minimize the negative of the advantage)
-        return jnp.mean(discounted_interventions**2) - jnp.mean(advantage_1)
+        return jnp.mean(discounted_interventions**2) - jnp.mean(advantage_t)
 
     def cost_to_go_loss(
         self,
@@ -349,22 +348,17 @@ class LossAndGrad:
         )
 
         (relax_residuals, relax_to_go_state), relax_res_vjp = jax.vjp(
-            lambda states,
-            relax_plus,
-            relax_minus,
-            relax_to_go_state: self.relax_residuals(
-                states=states,
-                relaxations_plus=relax_plus,
-                relaxations_minus=relax_minus,
+            lambda relax_to_go_state: self.relax_residuals(
+                states=rollout.states,
+                relaxations_plus=rollout.relaxations_plus,
+                relaxations_minus=rollout.relaxations_minus,
                 relax_to_go_state=relax_to_go_state,
                 td_gamma=td_gamma,
             ),
-            rollout.states,
-            rollout.relaxations_plus,
-            rollout.relaxations_minus,
             relax_to_go_state,
         )
 
+        # Calculate the losses
         policy_loss, (policy_val_res_grad, policy_interv_grad) = (
             jax.value_and_grad(
                 self.policy_loss,
@@ -424,7 +418,7 @@ class LossAndGrad:
         relax_relax_to_go_state_grad = jax.tree_util.tree_map(
             lambda x: jnp.zeros_like(x), relax_to_go_state
         )  # the outgoing relax_to_go_state does not affect the relax loss
-        (_, _, _, relax_relax_to_go_state_grad) = relax_res_vjp(
+        (relax_relax_to_go_state_grad,) = relax_res_vjp(
             (relax_rel_res_grad, relax_relax_to_go_state_grad)
         )
         # We purposfully do not propagate gradients through the rollout here!

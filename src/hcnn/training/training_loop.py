@@ -28,7 +28,7 @@ def build_system_dynamics(config) -> SystemDynamicsBase:
     if config.system_name == "double_integrator":
         return SystemDynamicsLinear.factory(
             state_matrix=jnp.array([[1, 1], [0, 1]]),
-            action_matrix=jnp.array([[0], [1]]),
+            action_matrix=jnp.array([[0.5], [1]]),
         )
     else:
         raise ValueError(f"Unknown system: {config.system_name}")
@@ -139,6 +139,7 @@ def build_optimizer(model, name, learning_rate):
     opt_map = {
         "adabelief": optax.adabelief,
         "nadamw": optax.nadamw,
+        "adagrad": optax.adagrad,
     }
 
     if name in opt_map:
@@ -377,7 +378,7 @@ if __name__ == "__main__":
     print("This is a training loop with Weights & Biases integration.")
 
     # restrict access to one GPU (check availability nvidia-smi)
-    os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
     jax.config.update("jax_debug_nans", False)
 
@@ -401,25 +402,25 @@ if __name__ == "__main__":
         "relax_to_go_dropout_rate": 0.25,
         "relax_to_go_activation": "celu",
         "projection_name": "no_substitution_no_terminal",
-        "projection_horizon": 25,
-        "projection_relaxation_penalty": 100.0,
+        "projection_horizon": 15,
+        "projection_relaxation_penalty": 20.0,
         "solver_name": "shallow",
-        "solver_max_iter": 5_000,
-        "solver_tol": 0.1,
-        "optimizer_policy_name": "nadamw",
-        "optimizer_policy_learning_rate": 1e-2,
-        "optimizer_cost_name": "nadamw",
-        "optimizer_cost_learning_rate": 1e-2,
-        "optimizer_relax_name": "nadamw",
-        "optimizer_relax_learning_rate": 1e-2,
+        "solver_max_iter": 10_000,
+        "solver_tol": 1e-3,
+        "optimizer_policy_name": "adagrad",
+        "optimizer_policy_learning_rate": 0.1,
+        "optimizer_cost_name": "adagrad",
+        "optimizer_cost_learning_rate": 0.1,
+        "optimizer_relax_name": "adagrad",
+        "optimizer_relax_learning_rate": 0.1,
         "samples_per_epoch": 1024 * 50,
         "batchsize": 1024,
-        "td_gamma_start": 0.1,
+        "td_gamma_start": 0.05,
         "td_gamma_end": 0.95,
-        "td_gamma_transition_epoch": 50,
-        "td_gamma_transition_width": 2,
+        "td_gamma_transition_epoch": 75,
+        "td_gamma_transition_width": 25,
         "gae_lambda": 0.99,
-        "epochs": 200,
+        "epochs": 300,
     }
 
     # Start the training loop

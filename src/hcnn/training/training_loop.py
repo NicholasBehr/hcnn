@@ -8,7 +8,11 @@ import optax
 from flax import nnx
 
 import wandb
-from hcnn.optimization import OptimizationSolverBase, OptimizationSolverShallow
+from hcnn.optimization import (
+    OptimizationSolverBase,
+    OptimizationSolverOSQP,
+    OptimizationSolverShallow,
+)
 from hcnn.policy import PolicyBase, PolicyMLP
 from hcnn.projection import ProjectionBase, ProjectionNoSubsNoTerm
 from hcnn.system_constraints import SystemConstraintsBase, SystemConstraintsBox
@@ -114,7 +118,12 @@ def build_projection_operator(
 
 
 def build_solver(config) -> OptimizationSolverBase:
-    if config.solver_name == "shallow":
+    if config.solver_name == "osqp":
+        return OptimizationSolverOSQP(
+            max_iter=config.solver_max_iter,
+            tol=config.solver_tol,
+        )
+    elif config.solver_name == "shallow":
         return OptimizationSolverShallow(
             max_iter=config.solver_max_iter,
             tol=config.solver_tol,
@@ -404,8 +413,8 @@ if __name__ == "__main__":
         "projection_name": "no_substitution_no_terminal",
         "projection_horizon": 15,
         "projection_relaxation_penalty": 20.0,
-        "solver_name": "shallow",
-        "solver_max_iter": 10_000,
+        "solver_name": "osqp",
+        "solver_max_iter": 500,
         "solver_tol": 1e-3,
         "optimizer_policy_name": "adagrad",
         "optimizer_policy_learning_rate": 0.1,

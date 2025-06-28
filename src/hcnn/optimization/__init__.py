@@ -3,6 +3,5 @@ from .optimization_base import (
     OptimizationSolverBase,
     PhiTypeDiff,
 )
-
-# from .solver_osqp import OptimizationSolverOSQP
+from .solver_osqp import OptimizationSolverOSQP
 from .solver_shallow import OptimizationSolverShallow

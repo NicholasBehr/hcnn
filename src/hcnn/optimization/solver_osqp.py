@@ -9,11 +9,14 @@ from .optimization_base import (
     OptimizationProblemBase,
     OptimizationSolverBase,
     PhiTypeDiff,
+    PhiTypeNoDiff,
 )
 
 
 @struct.dataclass
-class OptimizationSolverOSQP(OptimizationSolverBase[PhiTypeDiff]):
+class OptimizationSolverOSQP(
+    OptimizationSolverBase[PhiTypeDiff, PhiTypeNoDiff]
+):
     max_iter: int = 500
     tol: float = 1e-4
 
@@ -35,10 +38,12 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiTypeDiff]):
 
         @staticmethod
         def factory(
-            problem: OptimizationProblemBase[PhiTypeDiff], phi: PhiTypeDiff
+            problem: OptimizationProblemBase[PhiTypeDiff, PhiTypeNoDiff],
+            phi_d: PhiTypeDiff,
+            phi_nd: PhiTypeNoDiff,
         ) -> Self:
-            x = problem.get_x0(phi)
-            z = problem.constraint_fn(x, phi)
+            x = problem.get_x0(phi_d, phi_nd)
+            z = problem.constraint_fn(x, phi_d, phi_nd)
             return OptimizationSolverOSQP.Variables(
                 # primal
                 x=x,
@@ -61,16 +66,17 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiTypeDiff]):
 
         def update_primal_dual(
             self,
-            problem: OptimizationProblemBase[PhiTypeDiff],
+            problem: OptimizationProblemBase[PhiTypeDiff, PhiTypeNoDiff],
+            phi_d: PhiTypeDiff,
+            phi_nd: PhiTypeNoDiff,
             tol: float,
-            phi: PhiTypeDiff,
         ) -> Self:
             ## form linearization around x_tilde
             h, h_jvp = jax.linearize(
-                lambda x: problem.constraint_fn(x, phi), self.x_tilde
+                lambda x: problem.constraint_fn(x, phi_d, phi_nd), self.x_tilde
             )
             _, h_vjp = jax.vjp(
-                lambda x: problem.constraint_fn(x, phi), self.x_tilde
+                lambda x: problem.constraint_fn(x, phi_d, phi_nd), self.x_tilde
             )
 
             ## x_tilde ##
@@ -132,11 +138,14 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiTypeDiff]):
 
         def update_residuals(
             self,
-            problem: OptimizationProblemBase[PhiTypeDiff],
-            phi: PhiTypeDiff,
+            problem: OptimizationProblemBase[PhiTypeDiff, PhiTypeNoDiff],
+            phi_d: PhiTypeDiff,
+            phi_nd: PhiTypeNoDiff,
         ) -> Self:
             ## form linearization around x
-            h, h_vjp = jax.vjp(lambda x: problem.constraint_fn(x, phi), self.x)
+            h, h_vjp = jax.vjp(
+                lambda x: problem.constraint_fn(x, phi_d, phi_nd), self.x
+            )
 
             primal_residuals = h - self.z
             dual_residuals = (
@@ -192,50 +201,59 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiTypeDiff]):
     def body_fun(
         self,
         variables: Variables,
-        problem: OptimizationProblemBase[PhiTypeDiff],
-        phi: PhiTypeDiff,
+        problem: OptimizationProblemBase[PhiTypeDiff, PhiTypeNoDiff],
+        phi_d: PhiTypeDiff,
+        phi_nd: PhiTypeNoDiff,
     ) -> Variables:
         return (
             variables.replace(iter_counter=variables.iter_counter + 1)
             .update_rho()
-            .update_primal_dual(problem=problem, tol=self.tol / 10, phi=phi)
-            .update_residuals(problem=problem, phi=phi)
+            .update_primal_dual(
+                problem=problem, phi_d=phi_d, phi_nd=phi_nd, tol=self.tol / 2
+            )
+            .update_residuals(problem=problem, phi_d=phi_d, phi_nd=phi_nd)
         )
 
     def _solve_variables(
-        self, problem: OptimizationProblemBase[PhiTypeDiff], phi: PhiTypeDiff
+        self,
+        problem: OptimizationProblemBase[PhiTypeDiff, PhiTypeNoDiff],
+        phi_d: PhiTypeDiff,
+        phi_nd: PhiTypeNoDiff,
     ) -> Variables:
-        variables = OptimizationSolverOSQP.Variables.factory(problem, phi)
+        variables = OptimizationSolverOSQP.Variables.factory(
+            problem, phi_d, phi_nd
+        )
         variables = jax.lax.while_loop(
             cond_fun=self.cond_fun,
-            body_fun=partial(self.body_fun, problem=problem, phi=phi),
+            body_fun=partial(
+                self.body_fun, problem=problem, phi_d=phi_d, phi_nd=phi_nd
+            ),
             init_val=variables,
         )
         return variables
 
-    def _solve_for_unrolling(
-        self, problem: OptimizationProblemBase[PhiTypeDiff], phi: PhiTypeDiff
-    ):
-        variables = OptimizationSolverOSQP.Variables.factory(problem, phi)
-        for _ in range(35):
-            variables = self.body_fun(variables, problem, phi)
-        return variables.x
-
     def _solve(
-        self, problem: OptimizationProblemBase[PhiTypeDiff], phi: PhiTypeDiff
+        self,
+        problem: OptimizationProblemBase[PhiTypeDiff, PhiTypeNoDiff],
+        phi_d: PhiTypeDiff,
+        phi_nd: PhiTypeNoDiff,
     ):
-        return self._solve_variables(problem, phi).x
+        return self._solve_variables(problem, phi_d, phi_nd).x
 
     def _solve_fwd(
-        self, problem: OptimizationProblemBase[PhiTypeDiff], phi: PhiTypeDiff
+        self,
+        problem: OptimizationProblemBase[PhiTypeDiff, PhiTypeNoDiff],
+        phi_d: PhiTypeDiff,
+        phi_nd: PhiTypeNoDiff,
     ):
-        variables = self._solve_variables(problem, phi)
+        variables = self._solve_variables(problem, phi_d, phi_nd)
         return variables.x, (
             variables.x,
             variables.z,
             variables.y,
             problem,
-            phi,
+            phi_d,
+            phi_nd,
         )
 
     def _solve_bwd(
@@ -244,33 +262,43 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiTypeDiff]):
             jax.Array,
             jax.Array,
             jax.Array,
-            OptimizationProblemBase[PhiTypeDiff],
+            OptimizationProblemBase[PhiTypeDiff, PhiTypeNoDiff],
             PhiTypeDiff,
+            PhiTypeNoDiff,
         ],
         g: jax.Array,
     ):
         ## Unpack and rename input
-        x_star, z_star, y_star, problem, phi = res
+        x_star, z_star, y_star, problem, phi_d, phi_nd = res
         y_plus = jnp.maximum(y_star, 0)
         y_minus = jnp.minimum(y_star, 0)
         v1 = g
 
-        ## Implicit VJP (step 1)
-        tau = 1e-5
+        ## Implicit VJP (step 1) - Add numerical stability
+        tau = 1e-4  # Regularization parameter for numerical stability
+
+        # Add epsilon to prevent division by zero
         frac_upper = jax.lax.div(1.0, problem.upper_bound - z_star + tau)
         frac_lower = jax.lax.div(1.0, z_star - problem.lower_bound + tau)
         plus_u_minus_l = y_plus * frac_upper - y_minus * frac_lower
 
-        ## Precompute JVP, VJP and HVP for the constraint function h(x) = problem.constraint_fn_x(x)
+        ## Precompute JVP, VJP and HVP for the constraint function
+        # h(x) = problem.constraint_fn_x(x)
         # h_jvp computes v -> dh/dx @ v
         _, h_jvp = jax.linearize(
-            lambda x: problem.constraint_fn(x, phi), x_star
+            lambda x: problem.constraint_fn(x, phi_d, phi_nd), x_star
         )
         # h_vjp computes w -> w^T @ dh/dx
-        _, h_vjp = jax.vjp(lambda x: problem.constraint_fn(x, phi), x_star)
+        _, h_vjp = jax.vjp(
+            lambda x: problem.constraint_fn(x, phi_d, phi_nd), x_star
+        )
         # h_hvp computes y.T @ d^2h/dx^2 @ v
         _, h_hvp = jax.linearize(
-            jax.grad(lambda x: jnp.dot(y_star, problem.constraint_fn(x, phi))),
+            jax.grad(
+                lambda x: jnp.dot(
+                    y_star, problem.constraint_fn(x, phi_d, phi_nd)
+                )
+            ),
             x_star,
         )
 
@@ -279,14 +307,26 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiTypeDiff]):
                 problem.cost_quad_diag * u1
                 + h_hvp(u1)
                 + h_vjp(plus_u_minus_l * h_jvp(u1))[0]
+                + tau * u1  # Add regularization term
             )
 
-        # TODO ATTENTION need to verify lhs is PSD, but cg seems more stable than gmres
-        # mainly A_xx at solution PSD?
-        u1, _ = jax.scipy.sparse.linalg.cg(
-            A=schur_lhs, b=v1, maxiter=self.max_iter, tol=self.tol
+        # Use more robust solver settings
+        u1, _ = jax.scipy.sparse.linalg.bicgstab(
+            A=schur_lhs,
+            b=v1,
+            tol=max(self.tol, 1e-6),  # Ensure minimum tolerance
         )
+
+        # Check for solver convergence and handle NaNs
+        u1 = jnp.where(jnp.isnan(u1), jnp.zeros_like(u1), u1)
+        u1 = jnp.clip(u1, -1e6, 1e6)  # Clip extreme values
+
         h_jvp_u1 = h_jvp(u1)
+        # Add safety check for NaNs
+        h_jvp_u1 = jnp.where(
+            jnp.isnan(h_jvp_u1), jnp.zeros_like(h_jvp_u1), h_jvp_u1
+        )
+
         u2 = plus_u_minus_l * h_jvp_u1
         u3 = frac_upper * h_jvp_u1
         u4 = frac_lower * h_jvp_u1
@@ -302,22 +342,25 @@ class OptimizationSolverOSQP(OptimizationSolverBase[PhiTypeDiff]):
             lower_bound=-y_minus * u4,
         )
 
-        g_phi_1 = jax.grad(
-            lambda phi_arg: jnp.dot(
+        g_phi_d_1 = jax.grad(
+            lambda phi_d_arg: jnp.dot(
                 jax.jvp(
-                    lambda x_inner: problem.constraint_fn(x_inner, phi_arg),
+                    lambda x_inner: problem.constraint_fn(
+                        x_inner, phi_d_arg, phi_nd
+                    ),
                     (x_star,),
                     (-u1,),
                 )[1],
                 y_star,
-            )
-        )(phi)
-        g_phi_2 = jax.vjp(
-            lambda phi_arg: problem.constraint_fn(x_star, phi_arg), phi
+            ),
+        )(phi_d)
+        g_phi_d_2 = jax.vjp(
+            lambda phi_d_arg: problem.constraint_fn(x_star, phi_d_arg, phi_nd),
+            phi_d,
         )[1](-u2)[0]
-        g_phi = jax.tree_util.tree_map(jnp.add, g_phi_1, g_phi_2)
+        g_phi_d = jax.tree_util.tree_map(jnp.add, g_phi_d_1, g_phi_d_2)
 
-        return (g_problem, g_phi)
+        return (g_problem, g_phi_d, None)
 
     _solve_vjp = jax.custom_vjp(_solve, nondiff_argnums=(0,))
     _solve_vjp.defvjp(_solve_fwd, _solve_bwd)

@@ -8,7 +8,8 @@ from hcnn.policy import PolicyBase
 from hcnn.projection import (
     ProjectionBase,
     ProjectionNoSubsNoTerm,
-    ProjectionPhi,
+    ProjectionPhiD,
+    ProjectionPhiND,
     Rollout,
 )
 from hcnn.system_constraints import SystemConstraintsBase
@@ -80,7 +81,9 @@ class ProjectionMock(ProjectionBase):
             relaxations_minus=jnp.zeros((self.horizon, self.constraint_dim)),
         )
 
-    def get_x0(self, phi: ProjectionPhi) -> jax.Array:
+    def get_x0(
+        self, phi_d: ProjectionPhiD, phi_nd: ProjectionPhiND
+    ) -> jax.Array:
         # Mock implementation for testing purposes
         rollout = Rollout(
             states=jnp.zeros((self.horizon, self.state_dim)),
@@ -91,7 +94,9 @@ class ProjectionMock(ProjectionBase):
         )
         return flatten_util.ravel_pytree(rollout)[0]
 
-    def constraint_fn(self, x: jax.Array, phi: ProjectionPhi) -> jax.Array:
+    def constraint_fn(
+        self, x: jax.Array, phi_d: ProjectionPhiD, phi_nd: ProjectionPhiND
+    ) -> jax.Array:
         # Mock implementation for testing purposes
         return jnp.zeros(
             (
@@ -154,26 +159,23 @@ class TestProjectionBase:
         )
 
     @pytest.fixture
-    def phi(
+    def phi_d(
         self,
         policy,
         relax_to_go,
-        state_dim,
-    ) -> ProjectionPhi:
-        keys = jax.random.split(jax.random.key(0), 2)
-        policy_graphdef, policy_params, policy_non_params = nnx.split(
-            policy, nnx.Param, ...
+    ) -> ProjectionPhiD:
+        return ProjectionPhiD(
+            policy_params=nnx.state(policy, nnx.Param),
+            relax_to_go_params=nnx.state(relax_to_go, nnx.Param),
         )
-        relax_to_go_graphdef, relax_to_go_params, relax_to_go_non_params = (
-            nnx.split(relax_to_go, nnx.Param, ...)
-        )
-        return ProjectionPhi(
-            policy_params=policy_params,
-            relax_to_go_params=relax_to_go_params,
-            policy_non_params=policy_non_params,
-            relax_to_go_non_params=relax_to_go_non_params,
-            initial_state=jax.random.normal(keys[0], (state_dim,)),
-            jax_key=keys[1],
+
+    @pytest.fixture
+    def phi_nd(self, policy, relax_to_go, state_dim) -> ProjectionPhiND:
+        return ProjectionPhiND(
+            policy_non_params=nnx.state(policy, nnx.Not(nnx.Param)),
+            relax_to_go_non_params=nnx.state(relax_to_go, nnx.Not(nnx.Param)),
+            initial_state=jnp.zeros(state_dim),
+            jax_key=jax.random.PRNGKey(0),
         )
 
     @pytest.fixture(autouse=True)
@@ -183,7 +185,8 @@ class TestProjectionBase:
         sys_dynamics: SystemDynamicsBase,
         sys_constraints: SystemConstraintsBase,
         projection: ProjectionNoSubsNoTerm,
-        phi: ProjectionPhi,
+        phi_d: ProjectionPhiD,
+        phi_nd: ProjectionPhiND,
     ):
         self.state_dim = projection.state_dim
         self.action_dim = projection.action_dim
@@ -193,27 +196,28 @@ class TestProjectionBase:
         self.sys_dynamics = sys_dynamics
         self.sys_constraints = sys_constraints
         self.projection = projection
-        self.phi = phi
+        self.phi_d = phi_d
+        self.phi_nd = phi_nd
 
     def test_problem(self):
-        x = self.projection.get_x0(self.phi)
+        x = self.projection.get_x0(self.phi_d, self.phi_nd)
         assert self.projection.cost_quad_diag.shape == x.shape
         assert self.projection.cost_linear.shape == x.shape
 
-        c = self.projection.constraint_fn(x, self.phi)
+        c = self.projection.constraint_fn(x, self.phi_d, self.phi_nd)
         assert self.projection.lower_bound.shape == c.shape
         assert self.projection.upper_bound.shape == c.shape
 
     def test_initial_state_constraints(self):
-        x = self.projection.get_x0(self.phi)
+        x = self.projection.get_x0(self.phi_d, self.phi_nd)
         rollout = self.projection.x_to_rollout(x)
 
         # Check initial state constraints
         initial_state_constraints = self.projection.constraints_initial_state(
-            rollout, self.phi.initial_state
+            rollout, self.phi_nd.initial_state
         )
         ref_initial_state_constraints = (
-            rollout.states[0] - self.phi.initial_state
+            rollout.states[0] - self.phi_nd.initial_state
         )
 
         assert jnp.allclose(
@@ -225,7 +229,7 @@ class TestProjectionBase:
         assert initial_state_constraints.shape == bounds_shape[0].shape
 
     def test_sys_dynamics_constraints(self):
-        x = self.projection.get_x0(self.phi)
+        x = self.projection.get_x0(self.phi_d, self.phi_nd)
         rollout = self.projection.x_to_rollout(x)
 
         # Check system dynamics constraints
@@ -248,16 +252,16 @@ class TestProjectionBase:
         assert sys_dynamics_constraints.shape == bounds_shape[0].shape
 
     def test_policy_constraints(self):
-        x = self.projection.get_x0(self.phi)
+        x = self.projection.get_x0(self.phi_d, self.phi_nd)
         rollout = self.projection.x_to_rollout(x)
 
         # Check policy constraints
         policy_constraints = self.projection.constraints_policy(
-            rollout, self.policy, self.phi.jax_key
+            rollout, self.policy, self.phi_nd.jax_key
         )
         ref_policy_constraints = (
             rollout.actions
-            - self.policy(rollout.states, jax_key=self.phi.jax_key)
+            - self.policy(rollout.states, jax_key=self.phi_nd.jax_key)
             - rollout.interventions
         ).ravel()
 
@@ -272,7 +276,7 @@ class TestProjectionBase:
         assert policy_constraints.shape == bounds_shape[0].shape
 
     def test_sys_constraints(self):
-        x = self.projection.get_x0(self.phi)
+        x = self.projection.get_x0(self.phi_d, self.phi_nd)
         rollout = self.projection.x_to_rollout(x)
 
         # Check system constraints
@@ -304,7 +308,7 @@ class TestProjectionBase:
         assert sys_constraints.shape == bounds_shape[0].shape
 
     def test_non_neg_relaxations(self):
-        x = self.projection.get_x0(self.phi)
+        x = self.projection.get_x0(self.phi_d, self.phi_nd)
         rollout = self.projection.x_to_rollout(x)
 
         non_neg_relax_constraints = self.projection.constraints_non_neg_relax(

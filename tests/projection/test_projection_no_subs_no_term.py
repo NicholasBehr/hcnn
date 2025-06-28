@@ -29,7 +29,7 @@ class TestProjectionNoSubstitutionNoTerminal(TestProjectionBase):
         )
 
     def test_get_x0(self):
-        x = self.projection.get_x0(self.phi)
+        x = self.projection.get_x0(self.phi_d, self.phi_nd)
         rollout = self.projection.x_to_rollout(x)
 
         # (1)
@@ -39,7 +39,7 @@ class TestProjectionNoSubstitutionNoTerminal(TestProjectionBase):
         # (2)
         # ensure that the rollout satifies the constraints
         # initial state
-        assert jnp.allclose(rollout.states[0], self.phi.initial_state)
+        assert jnp.allclose(rollout.states[0], self.phi_nd.initial_state)
         # conform to dynamics
         assert jnp.allclose(
             rollout.states[1:],
@@ -48,7 +48,7 @@ class TestProjectionNoSubstitutionNoTerminal(TestProjectionBase):
         # conform to policy
         assert jnp.allclose(
             rollout.actions,
-            self.policy(rollout.states, jax_key=self.phi.jax_key)
+            self.policy(rollout.states, jax_key=self.phi_nd.jax_key)
             + rollout.interventions,
         )
         # state and action constraints
@@ -68,8 +68,8 @@ class TestProjectionNoSubstitutionNoTerminal(TestProjectionBase):
         assert jnp.all(rollout.relaxations_minus >= 0)
 
     def test_constraint_fn(self):
-        x = self.projection.get_x0(self.phi)
-        constraints = self.projection.constraint_fn(x, self.phi)
+        x = self.projection.get_x0(self.phi_d, self.phi_nd)
+        constraints = self.projection.constraint_fn(x, self.phi_d, self.phi_nd)
 
         desired_shape = (
             self.state_dim

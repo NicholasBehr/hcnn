@@ -56,7 +56,7 @@ class OptimizationSolverShallow(
                 dual_residuals=problem.cost_quad_diag * x + problem.cost_linear,
                 # parameters
                 alpha=jnp.array(1.6, dtype=float),
-                sigma=jnp.array(1e-3, dtype=float),
+                sigma=jnp.array(1e-6, dtype=float),
                 rho_vec=0.1
                 * jnp.where(
                     problem.lower_bound == problem.upper_bound, 1e3, 1.0
@@ -79,10 +79,6 @@ class OptimizationSolverShallow(
             )
 
             ## x_tilde ##
-            def cg_preconditioner(v: jax.Array) -> jax.Array:
-                # (Q + sigma I) @ v
-                return (problem.cost_quad_diag + self.sigma) * v
-
             def cg_lhs(v: jax.Array) -> jax.Array:
                 # Q v
                 a = problem.cost_quad_diag * v
@@ -112,14 +108,6 @@ class OptimizationSolverShallow(
             alpha_sd = alpha_sd_numerator / (alpha_sd_denominator + eps)
             # update
             new_x_tilde = self.x_tilde + alpha_sd * p
-
-            # new_x_tilde, _ = jax.scipy.sparse.linalg.cg(
-            #     A=cg_lhs,
-            #     b=cg_rhs,
-            #     x0=self.x_tilde,
-            #     M=cg_preconditioner,
-            #     tol=1e-2,
-            # )
 
             ## z_tilde ##
             new_z_tilde = h + h_jvp(new_x_tilde - self.x_tilde)
@@ -172,9 +160,9 @@ class OptimizationSolverShallow(
             )
 
         def update_rho(self) -> Self:
-            mu_sqr = 5e2
-            tau_incr = 1.5
-            tau_decr = 1.5
+            mu_sqr = 10**2
+            tau_incr = 1.05
+            tau_decr = 1.05
 
             prim_norm_sqr = jnp.dot(
                 self.primal_residuals, self.primal_residuals
@@ -285,16 +273,12 @@ class OptimizationSolverShallow(
         v1 = g
 
         ## Implicit VJP (step 1) - Add numerical stability
-        tau = 1e-2
-        eps = 1e-8  # Small epsilon for numerical stability
+        tau = 1e-4  # Regularization parameter for numerical stability
 
         # Add epsilon to prevent division by zero
-        frac_upper = jax.lax.div(1.0, problem.upper_bound - z_star + tau + eps)
-        frac_lower = jax.lax.div(1.0, z_star - problem.lower_bound + tau + eps)
+        frac_upper = jax.lax.div(1.0, problem.upper_bound - z_star + tau)
+        frac_lower = jax.lax.div(1.0, z_star - problem.lower_bound + tau)
         plus_u_minus_l = y_plus * frac_upper - y_minus * frac_lower
-
-        # Clip to prevent extreme values
-        plus_u_minus_l = jnp.clip(plus_u_minus_l, -1e6, 1e6)
 
         ## Precompute JVP, VJP and HVP for the constraint function
         # h(x) = problem.constraint_fn_x(x)
@@ -317,14 +301,11 @@ class OptimizationSolverShallow(
         )
 
         def schur_lhs(u1: jax.Array) -> jax.Array:
-            # Add regularization to improve conditioning
-            regularization = 1e-6 * u1
             return (
                 problem.cost_quad_diag * u1
                 + h_hvp(u1)
                 + h_vjp(plus_u_minus_l * h_jvp(u1))[0]
-                + tau * u1
-                + regularization
+                + tau * u1  # Add regularization term
             )
 
         # Use more robust solver settings
@@ -332,7 +313,6 @@ class OptimizationSolverShallow(
             A=schur_lhs,
             b=v1,
             tol=max(self.tol, 1e-6),  # Ensure minimum tolerance
-            maxiter=1000,  # Limit iterations
         )
 
         # Check for solver convergence and handle NaNs

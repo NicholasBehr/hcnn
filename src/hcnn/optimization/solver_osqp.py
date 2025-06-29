@@ -275,7 +275,7 @@ class OptimizationSolverOSQP(
         v1 = g
 
         ## Implicit VJP (step 1) - Add numerical stability
-        tau = 1e-4  # Regularization parameter for numerical stability
+        tau = 1e-6  # Regularization parameter for numerical stability
 
         # Add epsilon to prevent division by zero
         frac_upper = jax.lax.div(1.0, problem.upper_bound - z_star + tau)
@@ -312,10 +312,7 @@ class OptimizationSolverOSQP(
 
         # Use more robust solver settings
         u1, _ = jax.scipy.sparse.linalg.bicgstab(A=schur_lhs, b=v1)
-
-        # Check for solver convergence and handle NaNs
         u1 = jnp.where(jnp.isnan(u1), jnp.zeros_like(u1), u1)
-        u1 = jnp.clip(u1, -1e6, 1e6)  # Clip extreme values
 
         h_jvp_u1 = h_jvp(u1)
         # Add safety check for NaNs

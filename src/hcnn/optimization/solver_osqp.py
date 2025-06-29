@@ -311,11 +311,7 @@ class OptimizationSolverOSQP(
             )
 
         # Use more robust solver settings
-        u1, _ = jax.scipy.sparse.linalg.bicgstab(
-            A=schur_lhs,
-            b=v1,
-            tol=max(self.tol, 1e-6),  # Ensure minimum tolerance
-        )
+        u1, _ = jax.scipy.sparse.linalg.bicgstab(A=schur_lhs, b=v1)
 
         # Check for solver convergence and handle NaNs
         u1 = jnp.where(jnp.isnan(u1), jnp.zeros_like(u1), u1)

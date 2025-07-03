@@ -273,7 +273,7 @@ class OptimizationSolverShallow(
         v1 = g
 
         ## Implicit VJP (step 1) - Add numerical stability
-        tau = 1e-4  # Regularization parameter for numerical stability
+        tau = 1e-6  # Regularization parameter for numerical stability
 
         # Add epsilon to prevent division by zero
         frac_upper = jax.lax.div(1.0, problem.upper_bound - z_star + tau)

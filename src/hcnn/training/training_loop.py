@@ -5,9 +5,9 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import optax
+import wandb
 from flax import nnx
 
-import wandb
 from hcnn.optimization import (
     OptimizationSolverBase,
     OptimizationSolverOSQP,
@@ -20,14 +20,6 @@ from hcnn.system_costs import SystemCostsBase, SystemCostsQuadratic
 from hcnn.system_dynamics import SystemDynamicsBase, SystemDynamicsLinear
 from hcnn.training.dropout_mlp import DropoutMLP
 from hcnn.training.loss_and_grad import LossAndGrad
-
-activation_map = {
-    "celu": nnx.celu,
-    "leaky_relu": nnx.leaky_relu,
-    "relu": nnx.relu,
-    "tanh": nnx.tanh,
-    "hard_sigmoid": nnx.hard_sigmoid,
-}
 
 opt_map = {
     "adabelief": optax.adabelief,
@@ -78,7 +70,7 @@ def build_policy(config, state_dim, action_dim, rngs) -> PolicyBase:
             hidden_layer_sizes=[config.policy_hidden_dim]
             * config.policy_hidden_depth,
             dropout_rate=config.policy_dropout_rate,
-            activation=activation_map[config.policy_activation],
+            activation=config.policy_activation,
             rngs=rngs,
         )
     else:
@@ -91,7 +83,7 @@ def build_cost_to_go(config, state_dim, rngs) -> DropoutMLP:
         + [config.cost_to_go_hidden_dim] * config.cost_to_go_hidden_depth
         + [1],
         dropout_rate=config.cost_to_go_dropout_rate,
-        activation=activation_map[config.cost_to_go_activation],
+        activation=config.cost_to_go_activation,
         rngs=rngs,
     )
 
@@ -102,7 +94,7 @@ def build_relax_to_go(config, state_dim, rngs) -> DropoutMLP:
         + [config.relax_to_go_hidden_dim] * config.relax_to_go_hidden_depth
         + [1],
         dropout_rate=config.relax_to_go_dropout_rate,
-        activation=activation_map[config.relax_to_go_activation],
+        activation=config.relax_to_go_activation,
         rngs=rngs,
     )
 
@@ -162,6 +154,16 @@ def build_optimizer(model, name, learning_rate):
 
 
 class TrainBundle(nnx.Module):
+    policy: PolicyBase
+    cost_to_go: DropoutMLP
+    relax_to_go: DropoutMLP
+    loss_and_grad: LossAndGrad
+    opt_policy: nnx.Optimizer
+    opt_cost: nnx.Optimizer
+    opt_relax: nnx.Optimizer
+    metrics: nnx.MultiMetric
+    rngs: nnx.Rngs
+
     def __init__(self, **kwargs):
         for key, value in kwargs.items():
             setattr(self, key, value)
@@ -251,7 +253,7 @@ def train_epoch(  # noqa: PLR0913
     )
 
 
-def train(project=None, config=None):
+def train(project=None, config=None):  # noqa: PLR0915 code is using wandb reference design
     with wandb.init(project=project, config=config):
         # If called by wandb.agent,
         # this config will be set by Sweep Controller
@@ -358,30 +360,59 @@ def train(project=None, config=None):
             train_state = nnx.state(train)
 
             wandb.log(step=epoch, data=metric_dict)
-            print(f"epoch: {epoch} -> {metric_dict['mean_relax']}")
+            print(f"epoch: {epoch} -> {metric_dict}")
 
             if epoch % 10 == 0 or epoch == config.epochs - 1:
                 # Plot the model
                 samples_per_axis = 300
                 axis_samples = jnp.linspace(-14, 14, samples_per_axis)
-                X, Y = jnp.meshgrid(axis_samples, axis_samples, indexing="xy")
-                states = jnp.stack((X.flatten(), Y.flatten()), axis=-1)
+                x_coord, y_coord = jnp.meshgrid(
+                    axis_samples,
+                    axis_samples,
+                    indexing="xy",
+                )
 
+                # Flatten the grid to create a list of states
+                # This is necessary for batch processing in JAX
+                # We stack the coordinates to create a 2D array of states
+                # Each row corresponds to a state (x, y)
+                states = jnp.stack(
+                    (x_coord.flatten(), y_coord.flatten()), axis=-1
+                )
+                x = states[:, 0].reshape(samples_per_axis, samples_per_axis)
+                y = states[:, 1].reshape(samples_per_axis, samples_per_axis)
+
+                # Plot cost-to-go
                 train.cost_to_go.eval()
-                train.relax_to_go.eval()
                 costs = (
                     train.cost_to_go(states)
                     .squeeze()
                     .reshape(samples_per_axis, samples_per_axis)
                 )
+                train.cost_to_go.train()
+
+                plt.figure(figsize=(9, 7))
+                plt.pcolormesh(x, y, costs, cmap="viridis", shading="gouraud")
+                plt.colorbar()
+                wandb.log(step=epoch, data={"costs-to-go": wandb.Image(plt)})
+                plt.close()
+
+                # Plot relax-to-go
+                train.relax_to_go.eval()
                 relax = (
                     train.relax_to_go(states)
                     .squeeze()
                     .reshape(samples_per_axis, samples_per_axis)
                 )
-                train.cost_to_go.train()
                 train.relax_to_go.train()
 
+                plt.figure(figsize=(9, 7))
+                plt.pcolormesh(x, y, relax, cmap="viridis", shading="gouraud")
+                plt.colorbar()
+                wandb.log(step=epoch, data={"relax-to-go": wandb.Image(plt)})
+                plt.close()
+
+                # Plot policy actions
                 if policy.action_dim == 1:
                     train.policy.eval()
                     actions = (
@@ -391,26 +422,6 @@ def train(project=None, config=None):
                     )
                     train.policy.train()
 
-                x = states[:, 0].reshape(samples_per_axis, samples_per_axis)
-                y = states[:, 1].reshape(samples_per_axis, samples_per_axis)
-
-                # Create two separate figures instead of subplots
-                # Plot cost-to-go
-                plt.figure(figsize=(9, 7))
-                plt.pcolormesh(x, y, costs, cmap="viridis", shading="gouraud")
-                plt.colorbar()
-                wandb.log(step=epoch, data={"costs-to-go": wandb.Image(plt)})
-                plt.close()
-
-                # Plot relax-to-go
-                plt.figure(figsize=(9, 7))
-                plt.pcolormesh(x, y, relax, cmap="viridis", shading="gouraud")
-                plt.colorbar()
-                wandb.log(step=epoch, data={"relax-to-go": wandb.Image(plt)})
-                plt.close()
-
-                if policy.action_dim == 1:
-                    # Plot policy actions
                     plt.figure(figsize=(9, 7))
                     plt.pcolormesh(
                         x, y, actions, cmap="viridis", shading="gouraud"
@@ -453,20 +464,20 @@ if __name__ == "__main__":
         "projection_name": "no_substitution_no_terminal",
         "projection_horizon": 10,
         "projection_relaxation_penalty": 15.0,
-        "solver_name": "shallow",
-        "solver_max_iter": 1_000,
-        "solver_tol": 1e-5,
+        "solver_name": "osqp",
+        "solver_max_iter": 15_000,
+        "solver_tol": 1e-4,
         "optimizer_policy_name": "adamw",
         "optimizer_policy_learning_rate": 1e-3,
         "optimizer_cost_name": "adamw",
         "optimizer_cost_learning_rate": 5e-3,
         "optimizer_relax_name": "adamw",
         "optimizer_relax_learning_rate": 5e-3,
-        "batchsize": 1048,
-        "batches_per_epoch": 5,
+        "batchsize": 8,
+        "batches_per_epoch": 1,
         "td_gamma": 0.8,
         "gae_lambda": 0.99,
-        "epochs": 400,
+        "epochs": 50,
     }
 
     # Add this before your sweep_configuration definition:

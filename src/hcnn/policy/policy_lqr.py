@@ -104,9 +104,11 @@ class PolicyLQR(PolicyBase):
         tol: float = 1e-8,
     ) -> tuple[jax.Array, jax.Array]:
         """
-        Solve the discrete algebraic Riccati equation (DARE) using policy iteration.
+        Solve the discrete algebraic Riccati equation (DARE)
+        using policy iteration.
         The DARE is given by:
-        X = A^T * X * A - (A^T * X * B) * (R + B^T * X * B)^(-1) * (B^T * X * A) + Q
+        X = A^T * X * A
+          - (A^T * X * B) * (R + B^T * X * B)^(-1) * (B^T * X * A) + Q
         where:
         - A is the state transition matrix
         - B is the input matrix

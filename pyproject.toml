@@ -29,6 +29,11 @@ exclude = [".venv"]
 line-length = 80
 target-version = "py313"
 
+[tool.pyright]
+include = [
+    "src",
+]
+
 [tool.ruff.lint]
 select = [
     "E",  # Pycodestyle (formatting errors)
@@ -40,7 +45,7 @@ select = [
     "C90", # McCabe (complexity checks)
     "PL",  # Pylint rules (optional)
 ]
-ignore = ["D"]  # Ignore docstring warnings
+ignore = ["D", "PLR0913"]  # Ignore docstring warnings and too many fun argnums
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"] # allow unused imports

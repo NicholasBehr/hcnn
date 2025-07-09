@@ -17,7 +17,7 @@ class PolicyMLP(PolicyBase):
         action_dim: int,
         hidden_layer_sizes: list[int],
         dropout_rate: float = 0.0,
-        activation: nnx.Module = nnx.celu,
+        activation: str = "relu",
         *,
         rngs: nnx.Rngs,
     ) -> "PolicyMLP":

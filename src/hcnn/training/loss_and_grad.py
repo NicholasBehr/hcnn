@@ -287,7 +287,7 @@ class LossAndGrad:
             jax_keys,
         )
 
-    def __call__(  # noqa: PLR0913
+    def __call__(
         self,
         policy_state: nnx.State,
         relax_to_go_state: nnx.State,

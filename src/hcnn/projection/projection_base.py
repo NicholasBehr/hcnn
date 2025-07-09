@@ -46,7 +46,6 @@ class ProjectionBase(OptimizationProblemBase[ProjectionPhiD, ProjectionPhiND]):
     sys_dynamics: SystemDynamicsBase
     sys_constraints: SystemConstraintsBase
 
-    @jax.jit
     @abstractmethod
     def x_to_rollout(self, x: jax.Array) -> Rollout:
         pass

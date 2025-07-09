@@ -42,7 +42,7 @@ class OptimizationSolverOSQP(
             problem: OptimizationProblemBase[PhiTypeDiff, PhiTypeNoDiff],
             phi_d: PhiTypeDiff,
             phi_nd: PhiTypeNoDiff,
-        ) -> Self:
+        ) -> "OptimizationSolverOSQP.Variables":
             x = problem.get_x0(phi_d, phi_nd)
             z = problem.constraint_fn(x, phi_d, phi_nd)
             return OptimizationSolverOSQP.Variables(
@@ -310,7 +310,7 @@ class OptimizationSolverOSQP(
         )  # copy
         g_problem = g_problem.replace(
             cost_quad_diag=-x_star * u1,
-            cost_linear=-u1,
+            cost_linear=-u1,  # type: ignore -> is always jax.array
             upper_bound=+y_plus * u3,
             lower_bound=-y_minus * u4,
         )
@@ -322,7 +322,7 @@ class OptimizationSolverOSQP(
                         x_inner, phi_d_arg, phi_nd
                     ),
                     (x_star,),
-                    (-u1,),
+                    (-u1,),  # type: ignore -> is always jax.array
                 )[1],
                 y_star,
             ),

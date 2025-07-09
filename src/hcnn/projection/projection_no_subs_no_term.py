@@ -83,7 +83,6 @@ class ProjectionNoSubsNoTerm(ProjectionBase):
             sys_constraints=sys_constraints,
         )
 
-    # @jax.jit
     def x_to_rollout(self, x: jax.Array) -> Rollout:
         template = Rollout(
             actions=jnp.empty((self.horizon, self.action_dim)),
@@ -95,7 +94,6 @@ class ProjectionNoSubsNoTerm(ProjectionBase):
         _, unravel_pytree = flatten_util.ravel_pytree(template)
         return unravel_pytree(x)
 
-    # @jax.jit
     def get_x0(
         self, phi_d: ProjectionPhiD, phi_nd: ProjectionPhiND
     ) -> jax.Array:
@@ -140,7 +138,6 @@ class ProjectionNoSubsNoTerm(ProjectionBase):
 
         return flatten_util.ravel_pytree(rollout)[0]
 
-    # @jax.jit
     def constraint_fn(
         self, x: jax.Array, phi_d: ProjectionPhiD, phi_nd: ProjectionPhiND
     ) -> jax.Array:

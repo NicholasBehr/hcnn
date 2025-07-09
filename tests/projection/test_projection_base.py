@@ -179,7 +179,7 @@ class TestProjectionBase:
         )
 
     @pytest.fixture(autouse=True)
-    def setup(
+    def setup(  # noqa: PLR0913 test fixtures
         self,
         policy: PolicyBase,
         sys_dynamics: SystemDynamicsBase,

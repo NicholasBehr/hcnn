@@ -18,7 +18,7 @@ from tests.system_dynamics import SystemDynamicsMock
 
 
 @pytest.fixture
-def policy(state_dim, action_dim) -> PolicyBase:
+def policy(state_dim: int, action_dim: int) -> PolicyBase:
     return PolicyMock.factory(
         state_dim=state_dim,
         action_dim=action_dim,
@@ -26,7 +26,7 @@ def policy(state_dim, action_dim) -> PolicyBase:
 
 
 @pytest.fixture
-def sys_dynamics(state_dim, action_dim) -> SystemDynamicsBase:
+def sys_dynamics(state_dim: int, action_dim: int) -> SystemDynamicsBase:
     return SystemDynamicsMock(
         state_dim=state_dim,
         action_dim=action_dim,
@@ -34,7 +34,7 @@ def sys_dynamics(state_dim, action_dim) -> SystemDynamicsBase:
 
 
 @pytest.fixture
-def sys_constraints(state_dim, action_dim) -> SystemConstraintsBase:
+def sys_constraints(state_dim: int, action_dim: int) -> SystemConstraintsBase:
     return SystemConstraintsMock.factory(
         state_dim=state_dim,
         action_dim=action_dim,
@@ -42,18 +42,18 @@ def sys_constraints(state_dim, action_dim) -> SystemConstraintsBase:
 
 
 @pytest.fixture
-def cost_to_go(state_dim):
+def cost_to_go(state_dim: int) -> DropoutMLP:
     return DropoutMLP(
-        layer_sizes=(state_dim, 64, 1),
+        layer_sizes=[state_dim, 64, 1],
         dropout_rate=0.1,
         rngs=nnx.Rngs(42),
     )
 
 
 @pytest.fixture
-def relax_to_go(state_dim):
+def relax_to_go(state_dim: int) -> DropoutMLP:
     return DropoutMLP(
-        layer_sizes=(state_dim, 64, 1),
+        layer_sizes=[state_dim, 64, 1],
         dropout_rate=0.1,
         rngs=nnx.Rngs(42),
     )
@@ -61,11 +61,11 @@ def relax_to_go(state_dim):
 
 @pytest.fixture
 def projection(
-    policy,
-    relax_to_go,
-    sys_dynamics,
-    sys_constraints,
-    horizon,
+    policy: PolicyBase,
+    relax_to_go: DropoutMLP,
+    sys_dynamics: SystemDynamicsBase,
+    sys_constraints: SystemConstraintsBase,
+    horizon: int,
 ) -> ProjectionMock:
     return ProjectionMock.factory(
         policy=policy,
@@ -117,6 +117,7 @@ def test_policy_loss_single(loss_and_grad: LossAndGrad):
         rollout_interventions=rollout_interventions,
         td_gamma=0.8,
         gae_lambda=0.99,
+        intervention_cost=10.0,
     )
 
     assert loss.shape == ()
@@ -138,6 +139,7 @@ def test_policy_loss_batch(loss_and_grad: LossAndGrad):
         rollout_interventions=rollout_interventions,
         td_gamma=0.8,
         gae_lambda=0.99,
+        intervention_cost=10.0,
     )
 
     assert loss.shape == ()
@@ -398,7 +400,7 @@ def test_rollout_bwd(
 
     rollout_grad = jax.tree_util.tree_map(lambda x: jnp.ones_like(x), rollout)
 
-    out = rollout_vjp(rollout_grad)
+    rollout_vjp(rollout_grad)
 
 
 def test_call_fwd(
@@ -414,7 +416,7 @@ def test_call_fwd(
     initial_states = jax.random.normal(keys[0], (batch_size, state_dim))
     jax_keys = jax.random.split(keys[1], batch_size)
 
-    (a, b, c) = loss_and_grad(
+    (a, b, c, d, e) = loss_and_grad(
         policy_state=nnx.state(policy),
         relax_to_go_state=nnx.state(relax_to_go),
         cost_to_go_state=nnx.state(cost_to_go),
@@ -422,4 +424,5 @@ def test_call_fwd(
         jax_keys=jax_keys,
         td_gamma=0.8,
         gae_lambda=0.99,
+        intervention_cost=10.0,
     )

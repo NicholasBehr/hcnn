@@ -33,7 +33,7 @@ class TestProjectionNoSubstitutionNoTerminal(TestProjectionBase):
         rollout = self.projection.x_to_rollout(x)
 
         # (1)
-        # !! assumption: no interventions, all contributed to relaxations for x0 !!
+        # !! assumption: no interventions, all contributed to relaxations for x0
         assert jnp.allclose(rollout.interventions, 0)
 
         # (2)

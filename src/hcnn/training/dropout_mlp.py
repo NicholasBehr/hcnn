@@ -1,20 +1,28 @@
-from typing import List
+from typing import Any, List
 
 import jax.numpy as jnp
 from flax import nnx
+
+activation_map = {
+    "celu": nnx.celu,
+    "leaky_relu": nnx.leaky_relu,
+    "relu": nnx.relu,
+    "tanh": nnx.tanh,
+    "hard_sigmoid": nnx.hard_sigmoid,
+}
 
 
 class DropoutMLP(nnx.Module):
     """A simple Multi-Layer Perceptron (MLP) module with Dropout."""
 
-    layers: List[nnx.Linear | nnx.Dropout | nnx.Module]
+    layers: List[nnx.Linear | nnx.Dropout | Any]
     rngs: nnx.Rngs
 
     def __init__(
         self,
         layer_sizes: list[int],
         dropout_rate: float = 0.0,
-        activation: nnx.Module = nnx.celu,
+        activation: str = "celu",
         *,
         rngs: nnx.Rngs,
     ):
@@ -41,7 +49,7 @@ class DropoutMLP(nnx.Module):
 
             # Add activation after each hidden layer
             if i < len(layer_sizes) - 2:
-                self.layers.append(activation)
+                self.layers.append(activation_map[activation])
 
                 # Add Dropout layer after the activation in hidden layers
                 if dropout_rate > 0.0:

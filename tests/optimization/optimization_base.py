@@ -89,14 +89,12 @@ def test_vjp_unconstrained(solver: OptimizationSolverBase):
             jac_prob.cost_quad_diag,
             jnp.diag(cost_linear / (cost_quad_diag**2)),
             rtol=1 / 100,
-        ), (
-            f"{jac_prob.cost_quad_diag}, {jnp.diag(cost_linear / (cost_quad_diag**2))}"
         )
         assert jnp.allclose(
             jac_prob.cost_linear,
             jnp.diag(-1 / (cost_quad_diag)),
             rtol=1 / 100,
-        ), f"{jac_prob.cost_linear}, {jnp.diag(-1 / (cost_quad_diag))}"
+        )
         assert jnp.allclose(
             jac_prob.lower_bound,
             jnp.zeros((dimension, dimension)),

@@ -57,7 +57,7 @@ class OptimizationSolverShallow(
                 # parameters
                 alpha=jnp.array(1.6, dtype=float),
                 sigma=jnp.array(1e-6, dtype=float),
-                rho_vec=0.1
+                rho_vec=0.01
                 * jnp.where(
                     problem.lower_bound == problem.upper_bound, 1e3, 1.0
                 ),
@@ -159,32 +159,6 @@ class OptimizationSolverShallow(
                 dual_residuals=dual_residuals,
             )
 
-        def update_rho(self) -> Self:
-            mu_sqr = 10**2
-            tau_incr = 1.05
-            tau_decr = 1.05
-
-            prim_norm_sqr = jnp.dot(
-                self.primal_residuals, self.primal_residuals
-            )
-            dual_norm_sqr = jnp.dot(self.dual_residuals, self.dual_residuals)
-
-            cond_increase = prim_norm_sqr > mu_sqr * dual_norm_sqr
-            cond_decrease = dual_norm_sqr > mu_sqr * prim_norm_sqr
-            cond_nochange = ~(cond_increase | cond_decrease)
-
-            dtype = self.rho_vec.dtype
-
-            rho_vec = (
-                tau_incr * self.rho_vec * cond_increase.astype(dtype)
-                + (self.rho_vec / tau_decr) * cond_decrease.astype(dtype)
-                + self.rho_vec * cond_nochange.astype(dtype)
-            )
-
-            return self.replace(
-                rho_vec=rho_vec,
-            )
-
     def cond_fun(self, variables: Variables) -> jax.Array:
         # return true if we should enter a new iteration
 
@@ -207,7 +181,6 @@ class OptimizationSolverShallow(
     ) -> Variables:
         return (
             variables.replace(iter_counter=variables.iter_counter + 1)
-            .update_rho()
             .update_primal_dual(problem=problem, phi_d=phi_d, phi_nd=phi_nd)
             .update_residuals(problem=problem, phi_d=phi_d, phi_nd=phi_nd)
         )

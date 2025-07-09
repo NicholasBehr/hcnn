@@ -49,6 +49,7 @@ class LossAndGrad:
         rollout_interventions: jax.Array,
         td_gamma: float,
         gae_lambda: float,
+        intervention_cost: float,
     ):
         """
         Evaluates the loss function used to train policy weights.
@@ -75,7 +76,10 @@ class LossAndGrad:
 
         # minimize discounted interventions and maximize advantage
         # (i.e., minimize the negative of the advantage)
-        return jnp.mean(discounted_interventions**2) - jnp.mean(advantage_t)
+        return (
+            -jnp.mean(advantage_t) * (1 - intervention_cost)
+            + jnp.mean(discounted_interventions) * intervention_cost
+        )
 
     def cost_to_go_loss(
         self,
@@ -292,6 +296,7 @@ class LossAndGrad:
         jax_keys: jax.Array,
         td_gamma: float,
         gae_lambda: float,
+        intervention_cost: float,
     ):
         """
         Computes the loss and gradients for the policy, cost-to-go, and
@@ -368,6 +373,7 @@ class LossAndGrad:
                 rollout.interventions,
                 td_gamma=td_gamma,
                 gae_lambda=gae_lambda,
+                intervention_cost=intervention_cost,
             )
         )
 
@@ -427,6 +433,15 @@ class LossAndGrad:
             relax_relax_to_go_state_grad, nnx.Param
         )
 
+        ## Claculate mean cost and relaxation excounered ##
+        mean_cost = jnp.mean(self.sys_costs(rollout.states, rollout.actions))
+        mean_relax = jnp.mean(
+            jnp.maximum(
+                jnp.max(rollout.relaxations_plus, axis=-1),
+                jnp.max(rollout.relaxations_minus, axis=-1),
+            )
+        )
+
         return (
             (policy_loss, relax_to_go_loss, cost_to_go_loss),
             (
@@ -435,4 +450,6 @@ class LossAndGrad:
                 cost_cost_to_go_state_grad,
             ),
             (policy_state, relax_to_go_state, cost_to_go_state),
+            mean_cost,
+            mean_relax,
         )

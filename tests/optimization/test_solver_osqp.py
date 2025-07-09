@@ -7,4 +7,4 @@ from .optimization_base import *  # noqa: F403
 
 @pytest.fixture
 def solver():
-    return OptimizationSolverOSQP(tol=1e-5, max_iter=500)
+    return OptimizationSolverOSQP(tol=1e-5, max_iter=2_000)

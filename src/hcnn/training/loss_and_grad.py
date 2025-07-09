@@ -433,6 +433,15 @@ class LossAndGrad:
             relax_relax_to_go_state_grad, nnx.Param
         )
 
+        ## Claculate mean cost and relaxation excounered ##
+        mean_cost = jnp.mean(self.sys_costs(rollout.states, rollout.actions))
+        mean_relax = jnp.mean(
+            jnp.maximum(
+                jnp.max(rollout.relaxations_plus, axis=-1),
+                jnp.max(rollout.relaxations_minus, axis=-1),
+            )
+        )
+
         return (
             (policy_loss, relax_to_go_loss, cost_to_go_loss),
             (
@@ -441,4 +450,6 @@ class LossAndGrad:
                 cost_cost_to_go_state_grad,
             ),
             (policy_state, relax_to_go_state, cost_to_go_state),
+            mean_cost,
+            mean_relax,
         )

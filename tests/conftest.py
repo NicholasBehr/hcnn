@@ -26,4 +26,4 @@ def action_dim() -> int:
 
 @pytest.fixture
 def horizon() -> int:
-    return 3
+    return 10

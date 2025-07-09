@@ -33,6 +33,7 @@ opt_map = {
     "adabelief": optax.adabelief,
     "adagrad": optax.adagrad,
     "adam": optax.adam,
+    "adamw": optax.adamw,
     "nadamw": optax.nadamw,
 }
 
@@ -194,12 +195,18 @@ def train_epoch(  # noqa: PLR0913
         initial_states = jax.random.uniform(
             train.rngs.default(),
             (batchsize, train.policy.state_dim),
-            minval=-15,
-            maxval=+15,
+            minval=-10,
+            maxval=+10,
         )
         jax_keys = jax.random.split(train.rngs.default(), (batchsize,))
 
-        loss_tuple, grad_tuple, new_states = train.loss_and_grad(
+        (
+            loss_tuple,
+            grad_tuple,
+            new_states_tuple,
+            mean_cost,
+            mean_relax,
+        ) = train.loss_and_grad(
             policy_state=nnx.state(train.policy),
             relax_to_go_state=nnx.state(train.relax_to_go),
             cost_to_go_state=nnx.state(train.cost_to_go),
@@ -211,9 +218,9 @@ def train_epoch(  # noqa: PLR0913
         )
 
         # Update model states
-        nnx.update(train.policy, new_states[0])
-        nnx.update(train.relax_to_go, new_states[1])
-        nnx.update(train.cost_to_go, new_states[2])
+        nnx.update(train.policy, new_states_tuple[0])
+        nnx.update(train.relax_to_go, new_states_tuple[1])
+        nnx.update(train.cost_to_go, new_states_tuple[2])
 
         # Update metrics
         policy_loss = loss_tuple[0]
@@ -225,6 +232,8 @@ def train_epoch(  # noqa: PLR0913
             cost_to_go_loss=cost_to_go_loss,
             relax_to_go_loss=relax_to_go_loss,
             aggregate_loss=aggregate_loss,
+            mean_cost=mean_cost,
+            mean_relax=mean_relax,
         )
 
         # Update the states of the models
@@ -314,6 +323,8 @@ def train(project=None, config=None):
             cost_to_go_loss=nnx.metrics.Average("cost_to_go_loss"),
             relax_to_go_loss=nnx.metrics.Average("relax_to_go_loss"),
             aggregate_loss=nnx.metrics.Average("aggregate_loss"),
+            mean_cost=nnx.metrics.Average("mean_cost"),
+            mean_relax=nnx.metrics.Average("mean_relax"),
         )
 
         train = TrainBundle(
@@ -347,9 +358,9 @@ def train(project=None, config=None):
             train_state = nnx.state(train)
 
             wandb.log(step=epoch, data=metric_dict)
-            print(f"epoch: {epoch} -> {metric_dict['aggregate_loss']}")
+            print(f"epoch: {epoch} -> {metric_dict['mean_relax']}")
 
-            if epoch % 25 == 0 or epoch == config.epochs - 1:
+            if epoch % 10 == 0 or epoch == config.epochs - 1:
                 # Plot the model
                 samples_per_axis = 300
                 axis_samples = jnp.linspace(-14, 14, samples_per_axis)
@@ -424,38 +435,38 @@ if __name__ == "__main__":
     project = "double_integrator_3"
     config = {
         "system_name": "double_integrator",
-        "seed": 42,
+        "seed": 0,
         "policy_name": "dropout_mlp",
-        "policy_hidden_dim": 6,
-        "policy_hidden_depth": 6,
-        "policy_dropout_rate": 0.75,
-        "policy_activation": "hard_sigmoid",
-        "policy_intervention_cost": 0.25,
-        "cost_to_go_hidden_dim": 4,
-        "cost_to_go_hidden_depth": 3,
-        "cost_to_go_dropout_rate": 0.15,
+        "policy_hidden_dim": 3,
+        "policy_hidden_depth": 2,
+        "policy_dropout_rate": 0.1,
+        "policy_activation": "leaky_relu",
+        "policy_intervention_cost": 0.3,
+        "cost_to_go_hidden_dim": 3,
+        "cost_to_go_hidden_depth": 2,
+        "cost_to_go_dropout_rate": 0.1,
         "cost_to_go_activation": "celu",
-        "relax_to_go_hidden_dim": 4,
-        "relax_to_go_hidden_depth": 3,
-        "relax_to_go_dropout_rate": 0.15,
+        "relax_to_go_hidden_dim": 3,
+        "relax_to_go_hidden_depth": 2,
+        "relax_to_go_dropout_rate": 0.1,
         "relax_to_go_activation": "celu",
         "projection_name": "no_substitution_no_terminal",
-        "projection_horizon": 20,
-        "projection_relaxation_penalty": 10.0,
-        "solver_name": "osqp",
-        "solver_max_iter": 500,
-        "solver_tol": 1e-2,
-        "optimizer_policy_name": "adam",
+        "projection_horizon": 10,
+        "projection_relaxation_penalty": 15.0,
+        "solver_name": "shallow",
+        "solver_max_iter": 1_000,
+        "solver_tol": 1e-5,
+        "optimizer_policy_name": "adamw",
         "optimizer_policy_learning_rate": 1e-3,
-        "optimizer_cost_name": "adam",
-        "optimizer_cost_learning_rate": 1e-3,
-        "optimizer_relax_name": "adam",
-        "optimizer_relax_learning_rate": 1e-3,
-        "batchsize": 512,
-        "batches_per_epoch": 10,
-        "td_gamma": 0.95,
+        "optimizer_cost_name": "adamw",
+        "optimizer_cost_learning_rate": 5e-3,
+        "optimizer_relax_name": "adamw",
+        "optimizer_relax_learning_rate": 5e-3,
+        "batchsize": 1048,
+        "batches_per_epoch": 5,
+        "td_gamma": 0.8,
         "gae_lambda": 0.99,
-        "epochs": 4_000,
+        "epochs": 400,
     }
 
     # Add this before your sweep_configuration definition:
@@ -463,36 +474,39 @@ if __name__ == "__main__":
 
     sweep_configuration = {
         "method": "random",
-        "metric": {"goal": "minimize", "name": "aggregate_loss"},
-        "early_terminate": {"type": "hyperband", "min_iter": 15, "eta": 1.5},
+        "metric": {"goal": "minimize", "name": "mean_cost"},
+        "early_terminate": {"type": "hyperband", "min_iter": 20, "eta": 1.5},
         "parameters": {
             "system_name": {"value": "double_integrator"},
             "seed": {"value": 42},
             # Policy
             "policy_name": {"value": "dropout_mlp"},
-            "policy_hidden_dim": {"values": [2, 3, 4, 5, 6]},
-            "policy_hidden_depth": {"values": [2, 3, 4, 5, 6]},
+            "policy_hidden_dim": {"values": [2, 4, 8]},
+            "policy_hidden_depth": {"values": [2, 4, 8]},
             "policy_dropout_rate": {
                 "distribution": "uniform",
-                "max": 0.75,
-                "min": 0.25,
+                "max": 0.5,
+                "min": 0.0,
             },
-            "policy_activation": {"values": ["tanh", "hard_sigmoid"]},
+            "policy_activation": {
+                "values": ["hard_sigmoid", "leaky_relu", "celu", "tanh"]
+            },
+            "policy_intervention_cost": {"values": [0.25, 0.5, 0.75]},
             # Cost-to-go
-            "cost_to_go_hidden_dim": {"values": [2, 3, 4]},
-            "cost_to_go_hidden_depth": {"values": [2, 3, 4]},
+            "cost_to_go_hidden_dim": {"value": 4},
+            "cost_to_go_hidden_depth": {"value": 3},
             "cost_to_go_dropout_rate": {
                 "distribution": "uniform",
-                "max": 0.25,
+                "max": 0.5,
                 "min": 0.0,
             },
             "cost_to_go_activation": {"values": ["celu", "leaky_relu"]},
             # Relax-to-go
-            "relax_to_go_hidden_dim": {"values": [2, 3, 4]},
-            "relax_to_go_hidden_depth": {"values": [2, 3, 4]},
+            "relax_to_go_hidden_dim": {"value": 4},
+            "relax_to_go_hidden_depth": {"value": 3},
             "relax_to_go_dropout_rate": {
                 "distribution": "uniform",
-                "max": 0.25,
+                "max": 0.5,
                 "min": 0.0,
             },
             "relax_to_go_activation": {"values": ["celu", "leaky_relu"]},
@@ -500,12 +514,12 @@ if __name__ == "__main__":
             "projection_horizon": {"value": 20},
             "projection_relaxation_penalty": {"value": 10.0},
             "solver_name": {"value": "osqp"},
-            "solver_max_iter": {"value": 250},
-            "solver_tol": {"value": 1e-3},
+            "solver_max_iter": {"value": 1_000},
+            "solver_tol": {"value": 1e-2},
             "optimizer_policy_name": {"values": optimizer_keys},
             "optimizer_policy_learning_rate": {
                 "distribution": "log_uniform_values",
-                "max": 1e-2,
+                "max": 1e-3,
                 "min": 1e-4,
             },
             "optimizer_cost_name": {"values": optimizer_keys},
@@ -521,16 +535,16 @@ if __name__ == "__main__":
                 "min": 1e-4,
             },
             "batchsize": {"value": 512},
-            "batches_per_epoch": {"value": 5},
-            "td_gamma": {"value": 0.95},
+            "batches_per_epoch": {"value": 1},
+            "td_gamma": {"value": 0.8},
             "gae_lambda": {"value": 0.99},
-            "epochs": {"value": 1_000},
+            "epochs": {"value": 100},
         },
     }
 
     train(project=project, config=config)
 
-    # sweep_id = "r1m82x2y"  # Replace with your sweep ID if you have one
+    # sweep_id = "z1w2vyko"  # Replace with your sweep ID if you have one
     # if sweep_id is None:
     #     print("No sweep ID provided, creating sweep.")
     #     sweep_id = wandb.sweep(sweep=sweep_configuration, project=project)
@@ -539,5 +553,5 @@ if __name__ == "__main__":
     #     sweep_id=sweep_id,
     #     function=train,
     #     project=project,
-    #     count=200,
+    #     count=50,
     # )

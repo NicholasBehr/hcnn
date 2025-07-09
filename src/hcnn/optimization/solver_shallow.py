@@ -19,6 +19,7 @@ class OptimizationSolverShallow(
 ):
     max_iter: int = 500
     tol: float = 1e-4
+    rho: float = 1e-2
 
     class Variables(struct.PyTreeNode):
         # primal
@@ -33,7 +34,7 @@ class OptimizationSolverShallow(
         # parameters
         alpha: jax.Array
         sigma: jax.Array
-        rho_vec: jax.Array
+        rho_to_vec: jax.Array
         iter_counter: jax.Array
 
         @staticmethod
@@ -57,8 +58,7 @@ class OptimizationSolverShallow(
                 # parameters
                 alpha=jnp.array(1.6, dtype=float),
                 sigma=jnp.array(1e-6, dtype=float),
-                rho_vec=0.01
-                * jnp.where(
+                rho_to_vec=jnp.where(
                     problem.lower_bound == problem.upper_bound, 1e3, 1.0
                 ),
                 iter_counter=jnp.array(0, dtype=int),
@@ -69,6 +69,7 @@ class OptimizationSolverShallow(
             problem: OptimizationProblemBase[PhiTypeDiff, PhiTypeNoDiff],
             phi_d: PhiTypeDiff,
             phi_nd: PhiTypeNoDiff,
+            rho: float,
         ) -> Self:
             ## form linearization around x_tilde
             h, h_jvp = jax.linearize(
@@ -78,6 +79,8 @@ class OptimizationSolverShallow(
                 lambda x: problem.constraint_fn(x, phi_d, phi_nd), self.x_tilde
             )
 
+            rho_vec = rho * self.rho_to_vec
+
             ## x_tilde ##
             def cg_lhs(v: jax.Array) -> jax.Array:
                 # Q v
@@ -86,12 +89,12 @@ class OptimizationSolverShallow(
                 b = self.sigma * v
                 # J.T R J v
                 c = h_jvp(v)
-                c = self.rho_vec * c
+                c = rho_vec * c
                 c = h_vjp(c)[0]
                 return a + b + c
 
             zhjx = self.z - h + h_jvp(self.x_tilde)
-            r_zhjx_y = self.rho_vec * zhjx - self.y
+            r_zhjx_y = rho_vec * zhjx - self.y
             cg_rhs = (
                 self.sigma * self.x - problem.cost_linear + h_vjp(r_zhjx_y)[0]
             )
@@ -119,12 +122,12 @@ class OptimizationSolverShallow(
             inner = (
                 self.alpha * new_z_tilde
                 + (1 - self.alpha) * self.z
-                + self.y / self.rho_vec
+                + self.y / rho_vec
             )
             new_z = jnp.clip(inner, problem.lower_bound, problem.upper_bound)
 
             ## y ##
-            new_y = self.y + self.rho_vec * (
+            new_y = self.y + rho_vec * (
                 self.alpha * new_z_tilde + (1 - self.alpha) * self.z - new_z
             )
 
@@ -181,7 +184,12 @@ class OptimizationSolverShallow(
     ) -> Variables:
         return (
             variables.replace(iter_counter=variables.iter_counter + 1)
-            .update_primal_dual(problem=problem, phi_d=phi_d, phi_nd=phi_nd)
+            .update_primal_dual(
+                problem=problem,
+                phi_d=phi_d,
+                phi_nd=phi_nd,
+                rho=self.rho,
+            )
             .update_residuals(problem=problem, phi_d=phi_d, phi_nd=phi_nd)
         )
 
@@ -246,7 +254,7 @@ class OptimizationSolverShallow(
         v1 = g
 
         ## Implicit VJP (step 1) - Add numerical stability
-        tau = 1e-6  # Regularization parameter for numerical stability
+        tau = 1e-4  # Regularization parameter for numerical stability
 
         # Add epsilon to prevent division by zero
         frac_upper = jax.lax.div(1.0, problem.upper_bound - z_star + tau)

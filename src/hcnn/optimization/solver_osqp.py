@@ -295,11 +295,6 @@ class OptimizationSolverOSQP(
         u1 = jnp.where(jnp.isnan(u1), jnp.zeros_like(u1), u1)
 
         h_jvp_u1 = h_jvp(u1)
-        # Add safety check for NaNs
-        h_jvp_u1 = jnp.where(
-            jnp.isnan(h_jvp_u1), jnp.zeros_like(h_jvp_u1), h_jvp_u1
-        )
-
         u2 = plus_u_minus_l * h_jvp_u1
         u3 = frac_upper * h_jvp_u1
         u4 = frac_lower * h_jvp_u1

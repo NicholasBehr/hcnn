@@ -5,9 +5,9 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import optax
-import wandb
 from flax import nnx
 
+import wandb
 from hcnn.optimization import (
     OptimizationSolverBase,
     OptimizationSolverOSQP,
@@ -43,7 +43,7 @@ def build_system_dynamics(config) -> SystemDynamicsBase:
 def build_system_costs(config) -> SystemCostsBase:
     if config.system_name == "double_integrator":
         return SystemCostsQuadratic.factory(
-            state_cost_matrix=jnp.array([[1, 0], [0, 1]]),
+            state_cost_matrix=jnp.array([[5, 0], [0, 5]]),
             action_cost_matrix=jnp.array([[1]]),
         )
     else:
@@ -124,11 +124,13 @@ def build_solver(config) -> OptimizationSolverBase:
         return OptimizationSolverOSQP(
             max_iter=config.solver_max_iter,
             tol=config.solver_tol,
+            rho=config.solver_rho,
         )
     elif config.solver_name == "shallow":
         return OptimizationSolverShallow(
             max_iter=config.solver_max_iter,
             tol=config.solver_tol,
+            rho=config.solver_rho,
         )
     else:
         raise ValueError(f"Unknown system: {config.system_name}")
@@ -362,7 +364,7 @@ def train(project=None, config=None):  # noqa: PLR0915 code is using wandb refer
             wandb.log(step=epoch, data=metric_dict)
             print(f"epoch: {epoch} -> {metric_dict}")
 
-            if epoch % 10 == 0 or epoch == config.epochs - 1:
+            if epoch % 5 == 0 or epoch == config.epochs - 1:
                 # Plot the model
                 samples_per_axis = 300
                 axis_samples = jnp.linspace(-14, 14, samples_per_axis)
@@ -449,35 +451,36 @@ if __name__ == "__main__":
         "seed": 0,
         "policy_name": "dropout_mlp",
         "policy_hidden_dim": 3,
-        "policy_hidden_depth": 2,
-        "policy_dropout_rate": 0.1,
-        "policy_activation": "leaky_relu",
-        "policy_intervention_cost": 0.3,
+        "policy_hidden_depth": 3,
+        "policy_dropout_rate": 0.0,
+        "policy_activation": "celu",
+        "policy_intervention_cost": 0.25,
         "cost_to_go_hidden_dim": 3,
-        "cost_to_go_hidden_depth": 2,
-        "cost_to_go_dropout_rate": 0.1,
+        "cost_to_go_hidden_depth": 3,
+        "cost_to_go_dropout_rate": 0.0,
         "cost_to_go_activation": "celu",
         "relax_to_go_hidden_dim": 3,
-        "relax_to_go_hidden_depth": 2,
-        "relax_to_go_dropout_rate": 0.1,
+        "relax_to_go_hidden_depth": 3,
+        "relax_to_go_dropout_rate": 0.0,
         "relax_to_go_activation": "celu",
         "projection_name": "no_substitution_no_terminal",
         "projection_horizon": 10,
-        "projection_relaxation_penalty": 15.0,
+        "projection_relaxation_penalty": 14,
         "solver_name": "osqp",
-        "solver_max_iter": 15_000,
-        "solver_tol": 1e-4,
-        "optimizer_policy_name": "adamw",
+        "solver_max_iter": 5000,
+        "solver_tol": 1e-3,
+        "solver_rho": 0.75,
+        "optimizer_policy_name": "adam",
         "optimizer_policy_learning_rate": 1e-3,
-        "optimizer_cost_name": "adamw",
-        "optimizer_cost_learning_rate": 5e-3,
-        "optimizer_relax_name": "adamw",
-        "optimizer_relax_learning_rate": 5e-3,
+        "optimizer_cost_name": "adam",
+        "optimizer_cost_learning_rate": 1e-3,
+        "optimizer_relax_name": "adam",
+        "optimizer_relax_learning_rate": 1e-3,
         "batchsize": 8,
-        "batches_per_epoch": 1,
-        "td_gamma": 0.8,
-        "gae_lambda": 0.99,
-        "epochs": 50,
+        "batches_per_epoch": 8,
+        "td_gamma": 0.9,
+        "gae_lambda": 0.7,
+        "epochs": 300,
     }
 
     # Add this before your sweep_configuration definition:

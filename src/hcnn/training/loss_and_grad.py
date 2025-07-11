@@ -13,6 +13,7 @@ from hcnn.system_costs import SystemCostsBase
 
 from .dropout_mlp import DropoutMLP
 from .generalized_advantage import (
+    full_horizon_advantage,
     generalized_advantage_t,
     td_residuals,
 )
@@ -63,10 +64,9 @@ class LossAndGrad:
         Returns:
             jax.Array: Policy loss value, shape ().
         """
-        advantage_t = generalized_advantage_t(
+        advantage_t = full_horizon_advantage(
             td_residuals=cost_residuals,
             td_gamma=td_gamma,
-            gae_lambda=gae_lambda,
         )
         discounted_interventions = jnp.sum(
             rollout_interventions

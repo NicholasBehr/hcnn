@@ -114,3 +114,23 @@ def generalized_advantage_t(
     advantages = jnp.moveaxis(advantages_time_first, 0, -1)
 
     return advantages
+
+
+def full_horizon_advantage(
+    td_residuals: jax.Array,
+    td_gamma: float,
+) -> jax.Array:
+    """Compute the full horizon advantage.
+
+    Args:
+        td_residuals (jax.Array): Temporal difference residuals,
+            shape (..., horizon-1).
+        td_gamma (float): Discount factor for the temporal difference.
+
+    Returns:
+        jax.Array: Full horizon advantage estimates,
+            shape (...).
+    """
+    return jnp.sum(
+        td_residuals * (td_gamma ** jnp.arange(td_residuals.shape[-1])), axis=-1
+    )

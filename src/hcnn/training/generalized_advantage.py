@@ -21,7 +21,6 @@ def td_residuals(
     return rewards[..., :-1] + td_gamma * values[..., 1:] - values[..., :-1]
 
 
-@jax.jit
 def generalized_advantage_1(
     td_residuals: jax.Array,
     td_gamma: float,
@@ -59,7 +58,6 @@ def generalized_advantage_1(
     return jnp.sum(discounts * td_residuals * cutoff_correction, axis=-1)
 
 
-@jax.jit
 def generalized_advantage_t(
     td_residuals: jax.Array,
     td_gamma: float,

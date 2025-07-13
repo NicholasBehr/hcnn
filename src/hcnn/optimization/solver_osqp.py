@@ -57,9 +57,9 @@ class OptimizationSolverOSQP(
                 dual_residuals=problem.cost_quad_diag * x + problem.cost_linear,
                 # parameters
                 alpha=jnp.array(1.6, dtype=float),
-                sigma=jnp.array(1e-6, dtype=float),
+                sigma=jnp.array(1e-1, dtype=float),
                 rho_to_vec=jnp.where(
-                    problem.lower_bound == problem.upper_bound, 1e3, 1.0
+                    problem.lower_bound == problem.upper_bound, 1e2, 1.0
                 ),
                 iter_counter=jnp.array(0, dtype=int),
             )

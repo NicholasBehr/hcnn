@@ -364,7 +364,7 @@ def train(project=None, config=None):  # noqa: PLR0915 code is using wandb refer
             wandb.log(step=epoch, data=metric_dict)
             print(f"epoch: {epoch} -> {metric_dict}")
 
-            if epoch % 5 == 0 or epoch == config.epochs - 1:
+            if epoch % 10 == 0 or epoch == config.epochs - 1:
                 # Plot the model
                 samples_per_axis = 300
                 axis_samples = jnp.linspace(-14, 14, samples_per_axis)
@@ -452,35 +452,35 @@ if __name__ == "__main__":
         "policy_name": "dropout_mlp",
         "policy_hidden_dim": 3,
         "policy_hidden_depth": 3,
-        "policy_dropout_rate": 0.0,
-        "policy_activation": "celu",
+        "policy_dropout_rate": 0.2,
+        "policy_activation": "leaky_relu",
         "policy_intervention_cost": 0.25,
         "cost_to_go_hidden_dim": 3,
         "cost_to_go_hidden_depth": 3,
-        "cost_to_go_dropout_rate": 0.0,
-        "cost_to_go_activation": "celu",
+        "cost_to_go_dropout_rate": 0.2,
+        "cost_to_go_activation": "leaky_relu",
         "relax_to_go_hidden_dim": 3,
         "relax_to_go_hidden_depth": 3,
-        "relax_to_go_dropout_rate": 0.0,
-        "relax_to_go_activation": "celu",
+        "relax_to_go_dropout_rate": 0.2,
+        "relax_to_go_activation": "leaky_relu",
         "projection_name": "no_substitution_no_terminal",
         "projection_horizon": 10,
-        "projection_relaxation_penalty": 14,
-        "solver_name": "osqp",
-        "solver_max_iter": 5000,
-        "solver_tol": 1e-3,
-        "solver_rho": 0.75,
-        "optimizer_policy_name": "adam",
-        "optimizer_policy_learning_rate": 1e-3,
-        "optimizer_cost_name": "adam",
-        "optimizer_cost_learning_rate": 1e-3,
-        "optimizer_relax_name": "adam",
-        "optimizer_relax_learning_rate": 1e-3,
-        "batchsize": 8,
-        "batches_per_epoch": 8,
-        "td_gamma": 0.9,
+        "projection_relaxation_penalty": 50,
+        "solver_name": "shallow",
+        "solver_max_iter": 1e4,
+        "solver_tol": 1e-5,
+        "solver_rho": 1e-1,
+        "optimizer_policy_name": "adamw",
+        "optimizer_policy_learning_rate": 1e-2,
+        "optimizer_cost_name": "adamw",
+        "optimizer_cost_learning_rate": 1e-1,
+        "optimizer_relax_name": "adamw",
+        "optimizer_relax_learning_rate": 1e-1,
+        "batchsize": 512,
+        "batches_per_epoch": 5,
+        "td_gamma": 0.95,
         "gae_lambda": 0.7,
-        "epochs": 300,
+        "epochs": 500,
     }
 
     # Add this before your sweep_configuration definition:

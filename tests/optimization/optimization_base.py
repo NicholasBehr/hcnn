@@ -56,7 +56,7 @@ def test_solve_unconstrained(solver: OptimizationSolverBase):
         )
 
         # solve
-        x_star = solver.solve(problem, phi_d, phi_nd)
+        x_star, _ = solver.solve(problem, phi_d, phi_nd)
 
         # verify
         x_star_analytic = -cost_linear / cost_quad_diag
@@ -80,9 +80,9 @@ def test_vjp_unconstrained(solver: OptimizationSolverBase):
         )
 
         # solve
-        jac_prob, jac_phi = jax.jacrev(solver.solve, argnums=(0, 1))(
-            problem, phi_d, phi_nd
-        )
+        (jac_prob, jac_phi), aux = jax.jacrev(
+            solver.solve, argnums=(0, 1), has_aux=True
+        )(problem, phi_d, phi_nd)
 
         # verify
         assert jnp.allclose(
@@ -163,7 +163,7 @@ def test_solve_box_projection(solver: OptimizationSolverBase):
         )
 
         # solve
-        x_star = solver.solve(problem, phi_d, phi_nd)
+        x_star, _ = solver.solve(problem, phi_d, phi_nd)
 
         # verify
         x_star_analytic = jnp.clip(origin, lower_bound, upper_bound)
@@ -194,9 +194,9 @@ def test_vjp_box_projection(solver: OptimizationSolverBase):
             )
             return solver.solve(problem, phi_d, phi_nd)
 
-        jac_o, jac_lb, jac_ub = jax.jacrev(box_projection, argnums=(0, 1, 2))(
-            origin, lower_bound, upper_bound
-        )
+        (jac_o, jac_lb, jac_ub), _ = jax.jacrev(
+            box_projection, argnums=(0, 1, 2), has_aux=True
+        )(origin, lower_bound, upper_bound)
 
         # verify
         def box_projection_reference(origin, lower_bound, upper_bound):
@@ -301,7 +301,7 @@ def test_solve_triangle_projection(solver: OptimizationSolverBase):
         )
 
         # solve
-        x_star = solver.solve(problem, phi_d, phi_nd)
+        x_star, _ = solver.solve(problem, phi_d, phi_nd)
 
         # verify
         assert jnp.allclose(
@@ -325,14 +325,17 @@ def test_vjp_triangle_projection(solver: OptimizationSolverBase):
         ]
     )
 
+    def solve(problem, phi_d, phi_nd):
+        return solver.solve(problem, phi_d, phi_nd)[0]
+
     for origin in origins:
         problem, phi_d, phi_nd = TriangleProjectionProblem.factory(
             origin, point_a, point_b, point_c
         )
 
         test_util.check_vjp(
-            f=solver.solve,
-            f_vjp=partial(jax.vjp, solver.solve),
+            f=solve,
+            f_vjp=partial(jax.vjp, solve),
             args=(problem, phi_d, phi_nd),
             rtol=5 / 100,
         )
@@ -352,13 +355,13 @@ class CircleProjectionProblem(OptimizationProblemBase[Context, jax.Array]):
             s.t. l <= x.T @ x <= u
     """
 
-    def get_x0(self, phi: Context, phi_nd: jax.Array) -> jax.Array:
-        return jax.random.normal(jax.random.fold_in(phi.jax_key, 0), (3,))
+    def get_x0(self, phi_d: Context, phi_nd: jax.Array) -> jax.Array:
+        return jax.random.normal(jax.random.fold_in(phi_d.jax_key, 0), (3,))
 
     def constraint_fn(
-        self, x: jax.Array, phi: Context, phi_nd: jax.Array
+        self, x: jax.Array, phi_d: Context, phi_nd: jax.Array
     ) -> jax.Array:
-        radius_sqr = jnp.dot(x, x) * phi.a * phi.b
+        radius_sqr = jnp.dot(x, x) * phi_d.a * phi_d.b
         return jnp.tile(radius_sqr, 5)
 
     @classmethod
@@ -393,9 +396,12 @@ def test_vjp_circle_projection(solver: OptimizationSolverBase):
     jax_key = jax.random.key(3)
     problem, phi_d, phi_nd = CircleProjectionProblem.factory(jax_key)
 
+    def solve(problem, phi_d, phi_nd):
+        return solver.solve(problem, phi_d, phi_nd)[0]
+
     test_util.check_vjp(
-        f=solver.solve,
-        f_vjp=partial(jax.vjp, solver.solve),
+        f=solve,
+        f_vjp=partial(jax.vjp, solve),
         args=(problem, phi_d, phi_nd),
         rtol=5 / 100,
     )

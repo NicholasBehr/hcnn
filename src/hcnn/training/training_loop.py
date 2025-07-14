@@ -19,7 +19,7 @@ from hcnn.system_constraints import SystemConstraintsBase, SystemConstraintsBox
 from hcnn.system_costs import SystemCostsBase, SystemCostsQuadratic
 from hcnn.system_dynamics import SystemDynamicsBase, SystemDynamicsLinear
 from hcnn.training.dropout_mlp import DropoutMLP
-from hcnn.training.loss_and_grad import LossAndGrad
+from hcnn.training.loss_and_grad import LossAndGrad, ModelStates
 
 opt_map = {
     "adabelief": optax.adabelief,
@@ -121,19 +121,20 @@ def build_projection_operator(
 
 def build_solver(config) -> OptimizationSolverBase:
     if config.solver_name == "osqp":
-        return OptimizationSolverOSQP(
-            max_iter=config.solver_max_iter,
-            tol=config.solver_tol,
-            rho=config.solver_rho,
-        )
+        solver = OptimizationSolverOSQP
     elif config.solver_name == "shallow":
-        return OptimizationSolverShallow(
-            max_iter=config.solver_max_iter,
-            tol=config.solver_tol,
-            rho=config.solver_rho,
-        )
+        solver = OptimizationSolverShallow
     else:
         raise ValueError(f"Unknown system: {config.system_name}")
+
+    return solver(
+        alpha=config.solver_alpha,
+        sigma=config.solver_sigma,
+        rho_equality=config.solver_rho_equality,
+        rho_inequality=config.solver_rho_inequality,
+        max_iter=config.solver_max_iter,
+        tol=config.solver_tol,
+    )
 
 
 def build_loss_and_grad(
@@ -204,16 +205,14 @@ def train_epoch(  # noqa: PLR0913
         )
         jax_keys = jax.random.split(train.rngs.default(), (batchsize,))
 
-        (
-            loss_tuple,
-            grad_tuple,
-            new_states_tuple,
-            mean_cost,
-            mean_relax,
-        ) = train.loss_and_grad(
-            policy_state=nnx.state(train.policy),
-            relax_to_go_state=nnx.state(train.relax_to_go),
-            cost_to_go_state=nnx.state(train.cost_to_go),
+        model_states = ModelStates(
+            policy=nnx.state(train.policy),
+            relax_to_go=nnx.state(train.relax_to_go),
+            cost_to_go=nnx.state(train.cost_to_go),
+        )
+
+        loss, grad, model_states, info = train.loss_and_grad(
+            model_states=model_states,
             initial_states=initial_states,
             jax_keys=jax_keys,
             td_gamma=td_gamma,
@@ -222,28 +221,33 @@ def train_epoch(  # noqa: PLR0913
         )
 
         # Update model states
-        nnx.update(train.policy, new_states_tuple[0])
-        nnx.update(train.relax_to_go, new_states_tuple[1])
-        nnx.update(train.cost_to_go, new_states_tuple[2])
+        nnx.update(train.policy, model_states.policy)
+        nnx.update(train.relax_to_go, model_states.relax_to_go)
+        nnx.update(train.cost_to_go, model_states.cost_to_go)
 
         # Update metrics
-        policy_loss = loss_tuple[0]
-        relax_to_go_loss = loss_tuple[1]
-        cost_to_go_loss = loss_tuple[2]
-        aggregate_loss = jnp.sum(jnp.log1p(jnp.abs(jnp.array(loss_tuple))))
         train.metrics.update(
-            policy_loss=policy_loss,
-            cost_to_go_loss=cost_to_go_loss,
-            relax_to_go_loss=relax_to_go_loss,
-            aggregate_loss=aggregate_loss,
-            mean_cost=mean_cost,
-            mean_relax=mean_relax,
+            policy_loss=loss.policy,
+            cost_to_go_loss=loss.cost_to_go,
+            relax_to_go_loss=loss.relax_to_go,
+            aggregate_loss=jnp.sum(
+                jnp.log1p(
+                    jnp.abs(
+                        jnp.array(
+                            [loss.policy, loss.cost_to_go, loss.relax_to_go]
+                        )
+                    )
+                )
+            ),
+            primal_residual=info.primal_residual,
+            dual_residual=info.dual_residual,
+            solver_iterations=info.solver_iterations,
         )
 
         # Update the states of the models
-        train.opt_policy.update(grad_tuple[0])
-        train.opt_relax.update(grad_tuple[1])
-        train.opt_cost.update(grad_tuple[2])
+        train.opt_policy.update(grad.policy)
+        train.opt_relax.update(grad.relax_to_go)
+        train.opt_cost.update(grad.cost_to_go)
 
         return nnx.state(train)
 
@@ -323,12 +327,15 @@ def train(project=None, config=None):  # noqa: PLR0915 code is using wandb refer
 
         # Build optax metrics
         metrics = nnx.MultiMetric(
+            # model evaluation metrics
             policy_loss=nnx.metrics.Average("policy_loss"),
             cost_to_go_loss=nnx.metrics.Average("cost_to_go_loss"),
             relax_to_go_loss=nnx.metrics.Average("relax_to_go_loss"),
             aggregate_loss=nnx.metrics.Average("aggregate_loss"),
-            mean_cost=nnx.metrics.Average("mean_cost"),
-            mean_relax=nnx.metrics.Average("mean_relax"),
+            # solver metrics
+            primal_residual=nnx.metrics.Average("primal_residual"),
+            dual_residual=nnx.metrics.Average("dual_residual"),
+            solver_iterations=nnx.metrics.Average("solver_iterations"),
         )
 
         train = TrainBundle(
@@ -362,7 +369,17 @@ def train(project=None, config=None):  # noqa: PLR0915 code is using wandb refer
             train_state = nnx.state(train)
 
             wandb.log(step=epoch, data=metric_dict)
-            print(f"epoch: {epoch} -> {metric_dict}")
+
+            # Print metrics in a nicely formatted table
+            if epoch == 0:
+                header = f"{'Epoch':<8}" + "".join(
+                    [f"{k:<20}" for k in metric_dict.keys()]
+                )
+                print(header)
+            values = f"{epoch:<8}" + "".join(
+                [f"{float(v):<20.6f}" for v in metric_dict.values()]
+            )
+            print(values)
 
             if epoch % 10 == 0 or epoch == config.epochs - 1:
                 # Plot the model
@@ -467,17 +484,20 @@ if __name__ == "__main__":
         "projection_horizon": 10,
         "projection_relaxation_penalty": 50,
         "solver_name": "shallow",
+        "solver_alpha": 1.6,
+        "solver_sigma": 1e-1,
+        "solver_rho_equality": 10,
+        "solver_rho_inequality": 1,
         "solver_max_iter": 1e4,
-        "solver_tol": 1e-5,
-        "solver_rho": 1e-1,
+        "solver_tol": 1e-3,
         "optimizer_policy_name": "adamw",
         "optimizer_policy_learning_rate": 1e-2,
         "optimizer_cost_name": "adamw",
         "optimizer_cost_learning_rate": 1e-1,
         "optimizer_relax_name": "adamw",
         "optimizer_relax_learning_rate": 1e-1,
-        "batchsize": 512,
-        "batches_per_epoch": 5,
+        "batchsize": 32,
+        "batches_per_epoch": 1,
         "td_gamma": 0.95,
         "gae_lambda": 0.7,
         "epochs": 500,

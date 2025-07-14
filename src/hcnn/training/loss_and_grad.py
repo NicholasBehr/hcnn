@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 from flax import nnx, struct
 
-from hcnn.optimization import OptimizationSolverBase
+from hcnn.optimization import OptimizationInfo, OptimizationSolverBase
 from hcnn.projection import (
     ProjectionBase,
     ProjectionPhiD,
@@ -17,6 +17,27 @@ from .generalized_advantage import (
     generalized_advantage_t,
     td_residuals,
 )
+
+
+@struct.dataclass
+class ModelStates:
+    policy: nnx.State
+    relax_to_go: nnx.State
+    cost_to_go: nnx.State
+
+
+@struct.dataclass
+class ModelLoss:
+    policy: jax.Array
+    cost_to_go: jax.Array
+    relax_to_go: jax.Array
+
+
+@struct.dataclass
+class ModelGrad:
+    policy: nnx.State
+    cost_to_go: nnx.State
+    relax_to_go: nnx.State
 
 
 @struct.dataclass
@@ -278,9 +299,9 @@ class LossAndGrad:
                 initial_state=initial_state,
                 jax_key=jax_key,
             )
-            x_star = self.solver.solve(self.projection, phi_d, phi_nd)
+            x_star, info = self.solver.solve(self.projection, phi_d, phi_nd)
             rollout = self.projection.x_to_rollout(x_star)
-            return rollout
+            return rollout, info
 
         return jax.vmap(sample_rollout)(
             initial_states,
@@ -289,9 +310,7 @@ class LossAndGrad:
 
     def __call__(
         self,
-        policy_state: nnx.State,
-        relax_to_go_state: nnx.State,
-        cost_to_go_state: nnx.State,
+        model_states: ModelStates,
         initial_states: jax.Array,
         jax_keys: jax.Array,
         td_gamma: float,
@@ -320,14 +339,18 @@ class LossAndGrad:
                     and cost_to_go_state.
                 - tuple: Updated states for policy, relax_to_go, cost_to_go.
         """
+        in_policy_state = model_states.policy
+        in_relax_to_go_state = model_states.relax_to_go
+        in_cost_to_go_state = model_states.cost_to_go
+
         # Calculate the rollout
-        policy_params = nnx.filter_state(policy_state, nnx.Param)
-        relax_to_go_params = nnx.filter_state(relax_to_go_state, nnx.Param)
-        policy_non_params = nnx.filter_state(policy_state, nnx.Not(nnx.Param))
-        relax_to_go_non_params = nnx.filter_state(
-            relax_to_go_state, nnx.Not(nnx.Param)
+        policy_params, policy_non_params = nnx.filter_state(
+            in_policy_state, nnx.Param, ...
         )
-        rollout, rollout_vjp = jax.vjp(
+        relax_to_go_params, relax_to_go_non_params = nnx.filter_state(
+            in_relax_to_go_state, nnx.Param, ...
+        )
+        (rollout, info), rollout_vjp = jax.vjp(
             lambda policy_params, relax_to_go_params: self.calculate_rollout(
                 policy_params=policy_params,
                 relax_to_go_params=relax_to_go_params,
@@ -340,7 +363,8 @@ class LossAndGrad:
             relax_to_go_params,
         )
 
-        (cost_residuals, cost_to_go_state), cost_res_vjp = jax.vjp(
+        # Calculate cost and relaxation residuals
+        (cost_residuals, out_cost_to_go_state), cost_res_vjp = jax.vjp(
             lambda states, actions, cost_to_go_state: self.cost_residuals(
                 states=states,
                 actions=actions,
@@ -349,10 +373,10 @@ class LossAndGrad:
             ),
             rollout.states,
             rollout.actions,
-            cost_to_go_state,
+            in_cost_to_go_state,
         )
 
-        (relax_residuals, relax_to_go_state), relax_res_vjp = jax.vjp(
+        (relax_residuals, out_relax_to_go_state), relax_res_vjp = jax.vjp(
             lambda relax_to_go_state: self.relax_residuals(
                 states=rollout.states,
                 relaxations_plus=rollout.relaxations_plus,
@@ -360,7 +384,17 @@ class LossAndGrad:
                 relax_to_go_state=relax_to_go_state,
                 td_gamma=td_gamma,
             ),
-            relax_to_go_state,
+            in_relax_to_go_state,
+        )
+
+        # Create the model states for the output
+        # the policy state is not updated, since the projection needs the
+        # policy to be reproducible for convergence
+        # the relax_to_go and cost_to_go states are updated with the new values
+        model_states = ModelStates(
+            policy=in_policy_state,
+            relax_to_go=out_relax_to_go_state,
+            cost_to_go=out_cost_to_go_state,
         )
 
         # Calculate the losses
@@ -393,9 +427,16 @@ class LossAndGrad:
             gae_lambda=gae_lambda,
         )
 
+        loss = ModelLoss(
+            policy=policy_loss,
+            cost_to_go=cost_to_go_loss,
+            relax_to_go=relax_to_go_loss,
+        )
+
         ## Calculate the gradients for the policy state ##
+        grad = dict()
         policy_cost_to_go_state_grad = jax.tree_util.tree_map(
-            lambda x: jnp.zeros_like(x), cost_to_go_state
+            lambda x: jnp.zeros_like(x), in_cost_to_go_state
         )  # the outgoing cost_to_go_state does not affect the policy loss
         (policy_states_grad, policy_actions_grad, _) = cost_res_vjp(
             (policy_val_res_grad, policy_cost_to_go_state_grad)
@@ -407,49 +448,48 @@ class LossAndGrad:
             relaxations_plus=jnp.zeros_like(rollout.relaxations_plus),
             relaxations_minus=jnp.zeros_like(rollout.relaxations_minus),
         )
-        policy_policy_state_grad, _ = rollout_vjp(policy_rollout_grad)
+        policy_info_grad = jax.tree_util.tree_map(
+            lambda x: jnp.zeros_like(x), info
+        )  # the outgoing info does not affect the policy loss
+        policy_policy_params_grad, _ = rollout_vjp(
+            (policy_rollout_grad, policy_info_grad)
+        )
 
         ## Calculate the gradients for the cost_to_go state ##
         cost_cost_to_go_state_grad = jax.tree_util.tree_map(
-            lambda x: jnp.zeros_like(x), cost_to_go_state
+            lambda x: jnp.zeros_like(x), in_cost_to_go_state
         )  # the outgoing cost_to_go_state does not affect the cost loss
         (_, _, cost_cost_to_go_state_grad) = cost_res_vjp(
             (cost_val_res_grad, cost_cost_to_go_state_grad)
         )
-        cost_cost_to_go_state_grad = nnx.filter_state(
+        cost_cost_to_go_params_grad = nnx.filter_state(
             cost_cost_to_go_state_grad, nnx.Param
         )
 
         ## Calculate the gradients for the relax_to_go state ##
         relax_relax_to_go_state_grad = jax.tree_util.tree_map(
-            lambda x: jnp.zeros_like(x), relax_to_go_state
+            lambda x: jnp.zeros_like(x), in_relax_to_go_state
         )  # the outgoing relax_to_go_state does not affect the relax loss
         (relax_relax_to_go_state_grad,) = relax_res_vjp(
             (relax_rel_res_grad, relax_relax_to_go_state_grad)
         )
         # We purposfully do not propagate gradients through the rollout here!
         # We dont want to change the rollout to improve the relax to go loss.
-        relax_relax_to_go_state_grad = nnx.filter_state(
+        relax_relax_to_go_params_grad = nnx.filter_state(
             relax_relax_to_go_state_grad, nnx.Param
         )
 
-        ## Claculate mean cost and relaxation excounered ##
-        mean_cost = jnp.mean(self.sys_costs(rollout.states, rollout.actions))
-        mean_relax = jnp.mean(
-            jnp.maximum(
-                jnp.max(rollout.relaxations_plus, axis=-1),
-                jnp.max(rollout.relaxations_minus, axis=-1),
-            )
+        grad = ModelGrad(
+            policy=policy_policy_params_grad,
+            cost_to_go=cost_cost_to_go_params_grad,
+            relax_to_go=relax_relax_to_go_params_grad,
         )
 
-        return (
-            (policy_loss, relax_to_go_loss, cost_to_go_loss),
-            (
-                policy_policy_state_grad,
-                relax_relax_to_go_state_grad,
-                cost_cost_to_go_state_grad,
-            ),
-            (policy_state, relax_to_go_state, cost_to_go_state),
-            mean_cost,
-            mean_relax,
+        # Compute the mean of each jax array in info
+        info = OptimizationInfo(
+            primal_residual=jnp.mean(info.primal_residual),
+            dual_residual=jnp.mean(info.dual_residual),
+            solver_iterations=jnp.mean(info.solver_iterations),
         )
+
+        return loss, grad, model_states, info

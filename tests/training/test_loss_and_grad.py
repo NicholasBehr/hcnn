@@ -327,7 +327,7 @@ def test_rollout_fwd(  # noqa: PLR0913 test clarity
     policy_state = nnx.state(policy)
     relax_to_go_state = nnx.state(relax_to_go)
 
-    rollout = loss_and_grad.calculate_rollout(
+    rollout, info = loss_and_grad.calculate_rollout(
         policy_params=nnx.filter_state(policy_state, nnx.Param),
         relax_to_go_params=nnx.filter_state(relax_to_go_state, nnx.Param),
         policy_non_params=nnx.filter_state(policy_state, nnx.Not(nnx.Param)),
@@ -416,10 +416,13 @@ def test_call_fwd(
     initial_states = jax.random.normal(keys[0], (batch_size, state_dim))
     jax_keys = jax.random.split(keys[1], batch_size)
 
-    (a, b, c, d, e) = loss_and_grad(
-        policy_state=nnx.state(policy),
-        relax_to_go_state=nnx.state(relax_to_go),
-        cost_to_go_state=nnx.state(cost_to_go),
+    model_states = dict()
+    model_states["policy"] = nnx.state(policy)
+    model_states["relax_to_go"] = nnx.state(relax_to_go)
+    model_states["cost_to_go"] = nnx.state(cost_to_go)
+
+    loss, grad, model_states, info = loss_and_grad(
+        model_states=model_states,
         initial_states=initial_states,
         jax_keys=jax_keys,
         td_gamma=0.8,

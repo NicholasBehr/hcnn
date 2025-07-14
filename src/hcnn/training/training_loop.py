@@ -1,4 +1,8 @@
 import os
+
+import matplotlib
+
+matplotlib.use("Agg")
 from functools import partial
 
 import jax
@@ -469,29 +473,29 @@ if __name__ == "__main__":
         "policy_name": "dropout_mlp",
         "policy_hidden_dim": 3,
         "policy_hidden_depth": 3,
-        "policy_dropout_rate": 0.2,
+        "policy_dropout_rate": 0.1,
         "policy_activation": "leaky_relu",
-        "policy_intervention_cost": 0.25,
+        "policy_intervention_cost": 0.5,
         "cost_to_go_hidden_dim": 3,
         "cost_to_go_hidden_depth": 3,
-        "cost_to_go_dropout_rate": 0.2,
+        "cost_to_go_dropout_rate": 0.0,
         "cost_to_go_activation": "leaky_relu",
         "relax_to_go_hidden_dim": 3,
         "relax_to_go_hidden_depth": 3,
-        "relax_to_go_dropout_rate": 0.2,
+        "relax_to_go_dropout_rate": 0.0,
         "relax_to_go_activation": "leaky_relu",
         "projection_name": "no_substitution_no_terminal",
-        "projection_horizon": 10,
+        "projection_horizon": 20,
         "projection_relaxation_penalty": 50,
         "solver_name": "shallow",
-        "solver_alpha": 1.6,
-        "solver_sigma": 1e-1,
-        "solver_rho_equality": 10,
-        "solver_rho_inequality": 1,
-        "solver_max_iter": 1e4,
+        "solver_alpha": 1,
+        "solver_sigma": 0.1,
+        "solver_rho_equality": 0.4,
+        "solver_rho_inequality": 1.5,
+        "solver_max_iter": 1e5,
         "solver_tol": 1e-3,
         "optimizer_policy_name": "adamw",
-        "optimizer_policy_learning_rate": 1e-2,
+        "optimizer_policy_learning_rate": 1e-1,
         "optimizer_cost_name": "adamw",
         "optimizer_cost_learning_rate": 1e-1,
         "optimizer_relax_name": "adamw",
@@ -499,7 +503,7 @@ if __name__ == "__main__":
         "batchsize": 32,
         "batches_per_epoch": 1,
         "td_gamma": 0.95,
-        "gae_lambda": 0.7,
+        "gae_lambda": 0.99,
         "epochs": 500,
     }
 
@@ -507,85 +511,74 @@ if __name__ == "__main__":
     optimizer_keys = list(opt_map.keys())
 
     sweep_configuration = {
-        "method": "random",
-        "metric": {"goal": "minimize", "name": "mean_cost"},
-        "early_terminate": {"type": "hyperband", "min_iter": 20, "eta": 1.5},
+        "method": "bayes",
+        "metric": {"goal": "minimize", "name": "solver_iterations"},
+        # "early_terminate": {"type": "hyperband", "min_iter": 20, "eta": 1.5},
         "parameters": {
             "system_name": {"value": "double_integrator"},
             "seed": {"value": 42},
-            # Policy
             "policy_name": {"value": "dropout_mlp"},
-            "policy_hidden_dim": {"values": [2, 4, 8]},
-            "policy_hidden_depth": {"values": [2, 4, 8]},
-            "policy_dropout_rate": {
-                "distribution": "uniform",
-                "max": 0.5,
-                "min": 0.0,
-            },
-            "policy_activation": {
-                "values": ["hard_sigmoid", "leaky_relu", "celu", "tanh"]
-            },
-            "policy_intervention_cost": {"values": [0.25, 0.5, 0.75]},
+            "policy_hidden_dim": {"value": 3},
+            "policy_hidden_depth": {"value": 3},
+            "policy_dropout_rate": {"value": 0.1},
+            "policy_activation": {"value": "leaky_relu"},
+            "policy_intervention_cost": {"value": 0.5},
             # Cost-to-go
-            "cost_to_go_hidden_dim": {"value": 4},
+            "cost_to_go_hidden_dim": {"value": 3},
             "cost_to_go_hidden_depth": {"value": 3},
-            "cost_to_go_dropout_rate": {
-                "distribution": "uniform",
-                "max": 0.5,
-                "min": 0.0,
-            },
-            "cost_to_go_activation": {"values": ["celu", "leaky_relu"]},
+            "cost_to_go_dropout_rate": {"value": 0.0},
+            "cost_to_go_activation": {"value": "leaky_relu"},
             # Relax-to-go
             "relax_to_go_hidden_dim": {"value": 4},
             "relax_to_go_hidden_depth": {"value": 3},
-            "relax_to_go_dropout_rate": {
-                "distribution": "uniform",
-                "max": 0.5,
-                "min": 0.0,
-            },
-            "relax_to_go_activation": {"values": ["celu", "leaky_relu"]},
+            "relax_to_go_dropout_rate": {"value": 0.0},
+            "relax_to_go_activation": {"value": "leaky_relu"},
             "projection_name": {"value": "no_substitution_no_terminal"},
             "projection_horizon": {"value": 20},
-            "projection_relaxation_penalty": {"value": 10.0},
-            "solver_name": {"value": "osqp"},
-            "solver_max_iter": {"value": 1_000},
-            "solver_tol": {"value": 1e-2},
-            "optimizer_policy_name": {"values": optimizer_keys},
-            "optimizer_policy_learning_rate": {
+            "projection_relaxation_penalty": {"value": 50},
+            "solver_name": {"value": "shallow"},
+            "solver_alpha": {"min": 0.1, "max": 1.9},
+            "solver_sigma": {
                 "distribution": "log_uniform_values",
-                "max": 1e-3,
-                "min": 1e-4,
+                "max": 5,
+                "min": 0.01,
             },
-            "optimizer_cost_name": {"values": optimizer_keys},
-            "optimizer_cost_learning_rate": {
+            "solver_rho_equality": {
                 "distribution": "log_uniform_values",
-                "max": 1e-2,
-                "min": 1e-4,
+                "max": 2,
+                "min": 0.01,
             },
-            "optimizer_relax_name": {"values": optimizer_keys},
-            "optimizer_relax_learning_rate": {
+            "solver_rho_inequality": {
                 "distribution": "log_uniform_values",
-                "max": 1e-2,
-                "min": 1e-4,
+                "max": 2,
+                "min": 0.01,
             },
-            "batchsize": {"value": 512},
+            "solver_max_iter": {"value": 5e5},
+            "solver_tol": {"value": 1e-4},
+            "optimizer_policy_name": {"value": "adamw"},
+            "optimizer_policy_learning_rate": {"value": 1e-2},
+            "optimizer_cost_name": {"value": "adamw"},
+            "optimizer_cost_learning_rate": {"value": 1e-2},
+            "optimizer_relax_name": {"value": "adamw"},
+            "optimizer_relax_learning_rate": {"value": 1e-2},
+            "batchsize": {"value": 32},
             "batches_per_epoch": {"value": 1},
-            "td_gamma": {"value": 0.8},
+            "td_gamma": {"value": 0.95},
             "gae_lambda": {"value": 0.99},
-            "epochs": {"value": 100},
+            "epochs": {"value": 3},
         },
     }
 
-    train(project=project, config=config)
+    # train(project=project, config=config)
 
-    # sweep_id = "z1w2vyko"  # Replace with your sweep ID if you have one
-    # if sweep_id is None:
-    #     print("No sweep ID provided, creating sweep.")
-    #     sweep_id = wandb.sweep(sweep=sweep_configuration, project=project)
-    #     print(f"Sweep ID: {sweep_id}")
-    # wandb.agent(
-    #     sweep_id=sweep_id,
-    #     function=train,
-    #     project=project,
-    #     count=50,
-    # )
+    sweep_id = None  # Replace with your sweep ID if you have one
+    if sweep_id is None:
+        print("No sweep ID provided, creating sweep.")
+        sweep_id = wandb.sweep(sweep=sweep_configuration, project=project)
+        print(f"Sweep ID: {sweep_id}")
+    wandb.agent(
+        sweep_id=sweep_id,
+        function=train,
+        project=project,
+        count=50,
+    )

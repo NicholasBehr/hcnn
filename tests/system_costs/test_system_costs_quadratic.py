@@ -11,38 +11,31 @@ class TestSystemCostsQuadratic(TestSystemCostBase):
     """Test class for SystemCostQuadratic."""
 
     @pytest.fixture
-    def sys_cost(self, state_dim, action_dim) -> SystemCostsQuadratic:
+    def sys_cost(self) -> SystemCostsQuadratic:
         key = jax.random.key(0)
-        state_cost_root = jax.random.normal(key, (state_dim, state_dim))
-        action_cost_root = jax.random.normal(key, (action_dim, action_dim))
+        state_cost_root = jax.random.normal(
+            key, (self.state_dim, self.state_dim)
+        )
+        action_cost_root = jax.random.normal(
+            key, (self.action_dim, self.action_dim)
+        )
         return SystemCostsQuadratic.factory(
             state_cost_matrix=state_cost_root.T @ state_cost_root,
             action_cost_matrix=action_cost_root.T @ action_cost_root,
         )
 
-    @pytest.fixture(autouse=True)
-    def setup(
-        self,
-        sys_cost: SystemCostsQuadratic,
-        state_dim: int,
-        action_dim: int,
-    ):
-        self.sys_cost = sys_cost
-        self.state_dim = state_dim
-        self.action_dim = action_dim
-
-    def test_instance_creation(self):
-        assert isinstance(self.sys_cost, SystemCostsQuadratic)
-        assert self.sys_cost.state_cost_matrix.shape == (
+    def test_instance_creation_quadratic(self, sys_cost: SystemCostsQuadratic):
+        assert isinstance(sys_cost, SystemCostsQuadratic)
+        assert sys_cost.state_cost_matrix.shape == (
             self.state_dim,
             self.state_dim,
         )
-        assert self.sys_cost.action_cost_matrix.shape == (
+        assert sys_cost.action_cost_matrix.shape == (
             self.action_dim,
             self.action_dim,
         )
 
-    def test_call_example_single(self):
+    def test_call_example_single(self, sys_cost: SystemCostsQuadratic):
         instance = SystemCostsQuadratic.factory(
             state_cost_matrix=jnp.array([[1.0, 2.0], [2.0, 3.0]]),
             action_cost_matrix=jnp.array([4.0]),

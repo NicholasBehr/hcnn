@@ -9,33 +9,24 @@ from .test_system_dynamics_base import TestSystemDynamicsBase
 
 class TestSystemDynamicsLinear(TestSystemDynamicsBase):
     @pytest.fixture
-    def sys_dynamics(self, state_dim, action_dim) -> SystemDynamicsLinear:
+    def sys_dynamics(self) -> SystemDynamicsLinear:
         key = jax.random.key(0)
         return SystemDynamicsLinear.factory(
-            state_matrix=jax.random.normal(key, (state_dim, state_dim)),
-            action_matrix=jax.random.normal(key, (state_dim, action_dim)),
+            state_matrix=jax.random.normal(
+                key, (self.state_dim, self.state_dim)
+            ),
+            action_matrix=jax.random.normal(
+                key, (self.state_dim, self.action_dim)
+            ),
         )
 
-    @pytest.fixture(autouse=True)
-    def setup(
-        self,
-        sys_dynamics: SystemDynamicsLinear,
-        state_dim: int,
-        action_dim: int,
-    ):
-        self.sys_dynamics = sys_dynamics
-        self.state_dim = state_dim
-        self.action_dim = action_dim
-
-    def test_instance_creation(self):
-        assert isinstance(self.sys_dynamics, SystemDynamicsLinear)
-        assert self.sys_dynamics.state_dim == self.state_dim
-        assert self.sys_dynamics.action_dim == self.action_dim
-        assert self.sys_dynamics.state_matrix_transp.shape == (
+    def test_instance_creation_linear(self, sys_dynamics: SystemDynamicsLinear):
+        assert isinstance(sys_dynamics, SystemDynamicsLinear)
+        assert sys_dynamics.state_matrix_transp.shape == (
             self.state_dim,
             self.state_dim,
         )
-        assert self.sys_dynamics.action_matrix_transp.shape == (
+        assert sys_dynamics.action_matrix_transp.shape == (
             self.action_dim,
             self.state_dim,
         )

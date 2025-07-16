@@ -485,6 +485,7 @@ dependencies = [
     { name = "jax" },
     { name = "mediapy" },
     { name = "mujoco-mjx" },
+    { name = "pillow" },
     { name = "wandb" },
 ]
 
@@ -503,6 +504,7 @@ requires-dist = [
     { name = "jax", specifier = ">=0.6.2" },
     { name = "mediapy", specifier = ">=1.2.4" },
     { name = "mujoco-mjx", specifier = ">=3.3.3" },
+    { name = "pillow", specifier = ">=11.3.0" },
     { name = "wandb", specifier = ">=0.20.1" },
 ]
 

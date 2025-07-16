@@ -1,5 +1,4 @@
 import jax
-import pytest
 
 
 def pytest_configure(config):
@@ -12,18 +11,3 @@ def pytest_configure(config):
     else:
         # Set JAX to use CPU by default
         jax.config.update("jax_platform_name", "cpu")
-
-
-@pytest.fixture
-def state_dim() -> int:
-    return 7
-
-
-@pytest.fixture
-def action_dim() -> int:
-    return 3
-
-
-@pytest.fixture
-def horizon() -> int:
-    return 10

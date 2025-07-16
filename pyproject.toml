@@ -9,6 +9,7 @@ dependencies = [
     "jax>=0.6.2",
     "mediapy>=1.2.4",
     "mujoco-mjx>=3.3.3",
+    "pillow>=11.3.0",
     "wandb>=0.20.1",
 ]
 

@@ -9,6 +9,9 @@ from .test_system_constraints_base import TestSystemConstraintsBase
 class TestSystemConstraintsBox(TestSystemConstraintsBase):
     """Test class for SystemConstraintsBox."""
 
+    state_dim: int = 6
+    action_dim: int = 2
+
     @pytest.fixture
     def sys_constraints(self) -> SystemConstraintsBox:
         return SystemConstraintsBox.factory(
@@ -18,28 +21,19 @@ class TestSystemConstraintsBox(TestSystemConstraintsBase):
             action_u=jnp.array([1.0, jnp.inf]),
         )
 
-    @pytest.fixture(autouse=True)
-    def setup(
-        self,
-        sys_constraints: SystemConstraintsBox,
-    ):
-        self.sys_constraints = sys_constraints
-        self.state_dim = 6
-        self.action_dim = 2
-
-    def test_instance_creation(self):
-        assert isinstance(self.sys_constraints, SystemConstraintsBox)
-        assert self.sys_constraints.state_dim == 6
-        assert self.sys_constraints.action_dim == 2
-        assert self.sys_constraints.constraint_dim == 6
+    def test_instance_creation_box(self, sys_constraints: SystemConstraintsBox):
+        assert isinstance(sys_constraints, SystemConstraintsBox)
+        assert sys_constraints.state_dim == 6
+        assert sys_constraints.action_dim == 2
+        assert sys_constraints.constraint_dim == 6
         assert jnp.allclose(
-            self.sys_constraints.lower_bound,
+            sys_constraints.lower_bound,
             jnp.array([1.0, -jnp.inf, 1.0, -2.0, -3.0, 0.0]),
         )
         assert jnp.allclose(
-            self.sys_constraints.upper_bound,
+            sys_constraints.upper_bound,
             jnp.array([3.0, 1.0, jnp.inf, -1.0, 4.0, 1.0]),
         )
         assert jnp.allclose(
-            self.sys_constraints.active_indices, jnp.array([0, 1, 2, 4, 5, 6])
+            sys_constraints.active_indices, jnp.array([0, 1, 2, 4, 5, 6])
         )

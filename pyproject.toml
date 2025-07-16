@@ -5,9 +5,10 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "brax>=0.12.3",
     "flax>=0.10.5",
     "jax>=0.6.2",
+    "mediapy>=1.2.4",
+    "mujoco-mjx>=3.3.3",
     "wandb>=0.20.1",
 ]
 

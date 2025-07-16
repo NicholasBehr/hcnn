@@ -403,5 +403,6 @@ def test_vjp_circle_projection(solver: OptimizationSolverBase):
         f=solve,
         f_vjp=partial(jax.vjp, solve),
         args=(problem, phi_d, phi_nd),
+        eps=solver.tol * 5,
         rtol=5 / 100,
     )

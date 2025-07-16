@@ -103,14 +103,14 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
     alpha: float = 1.6
 
     # dual step-size to align x and x_tilde
-    sigma: float = 1e-1
+    sigma: float = 1e-2
 
     # dual step-size to align z and z_tilde
-    rho_equality: float = 1e-1  # usually much larger since they are all tight
+    rho_equality: float = 1e-1
     rho_inequality: float = 1e-1
 
     # maximum number of iterations
-    max_iter: int = int(1e4)
+    max_iter: int = int(100)
 
     # convergence tolerance for primal and dual residuals
     tol: float = 1e-4
@@ -154,6 +154,13 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
             problem.cost_quad_diag * variables.x
             + problem.cost_linear
             + h_vjp(variables.y)[0]
+        )
+
+        jax.debug.print(
+            "iter: {iter}, Primal residuals: {primal_residuals}, Dual residuals: {dual_residuals}",
+            iter=variables.iter_counter,
+            primal_residuals=primal_residuals,
+            dual_residuals=dual_residuals,
         )
 
         return variables.replace(
@@ -268,7 +275,7 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
         v1 = g[0]  # gradient w.r.t. x_star
 
         ## Implicit VJP (step 1) - Add numerical stability
-        tau = 1e-12  # Regularization parameter for numerical stability
+        tau = 1e-4  # Regularization parameter for numerical stability
 
         # Add epsilon to prevent division by zero
         frac_upper = jax.lax.div(1.0, problem.upper_bound - z_star + tau)

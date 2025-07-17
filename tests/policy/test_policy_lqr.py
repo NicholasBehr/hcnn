@@ -12,11 +12,15 @@ class TestPolicyLQR(TestPolicyBase):
     """Test class for PolicyLQR."""
 
     @pytest.fixture
-    def sys_dynamics(self, state_dim, action_dim) -> SystemDynamicsLinear:
+    def sys_dynamics(self) -> SystemDynamicsLinear:
         key = jax.random.key(0)
         return SystemDynamicsLinear.factory(
-            state_matrix=jax.random.normal(key, (state_dim, state_dim)),
-            action_matrix=jax.random.normal(key, (state_dim, action_dim)),
+            state_matrix=jax.random.normal(
+                key, (self.state_dim, self.state_dim)
+            ),
+            action_matrix=jax.random.normal(
+                key, (self.state_dim, self.action_dim)
+            ),
         )
 
     @pytest.fixture
@@ -27,71 +31,60 @@ class TestPolicyLQR(TestPolicyBase):
             input_cost=jnp.eye(sys_dynamics.action_dim),
         )
 
-    @pytest.fixture(autouse=True)
-    def setup(
-        self,
-        policy: PolicyLQR,
-        sys_dynamics: SystemDynamicsLinear,
-    ):
-        self.policy = policy
-        self.sys_dynamics = sys_dynamics
-        self.state_dim = sys_dynamics.state_dim
-        self.action_dim = sys_dynamics.action_dim
-
-    def test_instance_creation(self):
-        assert isinstance(self.policy, PolicyLQR)
-        assert self.policy.state_dim == self.state_dim
-        assert self.policy.action_dim == self.action_dim
-        assert self.policy.riccati_matrix.shape == (
+    def test_instance_creation_lqr(self, policy: PolicyLQR):
+        assert isinstance(policy, PolicyLQR)
+        assert policy.state_dim == self.state_dim
+        assert policy.action_dim == self.action_dim
+        assert policy.riccati_matrix.shape == (
             self.state_dim,
             self.state_dim,
         )
-        assert self.policy.gain_matrix.shape == (
+        assert policy.gain_matrix.shape == (
             self.action_dim,
             self.state_dim,
         )
 
-    def test_valid_instance_creation(self):
-        assert self.policy.riccati_matrix.shape == (
-            self.sys_dynamics.state_dim,
-            self.sys_dynamics.state_dim,
-        )
-        assert self.policy.gain_matrix.shape == (
-            self.sys_dynamics.action_dim,
-            self.sys_dynamics.state_dim,
-        )
+    def test_valid_instance_creation(self, policy: PolicyLQR):
+        assert policy.riccati_matrix.shape == (self.state_dim, self.state_dim)
+        assert policy.gain_matrix.shape == (self.action_dim, self.state_dim)
 
-    def test_non_symmetric_state_cost_raises(self):
+    def test_non_symmetric_state_cost_raises(
+        self, sys_dynamics: SystemDynamicsLinear
+    ):
         state_cost = jnp.array([[1.0, 2.0], [0.0, 1.0]])
         input_cost = jnp.eye(self.action_dim)
 
         with pytest.raises(
             ValueError, match="State cost matrix must be symmetric!"
         ):
-            PolicyLQR.factory(self.sys_dynamics, state_cost, input_cost)
+            PolicyLQR.factory(sys_dynamics, state_cost, input_cost)
 
-    def test_non_psd_state_cost_raises(self):
+    def test_non_psd_state_cost_raises(
+        self, sys_dynamics: SystemDynamicsLinear
+    ):
         state_cost = jnp.array([[1.0, 0.0], [0.0, -1.0]])
         input_cost = jnp.eye(self.action_dim)
 
         with pytest.raises(ValueError, match="State cost matrix is not PSD!"):
-            PolicyLQR.factory(self.sys_dynamics, state_cost, input_cost)
+            PolicyLQR.factory(sys_dynamics, state_cost, input_cost)
 
-    def test_non_symmetric_input_cost_raises(self):
+    def test_non_symmetric_input_cost_raises(
+        self, sys_dynamics: SystemDynamicsLinear
+    ):
         state_cost = jnp.eye(self.state_dim)
         input_cost = jnp.array([[1.0, 2.0], [0.0, 1.0]])
 
         with pytest.raises(
             ValueError, match="Input cost matrix must be symmetric!"
         ):
-            PolicyLQR.factory(self.sys_dynamics, state_cost, input_cost)
+            PolicyLQR.factory(sys_dynamics, state_cost, input_cost)
 
-    def test_non_pd_input_cost_raises(self):
+    def test_non_pd_input_cost_raises(self, sys_dynamics: SystemDynamicsLinear):
         state_cost = jnp.eye(self.state_dim)
         input_cost = jnp.array([[0.0]])
 
         with pytest.raises(ValueError, match="Input cost matrix is not PD!"):
-            PolicyLQR.factory(self.sys_dynamics, state_cost, input_cost)
+            PolicyLQR.factory(sys_dynamics, state_cost, input_cost)
 
     def test_unstabilizable_system_raises(self):
         state_matrix = jnp.array([[1.2, 0.0], [0.0, 1.1]])
@@ -119,19 +112,23 @@ class TestPolicyLQR(TestPolicyBase):
         with pytest.raises(ValueError, match="is not detectable"):
             PolicyLQR.factory(system, state_cost, input_cost)
 
-    def test_state_cost_shape_mismatch_raises(self):
+    def test_state_cost_shape_mismatch_raises(
+        self, sys_dynamics: SystemDynamicsLinear
+    ):
         state_cost = jnp.eye(self.state_dim + 1)
         input_cost = jnp.eye(self.action_dim)
 
         with pytest.raises(ValueError, match="State dimension missmatch!"):
-            PolicyLQR.factory(self.sys_dynamics, state_cost, input_cost)
+            PolicyLQR.factory(sys_dynamics, state_cost, input_cost)
 
-    def test_input_cost_shape_mismatch_raises(self):
+    def test_input_cost_shape_mismatch_raises(
+        self, sys_dynamics: SystemDynamicsLinear
+    ):
         state_cost = jnp.eye(self.state_dim)
         input_cost = jnp.eye(self.action_dim + 1)
 
         with pytest.raises(ValueError, match="Input dimension missmatch!"):
-            PolicyLQR.factory(self.sys_dynamics, state_cost, input_cost)
+            PolicyLQR.factory(sys_dynamics, state_cost, input_cost)
 
     def test_dare_solver_outputs_valid_riccati_and_gain(self):
         state_matrix = jnp.array([[1.0, 1.0], [0.0, 1.0]])

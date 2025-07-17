@@ -84,14 +84,16 @@ class SystemCostsMuJoCo(SystemCostsBase):
         # Store original shape to restore it later
         original_shape = state.shape
         batch_shape = original_shape[:-1]
+        state_dim = state.shape[-1]
+        action_dim = action.shape[-1]
 
         # Handle single state-action pair
         if not batch_shape:
             return self._compute_single_cost(state, action)
 
         # Reshape to 2D for batch processing
-        state_flat = state.reshape(-1, self.state_dim)
-        action_flat = action.reshape(-1, self.action_dim)
+        state_flat = state.reshape(-1, state_dim)
+        action_flat = action.reshape(-1, action_dim)
 
         # Use vmap for batch processing
         cost_flat = jax.vmap(self._compute_single_cost)(state_flat, action_flat)
@@ -115,11 +117,11 @@ class SystemCostsMuJoCo(SystemCostsBase):
         data = mjx.make_data(self.model)
 
         # Extract qpos and qvel from state
-        qpos = state[: self.model.nq]
-        qvel = state[self.model.nq :]
+        qpos = jnp.asarray(state[: self.model.nq])
+        qvel = jnp.asarray(state[self.model.nq :])
 
-        # Set data
-        data = data.replace(qpos=qpos, qvel=qvel, ctrl=action)
+        # Set data - ensure arrays are JAX arrays
+        data = data.replace(qpos=qpos, qvel=qvel, ctrl=jnp.asarray(action))
 
         # Forward kinematics
         data = mjx.forward(self.model, data)

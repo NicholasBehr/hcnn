@@ -1,13 +1,19 @@
+from functools import partial
+
 import jax
 import jax.numpy as jnp
 import pytest
 from flax import struct
+from jax import test_util
 
 from hcnn.system_constraints import SystemConstraintsBase
 
 
 @struct.dataclass
 class SystemConstraintsMock(SystemConstraintsBase):
+    lower_bound: jax.Array
+    upper_bound: jax.Array
+
     @classmethod
     def factory(
         cls,
@@ -89,4 +95,25 @@ class TestSystemConstraintsBase:
             batch_size,
             horizon,
             sys_constraints.constraint_dim,
+        )
+
+    def test_call_jit(self, sys_constraints: SystemConstraintsBase):
+        key = jax.random.key(0)
+        state = jax.random.normal(key, (self.state_dim,))
+        action = jax.random.normal(key, (self.action_dim,))
+
+        jitted_call = jax.jit(lambda sc, s, a: sc(s, a))
+        next_state = jitted_call(sys_constraints, state, action)
+        assert next_state.shape == (sys_constraints.constraint_dim,)
+
+    def test_call_vjp(self, sys_constraints: SystemConstraintsBase):
+        key = jax.random.key(0)
+        state = jax.random.normal(key, (self.state_dim,))
+        action = jax.random.normal(key, (self.action_dim,))
+
+        test_util.check_vjp(
+            f=sys_constraints,
+            f_vjp=partial(jax.vjp, sys_constraints),
+            args=(state, action),
+            rtol=1 / 100,
         )

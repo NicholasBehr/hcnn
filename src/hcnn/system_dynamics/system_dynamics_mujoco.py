@@ -9,7 +9,7 @@ from hcnn.system_dynamics.system_dynamics_base import SystemDynamicsBase
 @struct.dataclass
 class SystemDynamicsMuJoCo(SystemDynamicsBase):
     mjx_model: mjx.Model
-    sim_per_control_step: int
+    sim_per_control_step: int = struct.field(pytree_node=False)
 
     @classmethod
     def factory(
@@ -55,14 +55,16 @@ class SystemDynamicsMuJoCo(SystemDynamicsBase):
         # Store original shape to restore it later
         original_shape = state.shape
         batch_shape = original_shape[:-1]
+        state_dim = state.shape[-1]
+        action_dim = action.shape[-1]
 
         # Handle single state-action pair
         if not batch_shape:
             return self._compute_single_step(state, action)
 
         # Reshape to 2D for batch processing
-        state_flat = state.reshape(-1, self.state_dim)
-        action_flat = action.reshape(-1, self.action_dim)
+        state_flat = state.reshape(-1, state_dim)
+        action_flat = action.reshape(-1, action_dim)
 
         # Use vmap for batch processing
         next_state_flat = jax.vmap(self._compute_single_step)(
@@ -70,7 +72,7 @@ class SystemDynamicsMuJoCo(SystemDynamicsBase):
         )
 
         # Reshape back to original batch shape
-        return next_state_flat.reshape(*batch_shape, self.state_dim)
+        return next_state_flat.reshape(*batch_shape, state_dim)
 
     def _compute_single_step(
         self, state: jax.Array, action: jax.Array

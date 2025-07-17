@@ -87,6 +87,8 @@ def build_sys_components(config):
         """
 
         model = mujoco.MjModel.from_xml_string(chaotic_pendulum)
+        model.opt.iterations = 10
+        model.opt.ls_iterations = 10
         mjx_model = mujoco.mjx.put_model(model)
 
         sys_dynamics = SystemDynamicsMuJoCo.factory(
@@ -543,7 +545,7 @@ if __name__ == "__main__":
         "projection_name": "no_substitution_no_terminal",
         "projection_horizon": 20,
         "projection_relaxation_penalty": 50,
-        "solver_name": "shallow",
+        "solver_name": "osqp",
         "solver_alpha": 1,
         "solver_sigma": 0.1,
         "solver_rho_equality": 0.4,

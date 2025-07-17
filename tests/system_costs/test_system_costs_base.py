@@ -1,7 +1,10 @@
+from functools import partial
+
 import jax
 import jax.numpy as jnp
 import pytest
 from flax import struct
+from jax import test_util
 
 from hcnn.system_costs import SystemCostsBase
 
@@ -55,4 +58,25 @@ class TestSystemCostBase:
         assert costs.shape == (
             batch_size,
             horizon,
+        )
+
+    def test_call_jit(self, sys_cost: SystemCostsBase):
+        key = jax.random.key(0)
+        state = jax.random.normal(key, (self.state_dim,))
+        action = jax.random.normal(key, (self.action_dim,))
+
+        jitted_call = jax.jit(lambda sc, s, a: sc(s, a))
+        next_state = jitted_call(sys_cost, state, action)
+        assert next_state.shape == ()
+
+    def test_call_vjp(self, sys_cost: SystemCostsBase):
+        key = jax.random.key(0)
+        state = jax.random.normal(key, (self.state_dim,))
+        action = jax.random.normal(key, (self.action_dim,))
+
+        test_util.check_vjp(
+            f=sys_cost,
+            f_vjp=partial(jax.vjp, sys_cost),
+            args=(state, action),
+            rtol=1 / 100,
         )

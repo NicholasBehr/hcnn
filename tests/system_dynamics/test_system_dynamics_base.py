@@ -1,6 +1,9 @@
+from functools import partial
+
 import jax
 import pytest
 from flax import struct
+from jax import test_util
 
 from hcnn.system_dynamics import SystemDynamicsBase
 
@@ -51,4 +54,25 @@ class TestSystemDynamicsBase:
             batch_size,
             horizon,
             sys_dynamics.state_dim,
+        )
+
+    def test_call_jit(self, sys_dynamics: SystemDynamicsBase):
+        key = jax.random.key(0)
+        state = jax.random.normal(key, (self.state_dim,))
+        action = jax.random.normal(key, (self.action_dim,))
+
+        jitted_call = jax.jit(lambda sc, s, a: sc(s, a))
+        next_state = jitted_call(sys_dynamics, state, action)
+        assert next_state.shape == (self.state_dim,)
+
+    def test_call_vjp(self, sys_dynamics: SystemDynamicsBase):
+        key = jax.random.key(0)
+        state = jax.random.normal(key, (self.state_dim,))
+        action = jax.random.normal(key, (self.action_dim,))
+
+        test_util.check_vjp(
+            f=sys_dynamics,
+            f_vjp=partial(jax.vjp, sys_dynamics),
+            args=(state, action),
+            rtol=1 / 100,
         )

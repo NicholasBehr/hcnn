@@ -1,6 +1,7 @@
 import os
 
 import matplotlib
+import mujoco
 
 matplotlib.use("Agg")
 from functools import partial
@@ -9,9 +10,9 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import optax
-import wandb
 from flax import nnx
 
+import wandb
 from hcnn.optimization import (
     OptimizationSolverBase,
     OptimizationSolverOSQP,
@@ -19,9 +20,9 @@ from hcnn.optimization import (
 )
 from hcnn.policy import PolicyBase, PolicyMLP
 from hcnn.projection import ProjectionBase, ProjectionNoSubsNoTerm
-from hcnn.system_constraints import SystemConstraintsBase, SystemConstraintsBox
-from hcnn.system_costs import SystemCostsBase, SystemCostsQuadratic
-from hcnn.system_dynamics import SystemDynamicsBase, SystemDynamicsLinear
+from hcnn.system_constraints import SystemConstraintsBox
+from hcnn.system_costs import SystemCostsMuJoCo, SystemCostsQuadratic
+from hcnn.system_dynamics import SystemDynamicsLinear, SystemDynamicsMuJoCo
 from hcnn.training.dropout_mlp import DropoutMLP
 from hcnn.training.loss_and_grad import LossAndGrad, ModelStates
 
@@ -34,34 +35,91 @@ opt_map = {
 }
 
 
-def build_system_dynamics(config) -> SystemDynamicsBase:
+def build_sys_components(config):
     if config.system_name == "double_integrator":
-        return SystemDynamicsLinear.factory(
+        sys_dynamics = SystemDynamicsLinear.factory(
             state_matrix=jnp.array([[1, 1], [0, 1]]),
             action_matrix=jnp.array([[0.5], [1]]),
         )
-    else:
-        raise ValueError(f"Unknown system: {config.system_name}")
-
-
-def build_system_costs(config) -> SystemCostsBase:
-    if config.system_name == "double_integrator":
-        return SystemCostsQuadratic.factory(
+        sys_costs = SystemCostsQuadratic.factory(
             state_cost_matrix=jnp.array([[5, 0], [0, 5]]),
             action_cost_matrix=jnp.array([[1]]),
         )
-    else:
-        raise ValueError(f"Unknown system: {config.system_name}")
-
-
-def build_system_constraints(config) -> SystemConstraintsBase:
-    if config.system_name == "double_integrator":
-        return SystemConstraintsBox.factory(
+        sys_constraints = SystemConstraintsBox.factory(
             state_l=jnp.array([-10, -10]),
             state_u=jnp.array([+10, +10]),
             action_l=jnp.array([-1]),
             action_u=jnp.array([+1]),
         )
+        return sys_dynamics, sys_costs, sys_constraints
+    elif config.system_name == "chaotic_pendulum":
+        chaotic_pendulum = r"""
+        <mujoco>
+        <option timestep=".01" integrator="RK4"/>
+
+        <default>
+            <joint type="hinge" axis="0 -1 0" limited="false" range="-150 150"/>
+            <geom type="capsule" size=".02" solref="-1 -1"/>
+        </default>
+
+        <worldbody>
+            <light pos="0 -.4 1"/>
+            <camera name="fixed" pos="0 -1.5 0" xyaxes="1 0 0 0 0 1"/>
+
+            <body name="red" pos="0 0 .2">
+                <joint name="root" />
+                <geom fromto="0 0 0 0 0 -.25" rgba="1 0 0 1"/>
+                <body name="green" pos="0 0 -.25">
+                    <joint/>
+                    <geom fromto="0 0 0 0 0 -.25" rgba="0 1 0 1"/>
+                    <body name="blue" pos="0 0 -.25">
+                        <joint/>
+                        <geom fromto="0 0 0 0 0 -.25" rgba="0 0 1 1"/>
+                    </body>
+                </body>
+            </body>
+        </worldbody>
+
+        <actuator>
+            <motor name="joint_motor" joint="root"/>
+        </actuator>
+        </mujoco>
+        """
+
+        model = mujoco.MjModel.from_xml_string(chaotic_pendulum)
+        mjx_model = mujoco.mjx.put_model(model)
+
+        sys_dynamics = SystemDynamicsMuJoCo.factory(
+            mjx_model=mjx_model,
+            control_timestep=0.01,
+        )
+        q_identity = jnp.array([1.0, 0.0, 0.0, 0.0])
+        q_swung_up = jnp.array([0.0, 0.0, 1.0, 0.0])
+        quaternion_ref = jnp.vstack(
+            [
+                q_identity,  # world body
+                q_swung_up,  # red link
+                q_swung_up,  # green link
+                q_swung_up,  # blue link
+            ]
+        )
+
+        sys_costs = SystemCostsMuJoCo.factory(
+            model=mjx_model,
+            cost_position=jnp.array([0.0, 0.0, 0.0, 0.0]),  # No position cost
+            cost_orientation=jnp.array(
+                [0.0, 1.0, 1.0, 1.0]
+            ),  # High orientation cost
+            position_reference=jnp.zeros((model.nbody, 3)),
+            quaternion_reference=quaternion_ref,
+        )
+        sys_constraints = SystemConstraintsBox.factory(
+            state_l=-jnp.inf * jnp.ones(sys_dynamics.state_dim),
+            state_u=jnp.inf * jnp.ones(sys_dynamics.state_dim),
+            action_l=-2 * jnp.ones(sys_dynamics.action_dim),
+            action_u=2 * jnp.ones(sys_dynamics.action_dim),
+        )
+        return sys_dynamics, sys_costs, sys_constraints
     else:
         raise ValueError(f"Unknown system: {config.system_name}")
 
@@ -270,9 +328,7 @@ def train(project=None, config=None):  # noqa: PLR0915 code is using wandb refer
         config = wandb.config
 
         # Build system model components
-        sys_dynamics = build_system_dynamics(config)
-        sys_costs = build_system_costs(config)
-        sys_constraints = build_system_constraints(config)
+        sys_dynamics, sys_costs, sys_constraints = build_sys_components(config)
 
         # Check consistency of dimensions
         state_dim = sys_dynamics.state_dim
@@ -468,7 +524,7 @@ if __name__ == "__main__":
     # This can be overridden by wandb.agent when running a sweep
     project = "double_integrator_3"
     config = {
-        "system_name": "double_integrator",
+        "system_name": "chaotic_pendulum",
         "seed": 0,
         "policy_name": "dropout_mlp",
         "policy_hidden_dim": 3,
@@ -569,16 +625,16 @@ if __name__ == "__main__":
         },
     }
 
-    # train(project=project, config=config)
+    train(project=project, config=config)
 
-    sweep_id = None  # Replace with your sweep ID if you have one
-    if sweep_id is None:
-        print("No sweep ID provided, creating sweep.")
-        sweep_id = wandb.sweep(sweep=sweep_configuration, project=project)
-        print(f"Sweep ID: {sweep_id}")
-    wandb.agent(
-        sweep_id=sweep_id,
-        function=train,
-        project=project,
-        count=50,
-    )
+    # sweep_id = None  # Replace with your sweep ID if you have one
+    # if sweep_id is None:
+    #     print("No sweep ID provided, creating sweep.")
+    #     sweep_id = wandb.sweep(sweep=sweep_configuration, project=project)
+    #     print(f"Sweep ID: {sweep_id}")
+    # wandb.agent(
+    #     sweep_id=sweep_id,
+    #     function=train,
+    #     project=project,
+    #     count=50,
+    # )

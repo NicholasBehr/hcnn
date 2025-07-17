@@ -28,6 +28,8 @@ class TestSystemDynamicsBase:
         assert isinstance(sys_dynamics, SystemDynamicsBase)
         assert isinstance(sys_dynamics.state_dim, int)
         assert isinstance(sys_dynamics.action_dim, int)
+        assert sys_dynamics.state_dim == self.state_dim
+        assert sys_dynamics.action_dim == self.action_dim
 
     def test_call_single(self, sys_dynamics: SystemDynamicsBase):
         key = jax.random.key(0)

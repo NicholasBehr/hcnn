@@ -41,44 +41,61 @@ class SystemDynamicsMuJoCo(SystemDynamicsBase):
         )
 
     def __call__(self, state: jax.Array, action: jax.Array) -> jax.Array:
-        def multi_step_fn(state: jax.Array, action: jax.Array) -> jax.Array:
-            """Simulates one state-action pair for sim_per_control_step."""
+        """Computes the next state given the current state and action.
 
-            def step_fn(data: mjx.Data, _) -> tuple[mjx.Data, None]:
-                """Helper function to step the simulation for one mjx.Data."""
-                return mjx.step(self.mjx_model, data), None
+        Uses vmap for efficient batch processing.
 
-            data = mjx.make_data(self.mjx_model)
-            data = data.replace(
-                qpos=state[: self.mjx_model.nq],
-                qvel=state[self.mjx_model.nq :],
-                ctrl=action,
-            )
+        Args:
+            state (jax.Array): Current state, shape (..., state_dim).
+            action (jax.Array): Current action, shape (..., action_dim).
 
-            data, _ = jax.lax.scan(
-                step_fn,
-                init=data,
-                xs=None,
-                length=self.sim_per_control_step,
-            )
-            return jnp.concatenate([data.qpos, data.qvel])
-
-        # Store original shape to restore it later.
+        Returns:
+            jax.Array: Next state, shape (..., state_dim).
+        """
+        # Store original shape to restore it later
         original_shape = state.shape
         batch_shape = original_shape[:-1]
 
-        # If there are no batch dimensions, just call the function.
+        # Handle single state-action pair
         if not batch_shape:
-            return multi_step_fn(state, action)
+            return self._compute_single_step(state, action)
 
-        # Reshape state and action to be 2D (batch_size, dim).
-        state_reshaped = state.reshape(-1, self.state_dim)
-        action_reshaped = action.reshape(-1, self.action_dim)
+        # Reshape to 2D for batch processing
+        state_flat = state.reshape(-1, self.state_dim)
+        action_flat = action.reshape(-1, self.action_dim)
 
-        # Vmap over the batch dimension.
-        next_state_reshaped = jax.vmap(multi_step_fn)(
-            state_reshaped, action_reshaped
+        # Use vmap for batch processing
+        next_state_flat = jax.vmap(self._compute_single_step)(
+            state_flat, action_flat
         )
 
-        # Reshape the output to the original batch shape.
-        return next_state_reshaped.reshape(*batch_shape, self.state_dim)
+        # Reshape back to original batch shape
+        return next_state_flat.reshape(*batch_shape, self.state_dim)
+
+    def _compute_single_step(
+        self, state: jax.Array, action: jax.Array
+    ) -> jax.Array:
+        """Simulates one state-action pair for sim_per_control_step steps.
+
+        Args:
+            state (jax.Array): Single state, shape (state_dim,).
+            action (jax.Array): Single action, shape (action_dim,).
+
+        Returns:
+            jax.Array: Next state, shape (state_dim,).
+        """
+
+        data = mjx.make_data(self.mjx_model)
+        data = data.replace(
+            qpos=state[: self.mjx_model.nq],
+            qvel=state[self.mjx_model.nq :],
+            ctrl=action,
+        )
+
+        data, _ = jax.lax.scan(
+            lambda data, _: (mjx.step(self.mjx_model, data), None),
+            init=data,
+            xs=None,
+            length=self.sim_per_control_step,
+        )
+        return jnp.concatenate([data.qpos, data.qvel])

@@ -22,6 +22,8 @@ class TestSystemDynamicsLinear(TestSystemDynamicsBase):
 
     def test_instance_creation_linear(self, sys_dynamics: SystemDynamicsLinear):
         assert isinstance(sys_dynamics, SystemDynamicsLinear)
+        assert sys_dynamics.state_dim == self.state_dim
+        assert sys_dynamics.action_dim == self.action_dim
         assert sys_dynamics.state_matrix_transp.shape == (
             self.state_dim,
             self.state_dim,

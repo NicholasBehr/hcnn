@@ -29,6 +29,8 @@ class TestSystemCostBase:
         assert isinstance(sys_cost, SystemCostsBase)
         assert isinstance(sys_cost.state_dim, int)
         assert isinstance(sys_cost.action_dim, int)
+        assert sys_cost.state_dim == self.state_dim
+        assert sys_cost.action_dim == self.action_dim
 
     def test_call_single(self, sys_cost: SystemCostsBase):
         key = jax.random.key(0)

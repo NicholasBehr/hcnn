@@ -94,50 +94,6 @@ class ProjectionNoSubsNoTerm(ProjectionBase):
         _, unravel_pytree = flatten_util.ravel_pytree(template)
         return unravel_pytree(x)
 
-    def get_x0(
-        self, phi_d: ProjectionPhiD, phi_nd: ProjectionPhiND
-    ) -> jax.Array:
-        policy = nnx.merge(
-            self.policy_graphdef, phi_d.policy_params, phi_nd.policy_non_params
-        )
-
-        @nnx.scan(
-            in_axes=(None, None, nnx.Carry, None),
-            out_axes=(nnx.Carry, 0),
-            length=self.horizon,
-        )
-        def next_state_action_row(policy, sys_dynamics, state, jax_key):
-            action = policy(state, jax_key=jax_key)
-            next_state = sys_dynamics(state, action)
-            out = (
-                action,
-                state,
-            )
-            return next_state, out
-
-        _, (actions, states) = next_state_action_row(
-            policy=policy,
-            sys_dynamics=self.sys_dynamics,
-            state=phi_nd.initial_state,
-            jax_key=phi_nd.jax_key,
-        )
-        constraint_values = self.sys_constraints(states, actions)
-        relaxations_plus = jnp.maximum(
-            0.0, self.sys_constraints.lower_bound - constraint_values
-        )
-        relaxations_minus = jnp.maximum(
-            0.0, constraint_values - self.sys_constraints.upper_bound
-        )
-        rollout = Rollout(
-            states=states,
-            actions=actions,
-            interventions=jnp.zeros((self.horizon, self.action_dim)),
-            relaxations_plus=relaxations_plus,
-            relaxations_minus=relaxations_minus,
-        )
-
-        return flatten_util.ravel_pytree(rollout)[0]
-
     def constraint_fn(
         self, x: jax.Array, phi_d: ProjectionPhiD, phi_nd: ProjectionPhiND
     ) -> jax.Array:

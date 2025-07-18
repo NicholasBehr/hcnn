@@ -156,13 +156,6 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
             + h_vjp(variables.y)[0]
         )
 
-        jax.debug.print(
-            "iter: {iter}, Primal residuals: {primal_residuals}, Dual residuals: {dual_residuals}",
-            iter=variables.iter_counter,
-            primal_residuals=primal_residuals,
-            dual_residuals=dual_residuals,
-        )
-
         return variables.replace(
             primal_residuals=primal_residuals,
             dual_residuals=dual_residuals,

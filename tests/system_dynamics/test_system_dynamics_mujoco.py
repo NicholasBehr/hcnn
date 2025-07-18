@@ -9,23 +9,41 @@ from .test_system_dynamics_base import TestSystemDynamicsBase
 
 class TestSystemDynamicsMuJoCo(TestSystemDynamicsBase):
     control_timestep: float = 0.1
-    state_dim: int = 13
-    action_dim: int = 3
+    state_dim: int = 6
+    action_dim: int = 1
 
     model_xml = r"""
         <mujoco>
-            <option timestep="0.02"/>
-            <worldbody>
-                <body>
-                <freejoint name="freejoint"/>
-                <geom size=".15" mass="1" type="sphere"/>
+        <option timestep=".1">
+            <flag contact="disable"/>
+        </option>
+
+        <default>
+            <joint type="hinge" axis="0 -1 0" limited="false" range="-150 150"/>
+            <geom type="capsule" size=".02" solref="-1 -1"/>
+        </default>
+
+        <worldbody>
+            <light pos="0 -.4 1"/>
+            <camera name="fixed" pos="0 -1.5 0" xyaxes="1 0 0 0 0 1"/>
+
+            <body name="red" pos="0 0 .2">
+                <joint name="root" />
+                <geom fromto="0 0 0 0 0 -.25" rgba="1 0 0 1"/>
+                <body name="green" pos="0 0 -.25">
+                    <joint/>
+                    <geom fromto="0 0 0 0 0 -.25" rgba="0 1 0 1"/>
+                    <body name="blue" pos="0 0 -.25">
+                        <joint/>
+                        <geom fromto="0 0 0 0 0 -.25" rgba="0 0 1 1"/>
+                    </body>
                 </body>
-            </worldbody>
-            <actuator>
-                <motor joint="freejoint" gear="0 0 0 1 0 0"/>
-                <motor joint="freejoint" gear="0 0 0 0 1 0"/>
-                <motor joint="freejoint" gear="0 0 0 0 0 1"/>
-            </actuator>
+            </body>
+        </worldbody>
+
+        <actuator>
+            <motor name="joint_motor" joint="root"/>
+        </actuator>
         </mujoco>
         """
 
@@ -41,7 +59,7 @@ class TestSystemDynamicsMuJoCo(TestSystemDynamicsBase):
 
     def test_instance_creation_mujoco(self, sys_dynamics: SystemDynamicsMuJoCo):
         assert isinstance(sys_dynamics, SystemDynamicsMuJoCo)
-        assert sys_dynamics.sim_per_control_step == 5
+        assert sys_dynamics.sim_per_control_step == 1
 
     def test_invalid_control_timestep(self):
         model = mujoco.MjModel.from_xml_string(self.model_xml)
@@ -55,11 +73,9 @@ class TestSystemDynamicsMuJoCo(TestSystemDynamicsBase):
     def test_call_example_single(self, sys_dynamics: SystemDynamicsMuJoCo):
         model = mujoco.MjModel.from_xml_string(self.model_xml)
         data = mujoco.MjData(model)
-        data.qpos = jnp.ones(model.nq)
-        data.qvel = jnp.ones(model.nv)
 
         state = jnp.concatenate([data.qpos, data.qvel])
-        action = jnp.array([0.1, 0.25, 0.3])
+        action = jnp.array([0.1])
         data.ctrl = action
 
         for _ in range(sys_dynamics.sim_per_control_step):
@@ -67,4 +83,5 @@ class TestSystemDynamicsMuJoCo(TestSystemDynamicsBase):
 
         next_state_ref = jnp.concatenate([data.qpos, data.qvel])
         next_state = sys_dynamics(state, action)
+
         assert jnp.allclose(next_state, next_state_ref)

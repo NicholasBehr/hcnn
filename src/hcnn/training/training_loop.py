@@ -55,11 +55,15 @@ def build_sys_components(config):
     elif config.system_name == "chaotic_pendulum":
         chaotic_pendulum = r"""
         <mujoco>
-        <option timestep=".01" integrator="RK4"/>
+        <option
+            timestep=".02"
+            solver="CG" iterations="50" ls_iterations="5" tolerance="1e-4">
+            <flag contact="disable"/>
+        </option>
 
         <default>
             <joint type="hinge" axis="0 -1 0" limited="false" range="-150 150"/>
-            <geom type="capsule" size=".02" solref="-1 -1"/>
+            <geom type="capsule" size=".02"/>
         </default>
 
         <worldbody>
@@ -87,13 +91,11 @@ def build_sys_components(config):
         """
 
         model = mujoco.MjModel.from_xml_string(chaotic_pendulum)
-        model.opt.iterations = 10
-        model.opt.ls_iterations = 10
         mjx_model = mujoco.mjx.put_model(model)
 
         sys_dynamics = SystemDynamicsMuJoCo.factory(
             mjx_model=mjx_model,
-            control_timestep=0.01,
+            control_timestep=0.1,
         )
         q_identity = jnp.array([1.0, 0.0, 0.0, 0.0])
         q_swung_up = jnp.array([0.0, 0.0, 1.0, 0.0])
@@ -108,10 +110,8 @@ def build_sys_components(config):
 
         sys_costs = SystemCostsMuJoCo.factory(
             model=mjx_model,
-            cost_position=jnp.array([0.0, 0.0, 0.0, 0.0]),  # No position cost
-            cost_orientation=jnp.array(
-                [0.0, 1.0, 1.0, 1.0]
-            ),  # High orientation cost
+            cost_position=jnp.array([0.0, 0.0, 0.0, 0.0]),
+            cost_orientation=jnp.array([0.0, 1.0, 1.0, 1.0]),
             position_reference=jnp.zeros((model.nbody, 3)),
             quaternion_reference=quaternion_ref,
         )
@@ -543,14 +543,14 @@ if __name__ == "__main__":
         "relax_to_go_dropout_rate": 0.0,
         "relax_to_go_activation": "leaky_relu",
         "projection_name": "no_substitution_no_terminal",
-        "projection_horizon": 20,
+        "projection_horizon": 5,
         "projection_relaxation_penalty": 50,
         "solver_name": "osqp",
         "solver_alpha": 1,
         "solver_sigma": 0.1,
         "solver_rho_equality": 0.4,
         "solver_rho_inequality": 1.5,
-        "solver_max_iter": 1e5,
+        "solver_max_iter": 10,
         "solver_tol": 1e-3,
         "optimizer_policy_name": "adamw",
         "optimizer_policy_learning_rate": 1e-1,
@@ -558,11 +558,11 @@ if __name__ == "__main__":
         "optimizer_cost_learning_rate": 1e-1,
         "optimizer_relax_name": "adamw",
         "optimizer_relax_learning_rate": 1e-1,
-        "batchsize": 32,
+        "batchsize": 1,
         "batches_per_epoch": 1,
         "td_gamma": 0.95,
         "gae_lambda": 0.99,
-        "epochs": 500,
+        "epochs": 5,
     }
 
     # Add this before your sweep_configuration definition:

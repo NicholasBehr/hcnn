@@ -4,6 +4,7 @@ from typing import Tuple
 import jax
 import jax.numpy as jnp
 from flax import nnx, struct
+from jax import flatten_util
 
 from hcnn.optimization import OptimizationProblemBase
 from hcnn.policy import PolicyBase
@@ -13,11 +14,11 @@ from hcnn.system_dynamics import SystemDynamicsBase
 
 @struct.dataclass
 class Rollout:
-    states: jax.Array
-    actions: jax.Array
-    interventions: jax.Array
-    relaxations_plus: jax.Array
-    relaxations_minus: jax.Array
+    states: jax.Array  # Shape: (horizon, state_dim)
+    actions: jax.Array  # Shape: (horizon, action_dim)
+    interventions: jax.Array  # Shape: (horizon, action_dim)
+    relaxations_plus: jax.Array  # Shape: (horizon, constraint_dim)
+    relaxations_minus: jax.Array  # Shape: (horizon, constraint_dim)
 
 
 @struct.dataclass
@@ -30,7 +31,7 @@ class ProjectionPhiD:
 class ProjectionPhiND:
     policy_non_params: nnx.State
     relax_to_go_non_params: nnx.State
-    initial_state: jax.Array
+    initial_state: jax.Array  # Shape: (state_dim,)
     jax_key: jax.Array
 
 
@@ -49,6 +50,50 @@ class ProjectionBase(OptimizationProblemBase[ProjectionPhiD, ProjectionPhiND]):
     @abstractmethod
     def x_to_rollout(self, x: jax.Array) -> Rollout:
         pass
+
+    def get_x0(
+        self, phi_d: ProjectionPhiD, phi_nd: ProjectionPhiND
+    ) -> jax.Array:
+        def next_state_action_row(input, jax_key):
+            policy_params, policy_non_params, state = input
+            policy = nnx.merge(
+                self.policy_graphdef, policy_params, policy_non_params
+            )
+            action = policy(state, jax_key=jax_key)
+            policy_params, policy_non_params = nnx.state(policy, nnx.Param, ...)
+
+            next_state = self.sys_dynamics(state, action)
+            next_input = (policy_params, policy_non_params, next_state)
+            output = (action, state)
+            return next_input, output
+
+        _, (actions, states) = jax.lax.scan(
+            next_state_action_row,
+            init=(
+                phi_d.policy_params,
+                phi_nd.policy_non_params,
+                phi_nd.initial_state,
+            ),
+            xs=jax.random.split(phi_nd.jax_key, self.horizon),
+            length=self.horizon,
+        )
+
+        constraint_values = self.sys_constraints(states, actions)
+        relaxations_plus = jnp.maximum(
+            0.0, self.sys_constraints.lower_bound - constraint_values
+        )
+        relaxations_minus = jnp.maximum(
+            0.0, constraint_values - self.sys_constraints.upper_bound
+        )
+        rollout = Rollout(
+            states=states,
+            actions=actions,
+            interventions=jnp.zeros((self.horizon, self.action_dim)),
+            relaxations_plus=relaxations_plus,
+            relaxations_minus=relaxations_minus,
+        )
+
+        return flatten_util.ravel_pytree(rollout)[0]
 
     # (1) initial state
     @staticmethod

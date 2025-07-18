@@ -74,6 +74,62 @@ class SystemDynamicsMuJoCo(SystemDynamicsBase):
         # Reshape back to original batch shape
         return next_state_flat.reshape(*batch_shape, state_dim)
 
+    def _normalize_quaternions(self, qpos: jax.Array) -> jax.Array:
+        """Normalize quaternions in qpos array for FREE and BALL joints.
+
+        Args:
+            qpos (jax.Array): Position coordinates array.
+
+        Returns:
+            jax.Array: qpos with normalized quaternions.
+        """
+        # Work with a copy to avoid modifying the input
+        normalized_qpos = jnp.array(qpos)
+
+        # Small tolerance to avoid division by zero
+        eps = 1e-8
+        # Default identity quaternion [w, x, y, z]
+        identity_quat = jnp.array([1.0, 0.0, 0.0, 0.0])
+
+        # Iterate through all joints to find quaternion positions
+        for i in range(self.mjx_model.njnt):
+            joint_type = self.mjx_model.jnt_type[i]
+
+            # FREE joint (type 0) has quaternion at positions [3:7]
+            # relative to joint start
+            # BALL joint (type 1) has quaternion at positions [0:4]
+            # relative to joint start
+            if joint_type == 0:  # FREE joint
+                # Skip 3 translation coords
+                quat_start = self.mjx_model.jnt_qposadr[i] + 3
+                quat_end = quat_start + 4
+                if quat_end <= len(qpos):
+                    quat = qpos[quat_start:quat_end]
+                    quat_norm = jnp.linalg.norm(quat)
+                    # Avoid division by zero and normalize
+                    quat_normalized = jnp.where(
+                        quat_norm > eps, quat / quat_norm, identity_quat
+                    )
+                    normalized_qpos = normalized_qpos.at[
+                        quat_start:quat_end
+                    ].set(quat_normalized)
+
+            elif joint_type == 1:  # BALL joint
+                quat_start = self.mjx_model.jnt_qposadr[i]
+                quat_end = quat_start + 4
+                if quat_end <= len(qpos):
+                    quat = qpos[quat_start:quat_end]
+                    quat_norm = jnp.linalg.norm(quat)
+                    # Avoid division by zero and normalize
+                    quat_normalized = jnp.where(
+                        quat_norm > eps, quat / quat_norm, identity_quat
+                    )
+                    normalized_qpos = normalized_qpos.at[
+                        quat_start:quat_end
+                    ].set(quat_normalized)
+
+        return normalized_qpos
+
     def _compute_single_step(
         self, state: jax.Array, action: jax.Array
     ) -> jax.Array:
@@ -88,8 +144,13 @@ class SystemDynamicsMuJoCo(SystemDynamicsBase):
         """
 
         data = mjx.make_data(self.mjx_model)
+
+        # Normalize quaternions in incoming state for numerical stability
+        qpos_input = state[: self.mjx_model.nq]
+        qpos_normalized = self._normalize_quaternions(qpos_input)
+
         data = data.replace(
-            qpos=state[: self.mjx_model.nq],
+            qpos=qpos_normalized,
             qvel=state[self.mjx_model.nq :],
             ctrl=action,
         )
@@ -100,4 +161,5 @@ class SystemDynamicsMuJoCo(SystemDynamicsBase):
             xs=None,
             length=self.sim_per_control_step,
         )
+
         return jnp.concatenate([data.qpos, data.qvel])

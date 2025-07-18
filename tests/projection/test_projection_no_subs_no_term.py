@@ -1,9 +1,11 @@
+import jax
 import jax.numpy as jnp
+import mujoco
 import pytest
+from flax import nnx
 
-from hcnn.projection.projection_no_subs_no_term import (
-    ProjectionNoSubsNoTerm,
-)
+from hcnn.projection import ProjectionNoSubsNoTerm, ProjectionPhiND
+from hcnn.system_dynamics import SystemDynamicsMuJoCo
 from tests.projection.test_projection_base import TestProjectionBase
 
 
@@ -17,65 +19,90 @@ class TestProjectionNoSubstitutionNoTerminal(TestProjectionBase):
         relax_to_go,
         sys_dynamics,
         sys_constraints,
-        horizon,
     ) -> ProjectionNoSubsNoTerm:
         return ProjectionNoSubsNoTerm.factory(
             policy=policy,
             relax_to_go=relax_to_go,
             sys_dynamics=sys_dynamics,
             sys_constraints=sys_constraints,
-            horizon=horizon,
+            horizon=self.horizon,
             relaxation_penalty=1.0,
         )
 
-    def test_get_x0(self):
-        x = self.projection.get_x0(self.phi_d, self.phi_nd)
-        rollout = self.projection.x_to_rollout(x)
 
-        # (1)
-        # !! assumption: no interventions, all contributed to relaxations for x0
-        assert jnp.allclose(rollout.interventions, 0)
+class TestProjectionNoSubstitutionNoTerminalMuJoCo(TestProjectionBase):
+    """Test class for ProjectionNoSubstitutionNoTerminal."""
 
-        # (2)
-        # ensure that the rollout satifies the constraints
-        # initial state
-        assert jnp.allclose(rollout.states[0], self.phi_nd.initial_state)
-        # conform to dynamics
-        assert jnp.allclose(
-            rollout.states[1:],
-            self.sys_dynamics(rollout.states[:-1], rollout.actions[:-1]),
-        )
-        # conform to policy
-        assert jnp.allclose(
-            rollout.actions,
-            self.policy(rollout.states, jax_key=self.phi_nd.jax_key)
-            + rollout.interventions,
-        )
-        # state and action constraints
-        constr_relax = (
-            self.sys_constraints(rollout.states, rollout.actions)
-            + rollout.relaxations_plus
-            - rollout.relaxations_minus
-        )
-        assert jnp.all(
-            self.sys_constraints.lower_bound[None, :] <= constr_relax
-        )
-        assert jnp.all(
-            constr_relax <= self.sys_constraints.upper_bound[None, :]
-        )
-        # ensure positive relaxations
-        assert jnp.all(rollout.relaxations_plus >= 0)
-        assert jnp.all(rollout.relaxations_minus >= 0)
+    control_timestep: float = 0.01
+    state_dim: int = 13
+    action_dim: int = 3
+    constraint_dim: int = 16
 
-    def test_constraint_fn(self):
-        x = self.projection.get_x0(self.phi_d, self.phi_nd)
-        constraints = self.projection.constraint_fn(x, self.phi_d, self.phi_nd)
+    model_xml = r"""
+        <mujoco>
+            <option timestep="0.01"/>
+            <worldbody>
+                <body>
+                <freejoint name="freejoint"/>
+                <geom size=".15" mass="1" type="sphere"/>
+                </body>
+            </worldbody>
+            <actuator>
+                <motor joint="freejoint" gear="0 0 0 1 0 0"/>
+                <motor joint="freejoint" gear="0 0 0 0 1 0"/>
+                <motor joint="freejoint" gear="0 0 0 0 0 1"/>
+            </actuator>
+        </mujoco>
+        """
 
-        desired_shape = (
-            self.state_dim
-            + (self.horizon - 1) * self.state_dim
-            + self.horizon * self.action_dim
-            + self.horizon * self.constraint_dim
-            + 2 * self.horizon * self.constraint_dim
+    @pytest.fixture
+    def sys_dynamics(self) -> SystemDynamicsMuJoCo:
+        model = mujoco.MjModel.from_xml_string(self.model_xml)
+        mjx_model = mujoco.mjx.put_model(model)
+
+        return SystemDynamicsMuJoCo.factory(
+            mjx_model=mjx_model,
+            control_timestep=self.control_timestep,
         )
-        assert constraints.shape == (desired_shape,)
+
+    @pytest.fixture
+    def projection(
+        self,
+        policy,
+        relax_to_go,
+        sys_dynamics,
+        sys_constraints,
+    ) -> ProjectionNoSubsNoTerm:
+        return ProjectionNoSubsNoTerm.factory(
+            policy=policy,
+            relax_to_go=relax_to_go,
+            sys_dynamics=sys_dynamics,
+            sys_constraints=sys_constraints,
+            horizon=self.horizon,
+            relaxation_penalty=1.0,
+        )
+
+    @pytest.fixture
+    def phi_nd(self, policy, relax_to_go) -> ProjectionPhiND:
+        return ProjectionPhiND(
+            policy_non_params=nnx.state(policy, nnx.Not(nnx.Param)),
+            relax_to_go_non_params=nnx.state(relax_to_go, nnx.Not(nnx.Param)),
+            initial_state=jnp.array(
+                [
+                    0.0,
+                    0.0,
+                    0.0,
+                    1.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                ]
+            ),
+            jax_key=jax.random.PRNGKey(0),
+        )

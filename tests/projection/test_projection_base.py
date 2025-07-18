@@ -1,13 +1,14 @@
+from functools import partial
+
 import jax
 import jax.numpy as jnp
 import pytest
 from flax import nnx, struct
-from jax import flatten_util
+from jax import test_util
 
 from hcnn.policy import PolicyBase
 from hcnn.projection import (
     ProjectionBase,
-    ProjectionNoSubsNoTerm,
     ProjectionPhiD,
     ProjectionPhiND,
     Rollout,
@@ -31,8 +32,8 @@ class ProjectionMock(ProjectionBase):
         sys_constraints,
         horizon,
     ) -> "ProjectionMock":
-        state_dim = sys_dynamics.state_dim
-        action_dim = sys_dynamics.action_dim
+        state_dim = sys_constraints.state_dim
+        action_dim = sys_constraints.action_dim
         constraint_dim = sys_constraints.constraint_dim
         policy_graphdef = nnx.split(policy)[0]
         relax_to_go_graphdef = nnx.split(relax_to_go)[0]
@@ -71,29 +72,6 @@ class ProjectionMock(ProjectionBase):
             sys_constraints=sys_constraints,
         )
 
-    def x_to_rollout(self, x: jax.Array):
-        # Mock implementation for testing purposes
-        return Rollout(
-            states=jnp.zeros((self.horizon, self.state_dim)),
-            actions=jnp.zeros((self.horizon, self.action_dim)),
-            interventions=jnp.zeros((self.horizon, self.action_dim)),
-            relaxations_plus=jnp.zeros((self.horizon, self.constraint_dim)),
-            relaxations_minus=jnp.zeros((self.horizon, self.constraint_dim)),
-        )
-
-    def get_x0(
-        self, phi_d: ProjectionPhiD, phi_nd: ProjectionPhiND
-    ) -> jax.Array:
-        # Mock implementation for testing purposes
-        rollout = Rollout(
-            states=jnp.zeros((self.horizon, self.state_dim)),
-            actions=jnp.zeros((self.horizon, self.action_dim)),
-            interventions=jnp.zeros((self.horizon, self.action_dim)),
-            relaxations_plus=jnp.zeros((self.horizon, self.constraint_dim)),
-            relaxations_minus=jnp.zeros((self.horizon, self.constraint_dim)),
-        )
-        return flatten_util.ravel_pytree(rollout)[0]
-
     def constraint_fn(
         self, x: jax.Array, phi_d: ProjectionPhiD, phi_nd: ProjectionPhiND
     ) -> jax.Array:
@@ -108,35 +86,50 @@ class ProjectionMock(ProjectionBase):
             )
         )
 
+    def x_to_rollout(self, x: jax.Array):
+        # Mock implementation for testing purposes
+        return Rollout(
+            states=jnp.zeros((self.horizon, self.state_dim)),
+            actions=jnp.zeros((self.horizon, self.action_dim)),
+            interventions=jnp.zeros((self.horizon, self.action_dim)),
+            relaxations_plus=jnp.zeros((self.horizon, self.constraint_dim)),
+            relaxations_minus=jnp.zeros((self.horizon, self.constraint_dim)),
+        )
+
 
 class TestProjectionBase:
     """Test class for ProjectionBase."""
 
+    state_dim: int = 3
+    action_dim: int = 2
+    constraint_dim: int = 5
+    horizon: int = 10
+
     @pytest.fixture
-    def policy(self, state_dim, action_dim) -> PolicyBase:
+    def policy(self) -> PolicyBase:
         return PolicyMock.factory(
-            state_dim=state_dim,
-            action_dim=action_dim,
+            state_dim=self.state_dim,
+            action_dim=self.action_dim,
         )
 
     @pytest.fixture
-    def sys_dynamics(self, state_dim, action_dim) -> SystemDynamicsBase:
+    def sys_dynamics(self) -> SystemDynamicsBase:
         return SystemDynamicsMock(
-            state_dim=state_dim,
-            action_dim=action_dim,
+            state_dim=self.state_dim,
+            action_dim=self.action_dim,
         )
 
     @pytest.fixture
-    def sys_constraints(self, state_dim, action_dim) -> SystemConstraintsBase:
+    def sys_constraints(self) -> SystemConstraintsBase:
         return SystemConstraintsMock.factory(
-            state_dim=state_dim,
-            action_dim=action_dim,
+            state_dim=self.state_dim,
+            action_dim=self.action_dim,
         )
 
     @pytest.fixture
-    def relax_to_go(self, state_dim):
+    def relax_to_go(self):
         return DropoutMLP(
-            layer_sizes=(state_dim, 64, 1),
+            layer_sizes=[self.state_dim, 64, 1],
             dropout_rate=0.1,
             rngs=nnx.Rngs(42),
         )
@@ -148,14 +141,13 @@ class TestProjectionBase:
         relax_to_go,
         sys_dynamics,
         sys_constraints,
-        horizon,
     ) -> ProjectionMock:
         return ProjectionMock.factory(
             policy=policy,
             relax_to_go=relax_to_go,
             sys_dynamics=sys_dynamics,
             sys_constraints=sys_constraints,
-            horizon=horizon,
+            horizon=self.horizon,
         )
 
     @pytest.fixture
@@ -170,159 +162,269 @@ class TestProjectionBase:
         )
 
     @pytest.fixture
-    def phi_nd(self, policy, relax_to_go, state_dim) -> ProjectionPhiND:
+    def phi_nd(self, policy, relax_to_go) -> ProjectionPhiND:
         return ProjectionPhiND(
             policy_non_params=nnx.state(policy, nnx.Not(nnx.Param)),
             relax_to_go_non_params=nnx.state(relax_to_go, nnx.Not(nnx.Param)),
-            initial_state=jnp.zeros(state_dim),
+            initial_state=jnp.zeros(self.state_dim),
             jax_key=jax.random.PRNGKey(0),
         )
 
-    @pytest.fixture(autouse=True)
-    def setup(  # noqa: PLR0913 test fixtures
-        self,
-        policy: PolicyBase,
-        sys_dynamics: SystemDynamicsBase,
-        sys_constraints: SystemConstraintsBase,
-        projection: ProjectionNoSubsNoTerm,
-        phi_d: ProjectionPhiD,
-        phi_nd: ProjectionPhiND,
-    ):
-        self.state_dim = projection.state_dim
-        self.action_dim = projection.action_dim
-        self.constraint_dim = projection.constraint_dim
-        self.horizon = projection.horizon
-        self.policy = policy
-        self.sys_dynamics = sys_dynamics
-        self.sys_constraints = sys_constraints
-        self.projection = projection
-        self.phi_d = phi_d
-        self.phi_nd = phi_nd
+    def test_initial_state_constraints(self, projection, phi_d, phi_nd):
+        # Setup
+        x = projection.get_x0(phi_d, phi_nd)
+        rollout = projection.x_to_rollout(x)
 
-    def test_problem(self):
-        x = self.projection.get_x0(self.phi_d, self.phi_nd)
-        assert self.projection.cost_quad_diag.shape == x.shape
-        assert self.projection.cost_linear.shape == x.shape
+        # Check JIT call
+        constr = jax.jit(projection.constraints_initial_state)(
+            rollout, phi_nd.initial_state
+        ).block_until_ready()
+        constr_ref = rollout.states[0] - phi_nd.initial_state
+        assert jnp.allclose(constr, constr_ref)
 
-        c = self.projection.constraint_fn(x, self.phi_d, self.phi_nd)
-        assert self.projection.lower_bound.shape == c.shape
-        assert self.projection.upper_bound.shape == c.shape
-
-    def test_initial_state_constraints(self):
-        x = self.projection.get_x0(self.phi_d, self.phi_nd)
-        rollout = self.projection.x_to_rollout(x)
-
-        # Check initial state constraints
-        initial_state_constraints = self.projection.constraints_initial_state(
-            rollout, self.phi_nd.initial_state
-        )
-        ref_initial_state_constraints = (
-            rollout.states[0] - self.phi_nd.initial_state
+        # Check VJP
+        test_util.check_vjp(
+            f=projection.constraints_initial_state,
+            f_vjp=partial(jax.vjp, projection.constraints_initial_state),
+            args=(rollout, phi_nd.initial_state),
+            rtol=1 / 100,
         )
 
-        assert jnp.allclose(
-            initial_state_constraints, ref_initial_state_constraints
-        ), "Initial state constraints do not match expected values."
+        # Check JVP
+        test_util.check_jvp(
+            f=projection.constraints_initial_state,
+            f_jvp=partial(jax.jvp, projection.constraints_initial_state),
+            args=(rollout, phi_nd.initial_state),
+            rtol=1 / 100,
+        )
 
-        bounds_shape = self.projection.bounds_initial_state(self.state_dim)
+        # Check bounds call
+        bounds_shape = projection.bounds_initial_state(self.state_dim)
         assert bounds_shape[0].shape == bounds_shape[1].shape
-        assert initial_state_constraints.shape == bounds_shape[0].shape
+        assert constr.shape == bounds_shape[0].shape
 
-    def test_sys_dynamics_constraints(self):
-        x = self.projection.get_x0(self.phi_d, self.phi_nd)
-        rollout = self.projection.x_to_rollout(x)
+    def test_sys_dynamics_constraints(self, projection, phi_d, phi_nd):
+        # Setup
+        x = projection.get_x0(phi_d, phi_nd)
+        rollout = projection.x_to_rollout(x)
 
-        # Check system dynamics constraints
-        sys_dynamics_constraints = self.projection.constraints_sys_dynamics(
-            rollout, self.sys_dynamics
-        )
-        ref_sys_dynamics_constraints = (
+        # Check JIT call
+        constr = jax.jit(projection.constraints_sys_dynamics)(
+            rollout, projection.sys_dynamics
+        ).block_until_ready()
+        constr_ref = (
             rollout.states[1:]
-            - self.sys_dynamics(rollout.states[:-1], rollout.actions[:-1])
+            - projection.sys_dynamics(rollout.states[:-1], rollout.actions[:-1])
         ).ravel()
+        assert jnp.allclose(constr, constr_ref)
 
-        assert jnp.allclose(
-            sys_dynamics_constraints, ref_sys_dynamics_constraints
-        ), "System dynamics constraints do not match expected values."
+        # Capture nondiff params
+        captured = partial(
+            projection.constraints_sys_dynamics,
+            sys_dynamics=projection.sys_dynamics,
+        )
 
-        bounds_shape = self.projection.bounds_sys_dynamics(
+        # Check constraints VJP
+        test_util.check_vjp(
+            f=captured,
+            f_vjp=partial(jax.vjp, captured),
+            args=(rollout,),
+            rtol=1 / 100,
+        )
+
+        # Check constraints JVP
+        test_util.check_jvp(
+            f=captured,
+            f_jvp=partial(jax.jvp, captured),
+            args=(rollout,),
+            rtol=1 / 100,
+        )
+
+        # Check bounds call
+        bounds_shape = projection.bounds_sys_dynamics(
             self.horizon, self.state_dim
         )
         assert bounds_shape[0].shape == bounds_shape[1].shape
-        assert sys_dynamics_constraints.shape == bounds_shape[0].shape
+        assert constr.shape == bounds_shape[0].shape
 
-    def test_policy_constraints(self):
-        x = self.projection.get_x0(self.phi_d, self.phi_nd)
-        rollout = self.projection.x_to_rollout(x)
+    def test_policy_constraints(self, projection, phi_d, phi_nd, policy):
+        # Setup
+        x = projection.get_x0(phi_d, phi_nd)
+        rollout = projection.x_to_rollout(x)
 
-        # Check policy constraints
-        policy_constraints = self.projection.constraints_policy(
-            rollout, self.policy, self.phi_nd.jax_key
-        )
-        ref_policy_constraints = (
+        # Check JIT call
+        constr = jax.jit(projection.constraints_policy)(
+            rollout, policy, phi_nd.jax_key
+        ).block_until_ready()
+        constr_ref = (
             rollout.actions
-            - self.policy(rollout.states, jax_key=self.phi_nd.jax_key)
+            - policy(rollout.states, jax_key=phi_nd.jax_key)
             - rollout.interventions
         ).ravel()
+        assert jnp.allclose(constr, constr_ref)
 
-        assert jnp.allclose(policy_constraints, ref_policy_constraints), (
-            "Policy constraints do not match expected values."
+        # Capture nondiff params
+        captured = partial(
+            projection.constraints_policy,
+            policy=policy,
+            jax_key=phi_nd.jax_key,
         )
 
-        bounds_shape = self.projection.bounds_policy(
-            self.horizon, self.action_dim
+        # Check VJP
+        test_util.check_vjp(
+            f=captured,
+            f_vjp=partial(jax.vjp, captured),
+            args=(rollout,),
+            rtol=1 / 100,
         )
+
+        # Check JVP
+        test_util.check_jvp(
+            f=captured,
+            f_jvp=partial(jax.jvp, captured),
+            args=(rollout,),
+            rtol=1 / 100,
+        )
+
+        # Check bounds call
+        bounds_shape = projection.bounds_policy(self.horizon, self.action_dim)
         assert bounds_shape[0].shape == bounds_shape[1].shape
-        assert policy_constraints.shape == bounds_shape[0].shape
+        assert constr.shape == bounds_shape[0].shape
 
-    def test_sys_constraints(self):
-        x = self.projection.get_x0(self.phi_d, self.phi_nd)
-        rollout = self.projection.x_to_rollout(x)
+    def test_sys_constraints(self, projection, phi_d, phi_nd, sys_constraints):
+        # Setup
+        x = projection.get_x0(phi_d, phi_nd)
+        rollout = projection.x_to_rollout(x)
 
-        # Check system constraints
-        sys_constraints = self.projection.constraints_sys_constraints(
-            rollout, self.sys_constraints
-        )
-        ref_sys_constraints = (
-            self.sys_constraints(rollout.states, rollout.actions)
+        # Check JIT call
+        constr = jax.jit(projection.constraints_sys_constraints)(
+            rollout, sys_constraints
+        ).block_until_ready()
+        constr_ref = (
+            sys_constraints(rollout.states, rollout.actions)
             + rollout.relaxations_plus
             - rollout.relaxations_minus
         ).ravel()
-        assert jnp.allclose(sys_constraints, ref_sys_constraints), (
-            "System constraints do not match expected values."
+        assert jnp.allclose(constr, constr_ref)
+
+        # Check VJP
+        def constraint_fn(r):
+            return projection.constraints_sys_constraints(r, sys_constraints)
+
+        test_util.check_vjp(
+            f=constraint_fn,
+            f_vjp=partial(jax.vjp, constraint_fn),
+            args=(rollout,),
+            rtol=1 / 100,
         )
 
+        # Check JVP
+        test_util.check_jvp(
+            f=constraint_fn,
+            f_jvp=partial(jax.jvp, constraint_fn),
+            args=(rollout,),
+            rtol=1 / 100,
+        )
+
+        # Additional checks
         assert jnp.all(
-            self.sys_constraints.lower_bound[None, :]
-            <= sys_constraints.reshape(self.horizon, -1)
+            sys_constraints.lower_bound[None, :]
+            <= constr.reshape(self.horizon, -1)
         ), "Lower bound of system constraints not satisfied."
         assert jnp.all(
-            sys_constraints.reshape(self.horizon, -1)
-            <= self.sys_constraints.upper_bound[None, :]
+            constr.reshape(self.horizon, -1)
+            <= sys_constraints.upper_bound[None, :]
         ), "Upper bound of system constraints not satisfied."
 
-        bounds_shape = self.projection.bounds_sys_constraints(
-            self.horizon, self.sys_constraints
+        # Check bounds call
+        bounds_shape = projection.bounds_sys_constraints(
+            self.horizon, sys_constraints
         )
         assert bounds_shape[0].shape == bounds_shape[1].shape
-        assert sys_constraints.shape == bounds_shape[0].shape
+        assert constr.shape == bounds_shape[0].shape
 
-    def test_non_neg_relaxations(self):
-        x = self.projection.get_x0(self.phi_d, self.phi_nd)
-        rollout = self.projection.x_to_rollout(x)
+    def test_non_neg_relaxations(self, projection, phi_d, phi_nd):
+        # Setup
+        x = projection.get_x0(phi_d, phi_nd)
+        rollout = projection.x_to_rollout(x)
 
-        non_neg_relax_constraints = self.projection.constraints_non_neg_relax(
+        # Check JIT call
+        constr = jax.jit(projection.constraints_non_neg_relax)(
             rollout
-        )
-        ref_non_neg_relax_constraints = jnp.concatenate(
+        ).block_until_ready()
+        constr_ref = jnp.concatenate(
             [rollout.relaxations_plus, rollout.relaxations_minus]
         ).ravel()
-        assert jnp.allclose(
-            non_neg_relax_constraints, ref_non_neg_relax_constraints
-        ), "Non-negative relaxations constraints do not match expected values."
+        assert jnp.allclose(constr, constr_ref)
 
-        bounds_shape = self.projection.bounds_non_neg_relax(
+        # Check VJP
+        test_util.check_vjp(
+            f=projection.constraints_non_neg_relax,
+            f_vjp=partial(jax.vjp, projection.constraints_non_neg_relax),
+            args=(rollout,),
+            rtol=1 / 100,
+        )
+
+        # Check JVP
+        test_util.check_jvp(
+            f=projection.constraints_non_neg_relax,
+            f_jvp=partial(jax.jvp, projection.constraints_non_neg_relax),
+            args=(rollout,),
+            rtol=1 / 100,
+        )
+
+        # Check bounds call
+        bounds_shape = projection.bounds_non_neg_relax(
             self.horizon, self.constraint_dim
         )
         assert bounds_shape[0].shape == bounds_shape[1].shape
-        assert non_neg_relax_constraints.shape == bounds_shape[0].shape
+        assert constr.shape == bounds_shape[0].shape
+
+    def test_get_x0(self, projection, phi_d, phi_nd):
+        x = jax.jit(projection.get_x0)(phi_d, phi_nd).block_until_ready()
+        assert projection.cost_quad_diag.shape == x.shape
+        assert projection.cost_linear.shape == x.shape
+
+        captured = partial(projection.get_x0, phi_nd=phi_nd)
+
+        # Check VJP
+        test_util.check_vjp(
+            f=captured,
+            f_vjp=partial(jax.vjp, captured),
+            args=(phi_d,),
+            rtol=1 / 100,
+        )
+
+        # Check JVP
+        test_util.check_jvp(
+            f=captured,
+            f_jvp=partial(jax.jvp, captured),
+            args=(phi_d,),
+            rtol=1 / 100,
+        )
+
+    def test_constraint_fn(self, projection, phi_d, phi_nd):
+        x = projection.get_x0(phi_d, phi_nd)
+        c = jax.jit(projection.constraint_fn)(
+            x, phi_d, phi_nd
+        ).block_until_ready()
+        assert projection.lower_bound.shape == c.shape
+        assert projection.upper_bound.shape == c.shape
+
+        captured = partial(projection.constraint_fn, phi_nd=phi_nd)
+
+        # Check VJP
+        test_util.check_vjp(
+            f=captured,
+            f_vjp=partial(jax.vjp, captured),
+            args=(x, phi_d),
+            rtol=1 / 100,
+        )
+
+        # Check JVP
+        test_util.check_jvp(
+            f=captured,
+            f_jvp=partial(jax.jvp, captured),
+            args=(x, phi_d),
+            rtol=1 / 100,
+        )

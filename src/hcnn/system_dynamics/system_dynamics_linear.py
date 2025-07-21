@@ -42,6 +42,7 @@ class SystemDynamicsLinear(SystemDynamicsBase):
             action_matrix_transp=action_matrix.T,
         )
 
+    @jax.jit
     def __call__(self, state: jax.Array, action: jax.Array) -> jax.Array:
         state_dynamics = state @ self.state_matrix_transp
         action_dynamics = action @ self.action_matrix_transp

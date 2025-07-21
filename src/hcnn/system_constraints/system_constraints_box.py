@@ -54,6 +54,7 @@ class SystemConstraintsBox(SystemConstraintsBase):
             active_indices=active_indices,
         )
 
+    @jax.jit
     def __call__(self, state: jax.Array, action: jax.Array) -> jax.Array:
         full = jnp.concatenate([state, action], axis=-1)
         return full[..., self.active_indices]

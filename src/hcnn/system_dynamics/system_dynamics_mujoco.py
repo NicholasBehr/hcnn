@@ -40,6 +40,7 @@ class SystemDynamicsMuJoCo(SystemDynamicsBase):
             sim_per_control_step=sim_per_control_step,
         )
 
+    @jax.jit
     def __call__(self, state: jax.Array, action: jax.Array) -> jax.Array:
         """Computes the next state given the current state and action.
 
@@ -60,22 +61,25 @@ class SystemDynamicsMuJoCo(SystemDynamicsBase):
 
         # Handle single state-action pair
         if not batch_shape:
-            return self._compute_single_step(state, action)
+            return self._compute_single_step_normalized(state, action)
 
         # Reshape to 2D for batch processing
         state_flat = state.reshape(-1, state_dim)
         action_flat = action.reshape(-1, action_dim)
 
         # Use vmap for batch processing
-        next_state_flat = jax.vmap(self._compute_single_step)(
+        next_state_flat = jax.vmap(self._compute_single_step_normalized)(
             state_flat, action_flat
         )
 
         # Reshape back to original batch shape
         return next_state_flat.reshape(*batch_shape, state_dim)
 
+    @jax.jit
     def _normalize_quaternions(self, qpos: jax.Array) -> jax.Array:
         """Normalize quaternions in qpos array for FREE and BALL joints.
+
+        Optimized for JAX compilation by using vectorized operations.
 
         Args:
             qpos (jax.Array): Position coordinates array.
@@ -83,57 +87,44 @@ class SystemDynamicsMuJoCo(SystemDynamicsBase):
         Returns:
             jax.Array: qpos with normalized quaternions.
         """
-        # Work with a copy to avoid modifying the input
-        normalized_qpos = jnp.array(qpos)
+        # Identify joints with quaternions (FREE and BALL joints)
+        jnt_type = self.mjx_model.jnt_type
+        is_free_joint = jnt_type == 0  # mjx.mjtJoint.mjJNT_FREE
+        is_ball_joint = jnt_type == 1  # mjx.mjtJoint.mjJNT_BALL
+        has_quaternion = is_free_joint | is_ball_joint
 
-        # Small tolerance to avoid division by zero
+        # Determine the starting address of quaternions within qpos
+        # FREE joints have 3 positional DOFs before the 4 quaternion DOFs.
+        # BALL joints have 4 quaternion DOFs at the start.
+        qpos_addr = self.mjx_model.jnt_qposadr
+        quat_offset = jnp.where(is_free_joint, 3, 0)
+        quat_addr = qpos_addr + quat_offset
+
+        # Create indices for all 4 components of each quaternion
+        # Shape: (num_quaternions, 4)
+        indices = quat_addr[has_quaternion, None] + jnp.arange(4)
+
+        # Gather all quaternions from the qpos array
+        # Shape: (num_quaternions, 4)
+        quats = qpos[indices]
+
+        # Normalize the gathered quaternions
+        norm = jnp.linalg.norm(quats, axis=1, keepdims=True)
+        # Avoid division by zero for zero-norm quaternions
         eps = 1e-8
-        # Default identity quaternion [w, x, y, z]
-        identity_quat = jnp.array([1.0, 0.0, 0.0, 0.0])
+        norm = jnp.where(norm > eps, norm, 1.0)
+        normalized_quats = quats / norm
 
-        # Iterate through all joints to find quaternion positions
-        for i in range(self.mjx_model.njnt):
-            joint_type = self.mjx_model.jnt_type[i]
+        # Scatter the normalized quaternions back into the qpos array
+        return qpos.at[indices].set(normalized_quats)
 
-            # FREE joint (type 0) has quaternion at positions [3:7]
-            # relative to joint start
-            # BALL joint (type 1) has quaternion at positions [0:4]
-            # relative to joint start
-            if joint_type == 0:  # FREE joint
-                # Skip 3 translation coords
-                quat_start = self.mjx_model.jnt_qposadr[i] + 3
-                quat_end = quat_start + 4
-                if quat_end <= len(qpos):
-                    quat = qpos[quat_start:quat_end]
-                    quat_norm = jnp.linalg.norm(quat)
-                    # Avoid division by zero and normalize
-                    quat_normalized = jnp.where(
-                        quat_norm > eps, quat / quat_norm, identity_quat
-                    )
-                    normalized_qpos = normalized_qpos.at[
-                        quat_start:quat_end
-                    ].set(quat_normalized)
-
-            elif joint_type == 1:  # BALL joint
-                quat_start = self.mjx_model.jnt_qposadr[i]
-                quat_end = quat_start + 4
-                if quat_end <= len(qpos):
-                    quat = qpos[quat_start:quat_end]
-                    quat_norm = jnp.linalg.norm(quat)
-                    # Avoid division by zero and normalize
-                    quat_normalized = jnp.where(
-                        quat_norm > eps, quat / quat_norm, identity_quat
-                    )
-                    normalized_qpos = normalized_qpos.at[
-                        quat_start:quat_end
-                    ].set(quat_normalized)
-
-        return normalized_qpos
-
-    def _compute_single_step(
+    def _compute_single_step_normalized(
         self, state: jax.Array, action: jax.Array
     ) -> jax.Array:
-        """Simulates one state-action pair for sim_per_control_step steps.
+        """Optimized single step computation with quaternion normalization.
+
+        This method normalizes quaternions once at the beginning and relies on
+        mjx.step preserving unit quaternions, avoiding repeated normalization.
 
         Args:
             state (jax.Array): Single state, shape (state_dim,).
@@ -142,10 +133,9 @@ class SystemDynamicsMuJoCo(SystemDynamicsBase):
         Returns:
             jax.Array: Next state, shape (state_dim,).
         """
-
         data = mjx.make_data(self.mjx_model)
 
-        # Normalize quaternions in incoming state for numerical stability
+        # Normalize quaternions in incoming state once upfront
         qpos_input = state[: self.mjx_model.nq]
         qpos_normalized = self._normalize_quaternions(qpos_input)
 
@@ -155,6 +145,8 @@ class SystemDynamicsMuJoCo(SystemDynamicsBase):
             ctrl=action,
         )
 
+        # Use scan for multiple simulation steps
+        # mjx.step preserves unit quaternions
         data, _ = jax.lax.scan(
             lambda data, _: (mjx.step(self.mjx_model, data), None),
             init=data,

@@ -68,6 +68,7 @@ class SystemCostsMuJoCo(SystemCostsBase):
             quaternion_reference=quaternion_reference,
         )
 
+    @jax.jit
     def __call__(self, state: jax.Array, action: jax.Array) -> jax.Array:
         """Computes the cost given the current state and action.
 

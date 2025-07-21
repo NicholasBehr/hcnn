@@ -37,6 +37,7 @@ class SystemConstraintsNone(SystemConstraintsBase):
             upper_bound=jnp.array([], dtype=float_dtype),
         )
 
+    @jax.jit
     def __call__(self, state: jax.Array, action: jax.Array) -> jax.Array:
         """
         Evaluates the constraint function for an unconstrained system.

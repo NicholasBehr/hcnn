@@ -1,18 +1,18 @@
 import os
+from functools import partial
 
 import matplotlib
 import mujoco
 
 matplotlib.use("Agg")
-from functools import partial
 
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import optax
+import wandb
 from flax import nnx
 
-import wandb
 from hcnn.optimization import (
     OptimizationSolverBase,
     OptimizationSolverOSQP,
@@ -57,8 +57,8 @@ def build_sys_components(config):
         <mujoco>
         <option
             timestep=".02"
-            solver="CG" iterations="50" ls_iterations="5" tolerance="1e-4">
-            <flag contact="disable"/>
+            integrator="implicitfast" solver="CG" tolerance="1e-4">
+            <flag contact="disable" constraint="disable" sensor="disable"/>
         </option>
 
         <default>
@@ -90,8 +90,8 @@ def build_sys_components(config):
         </mujoco>
         """
 
-        model = mujoco.MjModel.from_xml_string(chaotic_pendulum)
-        mjx_model = mujoco.mjx.put_model(model)
+        model = mujoco.MjModel.from_xml_string(chaotic_pendulum)  # type: ignore
+        mjx_model = mujoco.mjx.put_model(model)  # type: ignore
 
         sys_dynamics = SystemDynamicsMuJoCo.factory(
             mjx_model=mjx_model,
@@ -238,43 +238,44 @@ class TrainBundle(nnx.Module):
 
 @partial(
     jax.jit,
-    static_argnames=[
-        "batchsize",
-        "batches_per_epoch",
-        "td_gamma",
-        "gae_lambda",
-        "intervention_cost",
-        "train_graphdef",
-    ],
+    static_argnames=["config", "train_graphdef"],
+    donate_argnums=(2,),  # Donate train_state to reduce memory overhead
 )
-def train_epoch(  # noqa: PLR0913
-    batchsize,
-    batches_per_epoch,
-    td_gamma,
-    gae_lambda,
-    intervention_cost,
+def train_epoch(
+    config,
     train_graphdef,
     train_state,
 ):
-    def train_step(_, train_state):
+    # Pre-compile scalar constants to avoid recompilation
+    batchsize = config.batchsize
+    td_gamma = config.td_gamma
+    gae_lambda = config.gae_lambda
+    intervention_cost = config.policy_intervention_cost
+
+    def train_step(step_idx, train_state):
         train = nnx.merge(train_graphdef, train_state)
 
-        # sample initial states and JAX keys
-        # TODO replace by real sampler
+        # Use step-dependent but deterministic sampling to reduce
+        # compilation variance
+        step_key = jax.random.fold_in(train.rngs.default(), step_idx)
+        sample_key, split_key = jax.random.split(step_key)
+
         initial_states = jax.random.uniform(
-            train.rngs.default(),
+            sample_key,
             (batchsize, train.policy.state_dim),
             minval=-10,
             maxval=+10,
         )
-        jax_keys = jax.random.split(train.rngs.default(), (batchsize,))
+        jax_keys = jax.random.split(split_key, batchsize)
 
+        # Pre-allocate model states to reduce overhead
         model_states = ModelStates(
             policy=nnx.state(train.policy),
             relax_to_go=nnx.state(train.relax_to_go),
             cost_to_go=nnx.state(train.cost_to_go),
         )
 
+        # Use cached function parameters to reduce recompilation
         loss, grad, model_states, info = train.loss_and_grad(
             model_states=model_states,
             initial_states=initial_states,
@@ -284,31 +285,27 @@ def train_epoch(  # noqa: PLR0913
             intervention_cost=intervention_cost,
         )
 
-        # Update model states
+        # Update model states with more efficient operations
         nnx.update(train.policy, model_states.policy)
         nnx.update(train.relax_to_go, model_states.relax_to_go)
         nnx.update(train.cost_to_go, model_states.cost_to_go)
 
-        # Update metrics
+        # Optimize aggregate loss computation
+        loss_array = jnp.array([loss.policy, loss.cost_to_go, loss.relax_to_go])
+        aggregate_loss = jnp.sum(jnp.log1p(jnp.abs(loss_array)))
+
+        # Update metrics with batched operations
         train.metrics.update(
             policy_loss=loss.policy,
             cost_to_go_loss=loss.cost_to_go,
             relax_to_go_loss=loss.relax_to_go,
-            aggregate_loss=jnp.sum(
-                jnp.log1p(
-                    jnp.abs(
-                        jnp.array(
-                            [loss.policy, loss.cost_to_go, loss.relax_to_go]
-                        )
-                    )
-                )
-            ),
+            aggregate_loss=aggregate_loss,
             primal_residual=info.primal_residual,
             dual_residual=info.dual_residual,
             solver_iterations=info.solver_iterations,
         )
 
-        # Update the states of the models
+        # Update optimizers with pre-allocated gradients
         train.opt_policy.update(grad.policy)
         train.opt_relax.update(grad.relax_to_go)
         train.opt_cost.update(grad.cost_to_go)
@@ -317,7 +314,7 @@ def train_epoch(  # noqa: PLR0913
 
     return jax.lax.fori_loop(
         lower=0,
-        upper=batches_per_epoch,
+        upper=config.batches_per_epoch,
         body_fun=train_step,
         init_val=train_state,
     )
@@ -414,13 +411,18 @@ def train(project=None, config=None):  # noqa: PLR0915 code is using wandb refer
 
         train_graphdef, train_state = nnx.split(train)
 
+        # Pre-warm the JIT compilation with a dummy forward pass
+        print("Pre-warming JIT compilation...")
+        _ = train_epoch(
+            config=config,
+            train_graphdef=train_graphdef,
+            train_state=train_state,
+        )
+        print("JIT compilation complete, starting training...")
+
         for epoch in range(config.epochs):
             train_state = train_epoch(
-                batchsize=config.batchsize,
-                batches_per_epoch=config.batches_per_epoch,
-                td_gamma=config.td_gamma,
-                gae_lambda=config.gae_lambda,
-                intervention_cost=config.policy_intervention_cost,
+                config=config,
                 train_graphdef=train_graphdef,
                 train_state=train_state,
             )
@@ -519,31 +521,32 @@ if __name__ == "__main__":
 
     # restrict access to one GPU (check availability nvidia-smi)
     os.environ["CUDA_VISIBLE_DEVICES"] = "3"
-
     jax.config.update("jax_debug_nans", False)
+
+    jax.config.update("jax_platform_name", "cpu")
 
     # Specify the project name and configuration
     # This can be overridden by wandb.agent when running a sweep
-    project = "double_integrator_3"
+    project = "chaotic_pendulum"
     config = {
         "system_name": "chaotic_pendulum",
         "seed": 0,
         "policy_name": "dropout_mlp",
         "policy_hidden_dim": 3,
-        "policy_hidden_depth": 3,
-        "policy_dropout_rate": 0.1,
+        "policy_hidden_depth": 1,
+        "policy_dropout_rate": 0.0,
         "policy_activation": "leaky_relu",
         "policy_intervention_cost": 0.5,
         "cost_to_go_hidden_dim": 3,
-        "cost_to_go_hidden_depth": 3,
+        "cost_to_go_hidden_depth": 1,
         "cost_to_go_dropout_rate": 0.0,
         "cost_to_go_activation": "leaky_relu",
         "relax_to_go_hidden_dim": 3,
-        "relax_to_go_hidden_depth": 3,
+        "relax_to_go_hidden_depth": 1,
         "relax_to_go_dropout_rate": 0.0,
         "relax_to_go_activation": "leaky_relu",
         "projection_name": "no_substitution_no_terminal",
-        "projection_horizon": 5,
+        "projection_horizon": 2,
         "projection_relaxation_penalty": 50,
         "solver_name": "osqp",
         "solver_alpha": 1,

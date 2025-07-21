@@ -72,6 +72,7 @@ class ProjectionMock(ProjectionBase):
             sys_constraints=sys_constraints,
         )
 
+    @jax.jit
     def constraint_fn(
         self, x: jax.Array, phi_d: ProjectionPhiD, phi_nd: ProjectionPhiND
     ) -> jax.Array:
@@ -86,6 +87,7 @@ class ProjectionMock(ProjectionBase):
             )
         )
 
+    @jax.jit
     def x_to_rollout(self, x: jax.Array):
         # Mock implementation for testing purposes
         return Rollout(

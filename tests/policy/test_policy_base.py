@@ -19,7 +19,7 @@ class PolicyMock(PolicyBase):
         return cls(
             state_dim=state_dim,
             action_dim=action_dim,
-            gain=nnx.Param(jax.random.normal(key, (state_dim, action_dim))),
+            gain=nnx.Param(jax.random.uniform(key, (state_dim, action_dim))),
         )
 
     def __call__(

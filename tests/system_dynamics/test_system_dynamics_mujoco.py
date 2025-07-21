@@ -14,13 +14,15 @@ class TestSystemDynamicsMuJoCo(TestSystemDynamicsBase):
 
     model_xml = r"""
         <mujoco>
-        <option timestep=".1">
-            <flag contact="disable"/>
+        <option
+            timestep=".02"
+            integrator="implicitfast" solver="CG" tolerance="1e-4">
+            <flag contact="disable" constraint="disable" sensor="disable"/>
         </option>
 
         <default>
             <joint type="hinge" axis="0 -1 0" limited="false" range="-150 150"/>
-            <geom type="capsule" size=".02" solref="-1 -1"/>
+            <geom type="capsule" size=".02"/>
         </default>
 
         <worldbody>
@@ -59,7 +61,7 @@ class TestSystemDynamicsMuJoCo(TestSystemDynamicsBase):
 
     def test_instance_creation_mujoco(self, sys_dynamics: SystemDynamicsMuJoCo):
         assert isinstance(sys_dynamics, SystemDynamicsMuJoCo)
-        assert sys_dynamics.sim_per_control_step == 1
+        assert sys_dynamics.sim_per_control_step == 5
 
     def test_invalid_control_timestep(self):
         model = mujoco.MjModel.from_xml_string(self.model_xml)

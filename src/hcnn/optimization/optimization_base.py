@@ -18,6 +18,7 @@ class OptimizationProblemBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
 
     ### INITIALIZATION ###
     # get initial guess for optimization variable x (vectorized 1d)
+    @jax.jit
     @abstractmethod
     def get_x0(self, phi_d: PhiTypeDiff, phi_nd: PhiTypeNoDiff) -> jax.Array:
         pass
@@ -29,6 +30,7 @@ class OptimizationProblemBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
 
     ### NONLINEAR PARAMETRIC CONSTRAINTS ###
     # l <= h(x, phi) <= u
+    @jax.jit
     @abstractmethod
     def constraint_fn(
         self, x: jax.Array, phi_d: PhiTypeDiff, phi_nd: PhiTypeNoDiff
@@ -181,6 +183,15 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
         phi_d: PhiTypeDiff,
         phi_nd: PhiTypeNoDiff,
     ) -> OptimizationVariables:
+        # jax.debug.print(
+        #     "Iteration {iter_counter}, "
+        #     "Primal Residual: {primal_residuals}, "
+        #     "Dual Residual: {dual_residuals}",
+        #     iter_counter=variables.iter_counter,
+        #     primal_residuals=variables.primal_residuals,
+        #     dual_residuals=variables.dual_residuals,
+        # )
+
         # Update primal and dual variables
         variables = self.update_primal_dual(
             variables=variables,

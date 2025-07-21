@@ -9,12 +9,27 @@ from hcnn.system_constraints import SystemConstraintsBase
 from hcnn.system_costs import SystemCostsBase
 from hcnn.system_dynamics import SystemDynamicsBase
 from hcnn.training.dropout_mlp import DropoutMLP
-from hcnn.training.loss_and_grad import LossAndGrad
+from hcnn.training.loss_and_grad import LossAndGrad, ModelStates
 from tests.policy import PolicyMock
 from tests.projection import ProjectionMock
 from tests.system_constraints import SystemConstraintsMock
 from tests.system_costs import SystemCostMock
 from tests.system_dynamics import SystemDynamicsMock
+
+
+@pytest.fixture
+def state_dim() -> int:
+    return 4
+
+
+@pytest.fixture
+def action_dim() -> int:
+    return 2
+
+
+@pytest.fixture
+def horizon() -> int:
+    return 20
 
 
 @pytest.fixture
@@ -416,10 +431,11 @@ def test_call_fwd(
     initial_states = jax.random.normal(keys[0], (batch_size, state_dim))
     jax_keys = jax.random.split(keys[1], batch_size)
 
-    model_states = dict()
-    model_states["policy"] = nnx.state(policy)
-    model_states["relax_to_go"] = nnx.state(relax_to_go)
-    model_states["cost_to_go"] = nnx.state(cost_to_go)
+    model_states = ModelStates(
+        policy=nnx.state(policy),
+        relax_to_go=nnx.state(relax_to_go),
+        cost_to_go=nnx.state(cost_to_go),
+    )
 
     loss, grad, model_states, info = loss_and_grad(
         model_states=model_states,

@@ -28,7 +28,7 @@ class SystemDynamicsContinuous(SystemDynamicsBase):
     integrator: Integrator = Integrator.Dopri5
 
     @abstractmethod
-    def continuous_dynamics(
+    def _continuous_dynamics(
         self, state: jax.Array, action: jax.Array
     ) -> jax.Array:
         """Abstract method for continuous dynamics dx/dt = f(x, u).
@@ -57,7 +57,7 @@ class SystemDynamicsContinuous(SystemDynamicsBase):
         """
 
         # Create ODE term
-        term = diffrax.ODETerm(lambda t, x, u: self.continuous_dynamics(x, u))
+        term = diffrax.ODETerm(lambda t, x, u: self._continuous_dynamics(x, u))
 
         # Set up integration
         t0 = 0.0

@@ -9,7 +9,6 @@ class SystemCostsBase(ABC):
     state_dim: int
     action_dim: int
 
-    @jax.jit
     @abstractmethod
     def __call__(self, state: jax.Array, action: jax.Array) -> jax.Array:
         """Computes the cost given the current state and action.

@@ -44,7 +44,6 @@ class SystemCostsQuadratic(SystemCostsBase):
             action_cost_matrix=action_cost_matrix,
         )
 
-    @jax.jit
     def __call__(self, state: jax.Array, action: jax.Array) -> jax.Array:
         state_cost = jnp.sum(
             (state @ self.state_cost_matrix) * state,

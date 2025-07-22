@@ -29,7 +29,6 @@ class SystemCostsMulti(SystemCostsBase):
             costs=tuple(costs),
         )
 
-    @jax.jit
     def __call__(self, state: jax.Array, action: jax.Array) -> jax.Array:
         total_cost = jnp.zeros(state.shape[:-1], dtype=state.dtype)
         for cost in self.costs:

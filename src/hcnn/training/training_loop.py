@@ -10,9 +10,9 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import optax
-import wandb
 from flax import nnx
 
+import wandb
 from hcnn.optimization import (
     OptimizationSolverBase,
     OptimizationSolverOSQP,

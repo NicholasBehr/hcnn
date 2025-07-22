@@ -9,9 +9,11 @@ from .test_system_dynamics_base import TestSystemDynamicsBase
 
 
 class SystemDynamicsContinuousMock(SystemDynamicsContinuous):
-    """Mock implementation for testing with simple harmonic oscillator dynamics."""
+    """
+    Mock implementation for testing with simple harmonic oscillator dynamics.
+    """
 
-    def continuous_dynamics(
+    def _continuous_dynamics(
         self, state: jax.Array, action: jax.Array
     ) -> jax.Array:
         """Simple harmonic oscillator: dx/dt = [v, -x + u]
@@ -77,7 +79,7 @@ class TestSystemDynamicsContinuous(TestSystemDynamicsBase):
         state = jax.random.normal(key, (sys_dynamics.state_dim,))
         action = jax.random.normal(key, (sys_dynamics.action_dim,))
 
-        derivative = sys_dynamics.continuous_dynamics(state, action)
+        derivative = sys_dynamics._continuous_dynamics(state, action)
         assert derivative.shape == state.shape
         assert derivative.shape == (sys_dynamics.state_dim,)
 
@@ -173,7 +175,7 @@ class TestSystemDynamicsContinuous(TestSystemDynamicsBase):
         class ExponentialDecayMock(SystemDynamicsContinuous):
             """Simple exponential decay: dx/dt = -k*x with k=2.0"""
 
-            def continuous_dynamics(
+            def _continuous_dynamics(
                 self, state: jax.Array, action: jax.Array
             ) -> jax.Array:
                 # Exponential decay: dx/dt = -k*x with k=2.0

@@ -65,8 +65,8 @@ class TestSystemCostBase:
         state = jax.random.normal(key, (self.state_dim,))
         action = jax.random.normal(key, (self.action_dim,))
 
-        jitted_call = jax.jit(lambda sc, s, a: sc(s, a), static_argnames=["sc"])
-        next_state = jitted_call(sys_cost, state, action)
+        jitted_call = jax.jit(lambda s, a: sys_cost(s, a))
+        next_state = jitted_call(state, action)
         assert next_state.shape == ()
 
     def test_call_vjp(self, sys_cost: SystemCostsBase):

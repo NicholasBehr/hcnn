@@ -34,7 +34,6 @@ class SystemConstraintsSphere(SystemConstraintsBase):
             center=center,
         )
 
-    @jax.jit
     def __call__(self, state: jax.Array, action: jax.Array) -> jax.Array:
         vector_to_center = state - self.center
         distance_squared = jnp.sum(vector_to_center**2, axis=-1, keepdims=True)

@@ -5,8 +5,9 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "diffrax>=0.7.0",
     "flax>=0.10.5",
-    "jax[cuda12]>=0.6.2",
+    "jax>=0.6.2", #jax[cuda12]
     "mujoco-mjx>=3.3.3",
     "wandb>=0.20.1",
 ]

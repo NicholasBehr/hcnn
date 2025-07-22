@@ -40,7 +40,6 @@ class SystemDynamicsMuJoCo(SystemDynamicsBase):
             sim_per_control_step=sim_per_control_step,
         )
 
-    @jax.jit
     def __call__(self, state: jax.Array, action: jax.Array) -> jax.Array:
         """Computes the next state given the current state and action.
 
@@ -75,7 +74,6 @@ class SystemDynamicsMuJoCo(SystemDynamicsBase):
         # Reshape back to original batch shape
         return next_state_flat.reshape(*batch_shape, state_dim)
 
-    @jax.jit
     def _normalize_quaternions(self, qpos: jax.Array) -> jax.Array:
         """Normalize quaternions in qpos array for FREE and BALL joints.
 

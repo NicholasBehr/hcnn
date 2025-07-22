@@ -85,6 +85,6 @@ class TestPolicyBase:
         key = jax.random.key(0)
         state = jax.random.normal(key, (self.state_dim,))
 
-        jitted_call = nnx.jit(lambda p, s: p(s))
+        jitted_call = nnx.jit(lambda p, s: p(s), static_argnames=["p"])
         action = jitted_call(policy, state)
         assert action.shape == (self.action_dim,)

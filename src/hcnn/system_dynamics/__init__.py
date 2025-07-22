@@ -1,3 +1,4 @@
 from .system_dynamics_base import SystemDynamicsBase
+from .system_dynamics_continuous import SystemDynamicsContinuous
 from .system_dynamics_linear import SystemDynamicsLinear
 from .system_dynamics_mujoco import SystemDynamicsMuJoCo

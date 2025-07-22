@@ -80,3 +80,15 @@ class TestSystemCostBase:
             args=(state, action),
             rtol=1 / 100,
         )
+
+    def test_call_jvp(self, sys_cost: SystemCostsBase):
+        key = jax.random.key(0)
+        state = jax.random.normal(key, (self.state_dim,))
+        action = jax.random.normal(key, (self.action_dim,))
+
+        test_util.check_jvp(
+            f=sys_cost,
+            f_jvp=partial(jax.jvp, sys_cost),
+            args=(state, action),
+            rtol=1 / 100,
+        )

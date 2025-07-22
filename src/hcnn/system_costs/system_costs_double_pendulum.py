@@ -80,7 +80,7 @@ class SystemCostsDoublePendulum(SystemCostsBase):
                 error_msg = "1D position weights must have shape (4,)"
                 assert position_weights.shape == (4,), error_msg
                 position_weight_matrix = jnp.diag(position_weights)
-            elif position_weights.ndim == 2:  # full matrix
+            elif position_weights.ndim == 2:  # full matrix  # noqa: PLR2004
                 shape = (4, 4)
                 error_msg = "2D position weights must have shape (4, 4)"
                 assert position_weights.shape == shape, error_msg
@@ -101,7 +101,7 @@ class SystemCostsDoublePendulum(SystemCostsBase):
                 error_msg = f"1D action weights must have shape ({action_dim},)"
                 assert action_weights.shape == (action_dim,), error_msg
                 action_cost_matrix = jnp.diag(action_weights)
-            elif action_weights.ndim == 2:  # full matrix
+            elif action_weights.ndim == 2:  # full matrix  # noqa: PLR2004
                 shape = (action_dim, action_dim)
                 error_msg = (
                     f"2D action weights must have shape "

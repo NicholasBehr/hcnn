@@ -15,18 +15,23 @@ class PolicyMLP(PolicyBase):
         cls,
         state_dim: int,
         action_dim: int,
-        hidden_layer_sizes: list[int],
-        dropout_rate: float = 0.0,
-        activation: str = "relu",
+        hidden_features: list[int],
         *,
         rngs: nnx.Rngs,
+        activation: str = "leaky_relu",
+        dropout_rate: float = 0.0,
+        periodic_states: frozenset[int] | None = None,
+        action_range: tuple[float, float] | None = None,
     ) -> "PolicyMLP":
-        layer_sizes = [state_dim] + hidden_layer_sizes + [action_dim]
         dropout_mlp = DropoutMLP(
-            layer_sizes=layer_sizes,
-            dropout_rate=dropout_rate,
-            activation=activation,
+            in_features=state_dim,
+            out_features=action_dim,
+            hidden_features=hidden_features,
             rngs=rngs,
+            activation=activation,
+            dropout_rate=dropout_rate,
+            periodic_in_features=periodic_states,
+            out_feature_range=action_range,
         )
         return PolicyMLP(
             state_dim=state_dim,

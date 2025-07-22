@@ -22,6 +22,7 @@ from hcnn.projection import ProjectionBase, ProjectionNoSubsNoTerm
 from hcnn.system_constraints import SystemConstraintsBox
 from hcnn.system_costs import SystemCostsDoublePendulum, SystemCostsQuadratic
 from hcnn.system_dynamics import (
+    Integrator,
     SystemDynamicsDoublePendulum,
     SystemDynamicsLinear,
 )
@@ -29,74 +30,116 @@ from hcnn.training.dropout_mlp import DropoutMLP
 from hcnn.training.loss_and_grad import LossAndGrad, ModelStates
 
 
-def build_sys_components(config):
-    if config.system_name == "double_integrator":
-        sys_dynamics = SystemDynamicsLinear.factory(
-            state_matrix=jnp.array([[1, 1], [0, 1]]),
-            action_matrix=jnp.array([[0.5], [1]]),
-        )
-        sys_costs = SystemCostsQuadratic.factory(
-            state_cost_matrix=jnp.array([[5, 0], [0, 5]]),
-            action_cost_matrix=jnp.array([[1]]),
-        )
-        sys_constraints = SystemConstraintsBox.factory(
-            state_l=jnp.array([-10, -10]),
-            state_u=jnp.array([+10, +10]),
-            action_l=jnp.array([-1]),
-            action_u=jnp.array([+1]),
-        )
-        return sys_dynamics, sys_costs, sys_constraints
-    elif config.system_name == "chaotic_pendulum":
-        sys_dynamics = SystemDynamicsDoublePendulum.factory()
-        sys_costs = SystemCostsDoublePendulum.factory(
-            dynamics=sys_dynamics,
-            reference_state=jnp.array([jnp.pi, 0.0, 0.0, 0.0]),
-        )
-        sys_constraints = SystemConstraintsBox.factory(
-            state_l=-jnp.inf * jnp.ones(sys_dynamics.state_dim),
-            state_u=jnp.inf * jnp.ones(sys_dynamics.state_dim),
-            action_l=-jnp.ones(sys_dynamics.action_dim),
-            action_u=jnp.ones(sys_dynamics.action_dim),
-        )
-        return sys_dynamics, sys_costs, sys_constraints
-    else:
-        raise ValueError(f"Unknown system: {config.system_name}")
-
-
-def build_policy(config, state_dim, action_dim, rngs) -> PolicyBase:
-    if config.policy_name == "dropout_mlp":
-        return PolicyMLP.factory(
-            state_dim=state_dim,
-            action_dim=action_dim,
-            hidden_layer_sizes=[config.policy_hidden_dim]
-            * config.policy_hidden_depth,
-            dropout_rate=config.policy_dropout_rate,
-            activation=config.policy_activation,
-            rngs=rngs,
-        )
-    else:
-        raise ValueError(f"Unknown system: {config.system_name}")
-
-
-def build_cost_to_go(config, state_dim, rngs) -> DropoutMLP:
-    return DropoutMLP(
-        layer_sizes=[state_dim]
-        + [config.cost_to_go_hidden_dim] * config.cost_to_go_hidden_depth
-        + [1],
-        dropout_rate=config.cost_to_go_dropout_rate,
-        activation=config.cost_to_go_activation,
+def build_double_integrator(config):
+    sys_dynamics = SystemDynamicsLinear.factory(
+        state_matrix=jnp.array([[1, 1], [0, 1]]),
+        action_matrix=jnp.array([[0.5], [1]]),
+    )
+    sys_costs = SystemCostsQuadratic.factory(
+        state_cost_matrix=jnp.array([[5, 0], [0, 5]]),
+        action_cost_matrix=jnp.array([[1]]),
+    )
+    action_range = (-1, +1)
+    sys_constraints = SystemConstraintsBox.factory(
+        state_l=jnp.array([-10, -10]),
+        state_u=jnp.array([+10, +10]),
+        action_l=jnp.array(action_range[0]),
+        action_u=jnp.array(action_range[1]),
+    )
+    rngs = nnx.Rngs(config.seed)
+    policy = PolicyMLP.factory(
+        state_dim=2,
+        action_dim=1,
+        hidden_features=[config.policy_hidden_dim] * config.policy_hidden_depth,
         rngs=rngs,
+        activation=config.policy_activation,
+        dropout_rate=config.policy_dropout_rate,
+        action_range=action_range,
+    )
+    cost_to_go = DropoutMLP(
+        in_features=2,
+        out_features=1,
+        hidden_features=[config.cost_to_go_hidden_dim]
+        * config.cost_to_go_hidden_depth,
+        rngs=rngs,
+        activation=config.cost_to_go_activation,
+        dropout_rate=config.cost_to_go_dropout_rate,
+    )
+    relax_to_go = DropoutMLP(
+        in_features=2,
+        out_features=1,
+        hidden_features=[config.relax_to_go_hidden_dim]
+        * config.relax_to_go_hidden_depth,
+        rngs=rngs,
+        activation=config.relax_to_go_activation,
+        dropout_rate=config.relax_to_go_dropout_rate,
+    )
+    return (
+        sys_dynamics,
+        sys_costs,
+        sys_constraints,
+        rngs,
+        policy,
+        cost_to_go,
+        relax_to_go,
     )
 
 
-def build_relax_to_go(config, state_dim, rngs) -> DropoutMLP:
-    return DropoutMLP(
-        layer_sizes=[state_dim]
-        + [config.relax_to_go_hidden_dim] * config.relax_to_go_hidden_depth
-        + [1],
-        dropout_rate=config.relax_to_go_dropout_rate,
-        activation=config.relax_to_go_activation,
+def build_double_pendulum(config):
+    sys_dynamics = SystemDynamicsDoublePendulum.factory(
+        dt=0.02, integrator=Integrator.Euler
+    )
+    sys_costs = SystemCostsDoublePendulum.factory(
+        dynamics=sys_dynamics,
+        reference_state=jnp.array([jnp.pi, 0.0, 0.0, 0.0]),
+    )
+    action_range = (-1, +1)
+    sys_constraints = SystemConstraintsBox.factory(
+        state_l=jnp.array([-jnp.inf, -jnp.inf, -3, -3]),
+        state_u=jnp.array([+jnp.inf, +jnp.inf, +3, +3]),
+        action_l=action_range[0] * jnp.ones(sys_dynamics.action_dim),
+        action_u=action_range[1] * jnp.ones(sys_dynamics.action_dim),
+    )
+    rngs = nnx.Rngs(config.seed)
+    periodic_states = frozenset({0, 1})  # Pendulum angles are periodic
+    policy = PolicyMLP.factory(
+        state_dim=4,
+        action_dim=1,
+        hidden_features=[config.policy_hidden_dim] * config.policy_hidden_depth,
         rngs=rngs,
+        activation=config.policy_activation,
+        dropout_rate=config.policy_dropout_rate,
+        periodic_states=periodic_states,
+        action_range=action_range,
+    )
+    cost_to_go = DropoutMLP(
+        in_features=4,
+        out_features=1,
+        hidden_features=[config.cost_to_go_hidden_dim]
+        * config.cost_to_go_hidden_depth,
+        rngs=rngs,
+        activation=config.cost_to_go_activation,
+        dropout_rate=config.cost_to_go_dropout_rate,
+        periodic_in_features=periodic_states,
+    )
+    relax_to_go = DropoutMLP(
+        in_features=4,
+        out_features=1,
+        hidden_features=[config.relax_to_go_hidden_dim]
+        * config.relax_to_go_hidden_depth,
+        rngs=rngs,
+        activation=config.relax_to_go_activation,
+        dropout_rate=config.relax_to_go_dropout_rate,
+        periodic_in_features=periodic_states,
+    )
+    return (
+        sys_dynamics,
+        sys_costs,
+        sys_constraints,
+        rngs,
+        policy,
+        cost_to_go,
+        relax_to_go,
     )
 
 
@@ -269,25 +312,24 @@ def train(project=None, config=None):  # noqa: PLR0915 code is using wandb refer
         # this config will be set by Sweep Controller
         config = wandb.config
 
-        # Build system model components
-        sys_dynamics, sys_costs, sys_constraints = build_sys_components(config)
+        system_builders = {
+            "double_integrator": build_double_integrator,
+            "double_pendulum": build_double_pendulum,
+        }
+        builder = system_builders.get(config.system_name)
 
-        # Check consistency of dimensions
-        state_dim = sys_dynamics.state_dim
-        action_dim = sys_dynamics.action_dim
-        assert state_dim == sys_costs.state_dim
-        assert action_dim == sys_costs.action_dim
-        assert state_dim == sys_constraints.state_dim
-        assert action_dim == sys_constraints.action_dim
+        if not builder:
+            raise ValueError(f"Unknown system: {config.system_name}")
 
-        rngs = nnx.Rngs(config.seed)
-
-        # Build the policy
-        policy = build_policy(config, state_dim, action_dim, rngs)
-
-        # Build the "to-go" estimators
-        cost_to_go = build_cost_to_go(config, state_dim, rngs)
-        relax_to_go = build_relax_to_go(config, state_dim, rngs)
+        (
+            sys_dynamics,
+            sys_costs,
+            sys_constraints,
+            rngs,
+            policy,
+            cost_to_go,
+            relax_to_go,
+        ) = builder(config)
 
         # Build the projection operator
         projection = build_projection_operator(
@@ -382,7 +424,7 @@ def train(project=None, config=None):  # noqa: PLR0915 code is using wandb refer
             if epoch % 10 == 0 or epoch == config.epochs - 1:
                 # Plot the model
                 samples_per_axis = 300
-                axis_samples = jnp.linspace(-14, 14, samples_per_axis)
+                axis_samples = jnp.linspace(-jnp.pi, jnp.pi, samples_per_axis)
                 x_coord, y_coord = jnp.meshgrid(
                     axis_samples,
                     axis_samples,
@@ -481,47 +523,55 @@ if __name__ == "__main__":
 
     jax.config.update("jax_platform_name", "cpu")
 
+    jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
+    jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
+    jax.config.update("jax_persistent_cache_min_compile_time_secs", 1)
+    jax.config.update(
+        "jax_persistent_cache_enable_xla_caches",
+        "xla_gpu_per_fusion_autotune_cache_dir",
+    )
+
     # Specify the project name and configuration
     # This can be overridden by wandb.agent when running a sweep
-    project = "chaotic_pendulum"
+    project = "double_pendulum"
     config = {
-        "system_name": "chaotic_pendulum",
+        "system_name": "double_pendulum",
         "seed": 0,
         "policy_name": "dropout_mlp",
-        "policy_hidden_dim": 3,
-        "policy_hidden_depth": 1,
-        "policy_dropout_rate": 0.0,
+        "policy_hidden_dim": 6,
+        "policy_hidden_depth": 5,
+        "policy_dropout_rate": 0.1,
         "policy_activation": "leaky_relu",
         "policy_intervention_cost": 0.5,
-        "cost_to_go_hidden_dim": 3,
-        "cost_to_go_hidden_depth": 1,
-        "cost_to_go_dropout_rate": 0.0,
+        "cost_to_go_hidden_dim": 5,
+        "cost_to_go_hidden_depth": 5,
+        "cost_to_go_dropout_rate": 0.1,
         "cost_to_go_activation": "leaky_relu",
-        "relax_to_go_hidden_dim": 3,
-        "relax_to_go_hidden_depth": 1,
-        "relax_to_go_dropout_rate": 0.0,
+        "relax_to_go_hidden_dim": 5,
+        "relax_to_go_hidden_depth": 5,
+        "relax_to_go_dropout_rate": 0.1,
         "relax_to_go_activation": "leaky_relu",
         "projection_name": "no_substitution_no_terminal",
-        "projection_horizon": 2,
-        "projection_relaxation_penalty": 50,
+        "projection_horizon": 15,
+        "projection_relaxation_penalty": 100,
         "solver_name": "osqp",
-        "solver_alpha": 1,
-        "solver_sigma": 0.1,
-        "solver_rho_equality": 0.4,
-        "solver_rho_inequality": 1.5,
-        "solver_max_iter": 1e3,
-        "solver_tol": 1e-3,
+        "solver_alpha": 0.25,
+        "solver_sigma": 0.25,
+        "solver_rho_equality": 0.1,
+        "solver_rho_inequality": 0.1,
+        "solver_max_iter": 500,
+        "solver_tol": 1e-4,
         "optimizer_policy_name": "adamw",
         "optimizer_policy_learning_rate": 1e-1,
         "optimizer_cost_name": "adamw",
         "optimizer_cost_learning_rate": 1e-1,
         "optimizer_relax_name": "adamw",
         "optimizer_relax_learning_rate": 1e-1,
-        "batchsize": 512,
-        "batches_per_epoch": 1,
+        "batchsize": 32,
+        "batches_per_epoch": 3,
         "td_gamma": 0.95,
-        "gae_lambda": 0.99,
-        "epochs": 5,
+        "gae_lambda": 0.9,
+        "epochs": 500,
     }
 
     sweep_configuration = {
@@ -529,7 +579,7 @@ if __name__ == "__main__":
         "metric": {"goal": "minimize", "name": "solver_iterations"},
         # "early_terminate": {"type": "hyperband", "min_iter": 20, "eta": 1.5},
         "parameters": {
-            "system_name": {"value": "double_integrator"},
+            "system_name": {"value": "double_pendulum"},
             "seed": {"value": 42},
             "policy_name": {"value": "dropout_mlp"},
             "policy_hidden_dim": {"value": 3},
@@ -540,16 +590,16 @@ if __name__ == "__main__":
             # Cost-to-go
             "cost_to_go_hidden_dim": {"value": 3},
             "cost_to_go_hidden_depth": {"value": 3},
-            "cost_to_go_dropout_rate": {"value": 0.0},
+            "cost_to_go_dropout_rate": {"value": 0.1},
             "cost_to_go_activation": {"value": "leaky_relu"},
             # Relax-to-go
             "relax_to_go_hidden_dim": {"value": 4},
             "relax_to_go_hidden_depth": {"value": 3},
-            "relax_to_go_dropout_rate": {"value": 0.0},
+            "relax_to_go_dropout_rate": {"value": 0.1},
             "relax_to_go_activation": {"value": "leaky_relu"},
             "projection_name": {"value": "no_substitution_no_terminal"},
-            "projection_horizon": {"value": 20},
-            "projection_relaxation_penalty": {"value": 50},
+            "projection_horizon": {"value": 10},
+            "projection_relaxation_penalty": {"value": 10},
             "solver_name": {"value": "shallow"},
             "solver_alpha": {"min": 0.1, "max": 1.9},
             "solver_sigma": {
@@ -567,7 +617,7 @@ if __name__ == "__main__":
                 "max": 2,
                 "min": 0.01,
             },
-            "solver_max_iter": {"value": 5e5},
+            "solver_max_iter": {"value": 2e3},
             "solver_tol": {"value": 1e-4},
             "optimizer_policy_name": {"value": "adamw"},
             "optimizer_policy_learning_rate": {"value": 1e-2},
@@ -575,11 +625,11 @@ if __name__ == "__main__":
             "optimizer_cost_learning_rate": {"value": 1e-2},
             "optimizer_relax_name": {"value": "adamw"},
             "optimizer_relax_learning_rate": {"value": 1e-2},
-            "batchsize": {"value": 32},
+            "batchsize": {"value": 5},
             "batches_per_epoch": {"value": 1},
             "td_gamma": {"value": 0.95},
             "gae_lambda": {"value": 0.99},
-            "epochs": {"value": 3},
+            "epochs": {"value": 1},
         },
     }
 

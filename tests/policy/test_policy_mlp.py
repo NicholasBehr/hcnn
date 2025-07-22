@@ -17,7 +17,7 @@ class TestPolicyMLP(TestPolicyBase):
         return PolicyMLP.factory(
             state_dim=self.state_dim,
             action_dim=self.action_dim,
-            hidden_layer_sizes=[5, 5],
+            hidden_features=[5, 5],
             dropout_rate=0.2,
             rngs=nnx.Rngs(key),
         )

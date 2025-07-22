@@ -3,7 +3,6 @@ from enum import Enum
 
 import diffrax
 import jax
-import jax.numpy as jnp
 from flax import struct
 
 from hcnn.system_dynamics.system_dynamics_base import SystemDynamicsBase
@@ -73,7 +72,7 @@ class SystemDynamicsContinuous(SystemDynamicsBase):
             self.integrator.value,
             t0=t0,
             t1=t1,
-            dt0=self.dt / 4,
+            dt0=self.dt,
             y0=y0,
             args=action,
             saveat=diffrax.SaveAt(t1=True),
@@ -83,8 +82,8 @@ class SystemDynamicsContinuous(SystemDynamicsBase):
         # Return the final state, preserving batch dimensions
         # solution.ys has shape (1, ..., state_dim), we want (..., state_dim)
         if solution.ys is None:
-            # Integration failed, return NaN array with same shape as state
-            return jnp.full_like(state, jnp.nan)
+            # Integration failed TODO: Handle this case more gracefully
+            return y0
         return solution.ys[0]
 
     def __call__(self, state: jax.Array, action: jax.Array) -> jax.Array:

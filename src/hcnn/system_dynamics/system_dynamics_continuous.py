@@ -25,7 +25,9 @@ class SystemDynamicsContinuous(SystemDynamicsBase):
     """
 
     dt: float
-    integrator: Integrator = Integrator.Dopri5
+    integrator: Integrator = struct.field(
+        pytree_node=False, default=Integrator.Dopri5
+    )
 
     @abstractmethod
     def _continuous_dynamics(
@@ -65,6 +67,7 @@ class SystemDynamicsContinuous(SystemDynamicsBase):
         y0 = state
 
         # Solve ODE
+        # Use DirectAdjoint to allow both forward and reverse mode autodiff
         solution = diffrax.diffeqsolve(
             term,
             self.integrator.value,
@@ -74,6 +77,7 @@ class SystemDynamicsContinuous(SystemDynamicsBase):
             y0=y0,
             args=action,
             saveat=diffrax.SaveAt(t1=True),
+            adjoint=diffrax.DirectAdjoint(),
         )
 
         # Return the final state, preserving batch dimensions

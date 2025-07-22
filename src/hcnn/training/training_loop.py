@@ -2,7 +2,6 @@ import os
 from functools import partial
 
 import matplotlib
-import mujoco
 
 matplotlib.use("Agg")
 
@@ -21,18 +20,13 @@ from hcnn.optimization import (
 from hcnn.policy import PolicyBase, PolicyMLP
 from hcnn.projection import ProjectionBase, ProjectionNoSubsNoTerm
 from hcnn.system_constraints import SystemConstraintsBox
-from hcnn.system_costs import SystemCostsMuJoCo, SystemCostsQuadratic
-from hcnn.system_dynamics import SystemDynamicsLinear, SystemDynamicsMuJoCo
+from hcnn.system_costs import SystemCostsDoublePendulum, SystemCostsQuadratic
+from hcnn.system_dynamics import (
+    SystemDynamicsDoublePendulum,
+    SystemDynamicsLinear,
+)
 from hcnn.training.dropout_mlp import DropoutMLP
 from hcnn.training.loss_and_grad import LossAndGrad, ModelStates
-
-opt_map = {
-    "adabelief": optax.adabelief,
-    "adagrad": optax.adagrad,
-    "adam": optax.adam,
-    "adamw": optax.adamw,
-    "nadamw": optax.nadamw,
-}
 
 
 def build_sys_components(config):
@@ -53,73 +47,16 @@ def build_sys_components(config):
         )
         return sys_dynamics, sys_costs, sys_constraints
     elif config.system_name == "chaotic_pendulum":
-        chaotic_pendulum = r"""
-        <mujoco>
-        <option
-            timestep=".02"
-            integrator="implicitfast" solver="CG" tolerance="1e-4">
-            <flag contact="disable" constraint="disable" sensor="disable"/>
-        </option>
-
-        <default>
-            <joint type="hinge" axis="0 -1 0" limited="false" range="-150 150"/>
-            <geom type="capsule" size=".02"/>
-        </default>
-
-        <worldbody>
-            <light pos="0 -.4 1"/>
-            <camera name="fixed" pos="0 -1.5 0" xyaxes="1 0 0 0 0 1"/>
-
-            <body name="red" pos="0 0 .2">
-                <joint name="root" />
-                <geom fromto="0 0 0 0 0 -.25" rgba="1 0 0 1"/>
-                <body name="green" pos="0 0 -.25">
-                    <joint/>
-                    <geom fromto="0 0 0 0 0 -.25" rgba="0 1 0 1"/>
-                    <body name="blue" pos="0 0 -.25">
-                        <joint/>
-                        <geom fromto="0 0 0 0 0 -.25" rgba="0 0 1 1"/>
-                    </body>
-                </body>
-            </body>
-        </worldbody>
-
-        <actuator>
-            <motor name="joint_motor" joint="root"/>
-        </actuator>
-        </mujoco>
-        """
-
-        model = mujoco.MjModel.from_xml_string(chaotic_pendulum)  # type: ignore
-        mjx_model = mujoco.mjx.put_model(model)  # type: ignore
-
-        sys_dynamics = SystemDynamicsMuJoCo.factory(
-            mjx_model=mjx_model,
-            control_timestep=0.1,
-        )
-        q_identity = jnp.array([1.0, 0.0, 0.0, 0.0])
-        q_swung_up = jnp.array([0.0, 0.0, 1.0, 0.0])
-        quaternion_ref = jnp.vstack(
-            [
-                q_identity,  # world body
-                q_swung_up,  # red link
-                q_swung_up,  # green link
-                q_swung_up,  # blue link
-            ]
-        )
-
-        sys_costs = SystemCostsMuJoCo.factory(
-            model=mjx_model,
-            cost_position=jnp.array([0.0, 0.0, 0.0, 0.0]),
-            cost_orientation=jnp.array([0.0, 1.0, 1.0, 1.0]),
-            position_reference=jnp.zeros((model.nbody, 3)),
-            quaternion_reference=quaternion_ref,
+        sys_dynamics = SystemDynamicsDoublePendulum.factory()
+        sys_costs = SystemCostsDoublePendulum.factory(
+            dynamics=sys_dynamics,
+            reference_state=jnp.array([jnp.pi, 0.0, 0.0, 0.0]),
         )
         sys_constraints = SystemConstraintsBox.factory(
             state_l=-jnp.inf * jnp.ones(sys_dynamics.state_dim),
             state_u=jnp.inf * jnp.ones(sys_dynamics.state_dim),
-            action_l=-2 * jnp.ones(sys_dynamics.action_dim),
-            action_u=2 * jnp.ones(sys_dynamics.action_dim),
+            action_l=-jnp.ones(sys_dynamics.action_dim),
+            action_u=jnp.ones(sys_dynamics.action_dim),
         )
         return sys_dynamics, sys_costs, sys_constraints
     else:
@@ -213,11 +150,17 @@ def build_loss_and_grad(
     )
 
 
-def build_optimizer(model, name, learning_rate):
-    if name in opt_map:
-        return nnx.Optimizer(model, opt_map[name](learning_rate=learning_rate))
-    else:
-        raise ValueError(f"Unknown optimizer: {name}")
+def build_optimizer(model, name: str, learning_rate):
+    optimizer_map = {
+        "adabelief": optax.adabelief,
+        "adagrad": optax.adagrad,
+        "adam": optax.adam,
+        "adamw": optax.adamw,
+        "nadamw": optax.nadamw,
+    }
+    return nnx.Optimizer(
+        model, optimizer_map[name](learning_rate=learning_rate)
+    )
 
 
 class TrainBundle(nnx.Module):
@@ -263,8 +206,8 @@ def train_epoch(
         initial_states = jax.random.uniform(
             sample_key,
             (batchsize, train.policy.state_dim),
-            minval=-10,
-            maxval=+10,
+            minval=-3,
+            maxval=+3,
         )
         jax_keys = jax.random.split(split_key, batchsize)
 
@@ -411,15 +354,6 @@ def train(project=None, config=None):  # noqa: PLR0915 code is using wandb refer
 
         train_graphdef, train_state = nnx.split(train)
 
-        # Pre-warm the JIT compilation with a dummy forward pass
-        print("Pre-warming JIT compilation...")
-        _ = train_epoch(
-            config=config,
-            train_graphdef=train_graphdef,
-            train_state=train_state,
-        )
-        print("JIT compilation complete, starting training...")
-
         for epoch in range(config.epochs):
             train_state = train_epoch(
                 config=config,
@@ -458,10 +392,32 @@ def train(project=None, config=None):  # noqa: PLR0915 code is using wandb refer
                 # Flatten the grid to create a list of states
                 # This is necessary for batch processing in JAX
                 # We stack the coordinates to create a 2D array of states
-                # Each row corresponds to a state (x, y)
-                states = jnp.stack(
-                    (x_coord.flatten(), y_coord.flatten()), axis=-1
-                )
+                # For 2D systems, use (x, y); for 4D systems, use (θ₁, θ₂, 0, 0)
+                state_dim_2d = 2
+                state_dim_4d = 4
+                if train.policy.state_dim == state_dim_2d:
+                    states = jnp.stack(
+                        (x_coord.flatten(), y_coord.flatten()), axis=-1
+                    )
+                elif train.policy.state_dim == state_dim_4d:
+                    # For double pendulum, visualize in (θ₁, θ₂) space
+                    # with zero velocities
+                    states = jnp.stack(
+                        (
+                            x_coord.flatten(),
+                            y_coord.flatten(),
+                            jnp.zeros_like(x_coord.flatten()),
+                            jnp.zeros_like(y_coord.flatten()),
+                        ),
+                        axis=-1,
+                    )
+                else:
+                    print(
+                        f"Skipping visualization for "
+                        f"{train.policy.state_dim}D state space"
+                    )
+                    continue
+
                 x = states[:, 0].reshape(samples_per_axis, samples_per_axis)
                 y = states[:, 1].reshape(samples_per_axis, samples_per_axis)
 
@@ -553,7 +509,7 @@ if __name__ == "__main__":
         "solver_sigma": 0.1,
         "solver_rho_equality": 0.4,
         "solver_rho_inequality": 1.5,
-        "solver_max_iter": 10,
+        "solver_max_iter": 1e3,
         "solver_tol": 1e-3,
         "optimizer_policy_name": "adamw",
         "optimizer_policy_learning_rate": 1e-1,
@@ -561,15 +517,12 @@ if __name__ == "__main__":
         "optimizer_cost_learning_rate": 1e-1,
         "optimizer_relax_name": "adamw",
         "optimizer_relax_learning_rate": 1e-1,
-        "batchsize": 1,
+        "batchsize": 512,
         "batches_per_epoch": 1,
         "td_gamma": 0.95,
         "gae_lambda": 0.99,
         "epochs": 5,
     }
-
-    # Add this before your sweep_configuration definition:
-    optimizer_keys = list(opt_map.keys())
 
     sweep_configuration = {
         "method": "bayes",

@@ -1,7 +1,6 @@
 import jax.numpy as jnp
 import pytest
 
-from hcnn.system_dynamics.system_dynamics_continuous import Integrator
 from hcnn.system_dynamics.system_dynamics_double_pendulum import (
     SystemDynamicsDoublePendulum,
 )
@@ -26,7 +25,6 @@ class TestSystemDynamicsDoublePendulum(TestSystemDynamicsBase):
             b1=0.1,
             b2=0.1,
             dt=0.01,
-            integrator=Integrator.Dopri5,
         )
 
     def test_instance_creation_double_pendulum(
@@ -44,7 +42,6 @@ class TestSystemDynamicsDoublePendulum(TestSystemDynamicsBase):
         assert sys_dynamics.b1 == 0.1
         assert sys_dynamics.b2 == 0.1
         assert sys_dynamics.dt == 0.01
-        assert isinstance(sys_dynamics.integrator, Integrator)
 
     def test_factory_validation(self):
         """Test that factory method validates parameters correctly."""
@@ -168,31 +165,6 @@ class TestSystemDynamicsDoublePendulum(TestSystemDynamicsBase):
 
         # Energy should decrease due to damping
         assert final_energy < initial_energy
-
-    def test_different_integrators(self):
-        """Test that different integrators work correctly."""
-        integrators = [Integrator.Euler, Integrator.Tsit5, Integrator.Dopri5]
-
-        state = jnp.array([0.1, 0.1, 0.0, 0.0])
-        action = jnp.array([0.0])
-
-        results = []
-        for integrator in integrators:
-            sys_dynamics = SystemDynamicsDoublePendulum.factory(
-                dt=0.01, integrator=integrator
-            )
-            next_state = sys_dynamics(state, action)
-            results.append(next_state)
-
-        # All integrators should produce finite results
-        for result in results:
-            assert jnp.all(jnp.isfinite(result))
-
-        # Results should be similar but not identical
-        for i in range(1, len(results)):
-            # Check that results are close but not exactly the same
-            assert not jnp.allclose(results[0], results[i], atol=1e-10)
-            assert jnp.allclose(results[0], results[i], rtol=0.1)
 
     def test_both_links_hanging_down(self, sys_dynamics):
         """Test Case 1: Both links hanging down (θ₁=0, θ₂=0)"""

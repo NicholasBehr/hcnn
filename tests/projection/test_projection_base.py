@@ -72,7 +72,6 @@ class ProjectionMock(ProjectionBase):
             sys_constraints=sys_constraints,
         )
 
-    @jax.jit
     def constraint_fn(
         self, x: jax.Array, phi_d: ProjectionPhiD, phi_nd: ProjectionPhiND
     ) -> jax.Array:
@@ -87,7 +86,6 @@ class ProjectionMock(ProjectionBase):
             )
         )
 
-    @jax.jit
     def x_to_rollout(self, x: jax.Array):
         # Mock implementation for testing purposes
         return Rollout(
@@ -131,8 +129,9 @@ class TestProjectionBase:
     @pytest.fixture
     def relax_to_go(self):
         return DropoutMLP(
-            layer_sizes=[self.state_dim, 64, 1],
-            dropout_rate=0.1,
+            in_features=self.state_dim,
+            out_features=1,
+            hidden_features=[64],
             rngs=nnx.Rngs(42),
         )
 

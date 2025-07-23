@@ -59,7 +59,9 @@ def sys_constraints(state_dim: int, action_dim: int) -> SystemConstraintsBase:
 @pytest.fixture
 def cost_to_go(state_dim: int) -> DropoutMLP:
     return DropoutMLP(
-        layer_sizes=[state_dim, 64, 1],
+        in_features=state_dim,
+        out_features=1,
+        hidden_features=[64],
         dropout_rate=0.1,
         rngs=nnx.Rngs(42),
     )
@@ -68,7 +70,9 @@ def cost_to_go(state_dim: int) -> DropoutMLP:
 @pytest.fixture
 def relax_to_go(state_dim: int) -> DropoutMLP:
     return DropoutMLP(
-        layer_sizes=[state_dim, 64, 1],
+        in_features=state_dim,
+        out_features=1,
+        hidden_features=[64],
         dropout_rate=0.1,
         rngs=nnx.Rngs(42),
     )

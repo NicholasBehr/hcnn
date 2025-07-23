@@ -22,7 +22,6 @@ from hcnn.projection import ProjectionBase, ProjectionNoSubsNoTerm
 from hcnn.system_constraints import SystemConstraintsBox
 from hcnn.system_costs import SystemCostsDoublePendulum, SystemCostsQuadratic
 from hcnn.system_dynamics import (
-    Integrator,
     SystemDynamicsDoublePendulum,
     SystemDynamicsLinear,
 )
@@ -86,9 +85,7 @@ def build_double_integrator(config):
 
 
 def build_double_pendulum(config):
-    sys_dynamics = SystemDynamicsDoublePendulum.factory(
-        dt=0.02, integrator=Integrator.Euler
-    )
+    sys_dynamics = SystemDynamicsDoublePendulum.factory(dt=0.02)
     sys_costs = SystemCostsDoublePendulum.factory(
         dynamics=sys_dynamics,
         reference_state=jnp.array([jnp.pi, 0.0, 0.0, 0.0]),
@@ -521,7 +518,7 @@ if __name__ == "__main__":
     os.environ["CUDA_VISIBLE_DEVICES"] = "3"
     jax.config.update("jax_debug_nans", False)
 
-    jax.config.update("jax_platform_name", "cpu")
+    # jax.config.update("jax_platform_name", "cpu")
 
     jax.config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
     jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
@@ -539,39 +536,39 @@ if __name__ == "__main__":
         "seed": 0,
         "policy_name": "dropout_mlp",
         "policy_hidden_dim": 6,
-        "policy_hidden_depth": 5,
-        "policy_dropout_rate": 0.1,
+        "policy_hidden_depth": 6,
+        "policy_dropout_rate": 0.15,
         "policy_activation": "leaky_relu",
         "policy_intervention_cost": 0.5,
-        "cost_to_go_hidden_dim": 5,
-        "cost_to_go_hidden_depth": 5,
-        "cost_to_go_dropout_rate": 0.1,
+        "cost_to_go_hidden_dim": 6,
+        "cost_to_go_hidden_depth": 6,
+        "cost_to_go_dropout_rate": 0.15,
         "cost_to_go_activation": "leaky_relu",
-        "relax_to_go_hidden_dim": 5,
-        "relax_to_go_hidden_depth": 5,
-        "relax_to_go_dropout_rate": 0.1,
+        "relax_to_go_hidden_dim": 6,
+        "relax_to_go_hidden_depth": 6,
+        "relax_to_go_dropout_rate": 0.15,
         "relax_to_go_activation": "leaky_relu",
         "projection_name": "no_substitution_no_terminal",
-        "projection_horizon": 15,
+        "projection_horizon": 50,
         "projection_relaxation_penalty": 100,
         "solver_name": "osqp",
         "solver_alpha": 0.25,
-        "solver_sigma": 0.25,
-        "solver_rho_equality": 0.1,
-        "solver_rho_inequality": 0.1,
+        "solver_sigma": 1e-6,
+        "solver_rho_equality": 0.5,
+        "solver_rho_inequality": 0.5,
         "solver_max_iter": 500,
-        "solver_tol": 1e-4,
+        "solver_tol": 1e-3,
         "optimizer_policy_name": "adamw",
         "optimizer_policy_learning_rate": 1e-1,
         "optimizer_cost_name": "adamw",
         "optimizer_cost_learning_rate": 1e-1,
         "optimizer_relax_name": "adamw",
         "optimizer_relax_learning_rate": 1e-1,
-        "batchsize": 32,
-        "batches_per_epoch": 3,
+        "batchsize": 512,
+        "batches_per_epoch": 1,
         "td_gamma": 0.95,
         "gae_lambda": 0.9,
-        "epochs": 500,
+        "epochs": 50,
     }
 
     sweep_configuration = {

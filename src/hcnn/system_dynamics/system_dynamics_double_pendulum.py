@@ -22,7 +22,6 @@ import jax.numpy as jnp
 from flax import struct
 
 from hcnn.system_dynamics.system_dynamics_continuous import (
-    Integrator,
     SystemDynamicsContinuous,
 )
 
@@ -71,7 +70,6 @@ class SystemDynamicsDoublePendulum(SystemDynamicsContinuous):
         b1: float = 0.1,
         b2: float = 0.1,
         dt: float = 0.01,
-        integrator: Integrator = Integrator.Dopri5,
     ) -> "SystemDynamicsDoublePendulum":
         """
         Factory method to create a double pendulum system with uniform links.
@@ -102,7 +100,6 @@ class SystemDynamicsDoublePendulum(SystemDynamicsContinuous):
             state_dim=4,  # [θ₁, θ₂, θ̇₁, θ̇₂]
             action_dim=1,  # [τ₁] - torque at first joint only
             dt=dt,
-            integrator=integrator,
             m1=m1,
             m2=m2,
             l1=l1,

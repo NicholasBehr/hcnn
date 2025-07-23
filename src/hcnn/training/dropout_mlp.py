@@ -17,7 +17,7 @@ class DropoutMLP(nnx.Module):
 
     layers: List[nnx.Linear | nnx.Dropout | Any]
     rngs: nnx.Rngs
-    periodic_in_features: set[int]
+    periodic_in_features: frozenset[int]
     out_feature_range: tuple[float, float] | None
 
     def __init__(
@@ -57,7 +57,9 @@ class DropoutMLP(nnx.Module):
             raise ValueError("dropout_rate must be in range [0.0, 1.0].")
         self.rngs = rngs
         self.periodic_in_features = (
-            periodic_in_features if periodic_in_features is not None else set()
+            periodic_in_features
+            if periodic_in_features is not None
+            else frozenset(set())
         )
         self.out_feature_range = out_feature_range
 

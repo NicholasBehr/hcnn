@@ -3,7 +3,6 @@ import jax.numpy as jnp
 import pytest
 
 from hcnn.system_dynamics import SystemDynamicsContinuous
-from hcnn.system_dynamics.system_dynamics_continuous import Integrator
 
 from .test_system_dynamics_base import TestSystemDynamicsBase
 
@@ -58,7 +57,6 @@ class TestSystemDynamicsContinuous(TestSystemDynamicsBase):
             state_dim=self.state_dim,
             action_dim=self.action_dim,
             dt=0.01,
-            integrator=Integrator.Dopri5,
         )
 
     def test_instance_creation_continuous(
@@ -69,7 +67,6 @@ class TestSystemDynamicsContinuous(TestSystemDynamicsBase):
         assert sys_dynamics.action_dim == self.action_dim
         assert isinstance(sys_dynamics.dt, float)
         assert sys_dynamics.dt == 0.01
-        assert isinstance(sys_dynamics.integrator, Integrator)
 
     def test_continuous_dynamics_method(
         self, sys_dynamics: SystemDynamicsContinuous
@@ -89,7 +86,6 @@ class TestSystemDynamicsContinuous(TestSystemDynamicsBase):
             state_dim=2,
             action_dim=1,
             dt=0.001,  # Small step for accuracy
-            integrator=Integrator.Dopri5,
         )
 
         # Start at [1.0, 0.0] (position=1, velocity=0)
@@ -103,42 +99,12 @@ class TestSystemDynamicsContinuous(TestSystemDynamicsBase):
         assert next_state[0] < state[0]  # Position decreases
         assert next_state[1] < 0.0  # Velocity becomes negative
 
-    def test_different_integrators(self):
-        """Test that different integrators work."""
-        integrators = [
-            Integrator.Euler,
-            Integrator.Tsit5,
-            Integrator.Dopri5,
-        ]
-
-        state = jnp.array([1.0, 0.0])
-        action = jnp.array([0.0])
-
-        results = []
-        for integrator in integrators:
-            dynamics = SystemDynamicsContinuousMock(
-                state_dim=2,
-                action_dim=1,
-                dt=0.01,
-                integrator=integrator,
-            )
-            next_state = dynamics(state, action)
-            results.append(next_state)
-
-            # All should produce finite results
-            assert jnp.all(jnp.isfinite(next_state))
-
-        # Results should be similar but not identical due to different methods
-        for i in range(1, len(results)):
-            assert jnp.allclose(results[0], results[i], rtol=0.1)
-
     def test_zero_action_dynamics(self):
         """Test dynamics with zero action."""
         dynamics = SystemDynamicsContinuousMock(
             state_dim=2,
             action_dim=1,
             dt=0.01,
-            integrator=Integrator.Dopri5,
         )
 
         state = jnp.array([1.0, 0.0])
@@ -156,7 +122,6 @@ class TestSystemDynamicsContinuous(TestSystemDynamicsBase):
             state_dim=2,
             action_dim=1,
             dt=0.01,
-            integrator=Integrator.Dopri5,
         )
 
         state = jnp.array([1.0, 0.0])

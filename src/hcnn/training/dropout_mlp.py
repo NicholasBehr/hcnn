@@ -17,7 +17,7 @@ class DropoutMLP(nnx.Module):
 
     layers: List[nnx.Linear | nnx.Dropout | Any]
     rngs: nnx.Rngs
-    periodic_in_features: frozenset[int]
+    periodic_in_features: frozenset[int]  # indices of 2π periodic states
     out_feature_range: tuple[float, float] | None
 
     def __init__(

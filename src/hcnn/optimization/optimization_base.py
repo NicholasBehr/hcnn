@@ -181,15 +181,6 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
         phi_d: PhiTypeDiff,
         phi_nd: PhiTypeNoDiff,
     ) -> OptimizationVariables:
-        # jax.debug.print(
-        #     "Iteration {iter_counter}, "
-        #     "Primal Residual: {primal_residuals}, "
-        #     "Dual Residual: {dual_residuals}",
-        #     iter_counter=variables.iter_counter,
-        #     primal_residuals=variables.primal_residuals,
-        #     dual_residuals=variables.dual_residuals,
-        # )
-
         # Update primal and dual variables
         variables = self.update_primal_dual(
             variables=variables,
@@ -314,7 +305,9 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
 
         # Use more robust solver settings
         u1, _ = jax.scipy.sparse.linalg.bicgstab(A=schur_lhs, b=v1)
-        u1 = jnp.where(jnp.isnan(u1), jnp.zeros_like(u1), u1)
+
+        # replace nan with zeros
+        u1 = jnp.nan_to_num(u1, nan=0.0, posinf=1e4, neginf=-1e4)
 
         h_jvp_u1 = h_jvp(u1)
         u2 = plus_u_minus_l * h_jvp_u1

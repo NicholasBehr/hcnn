@@ -20,7 +20,7 @@ from hcnn.optimization import (
 from hcnn.policy import PolicyBase, PolicyMLP
 from hcnn.projection import ProjectionBase, ProjectionNoSubsNoTerm
 from hcnn.system_constraints import SystemConstraintsBox
-from hcnn.system_costs import SystemCostsDoublePendulum, SystemCostsQuadratic
+from hcnn.system_costs import SystemCostsQuadratic
 from hcnn.system_dynamics import (
     SystemDynamicsDoublePendulum,
     SystemDynamicsLinear,
@@ -86,9 +86,12 @@ def build_double_integrator(config):
 
 def build_double_pendulum(config):
     sys_dynamics = SystemDynamicsDoublePendulum.factory(dt=0.02)
-    sys_costs = SystemCostsDoublePendulum.factory(
-        dynamics=sys_dynamics,
+    sys_costs = SystemCostsQuadratic.factory(
+        state_cost_matrix=jnp.diag(jnp.array([1.0, 1.0, 0.1, 0.1])),
+        action_cost_matrix=jnp.diag(jnp.array([0.1])),
         reference_state=jnp.array([jnp.pi, 0.0, 0.0, 0.0]),
+        reference_action=jnp.array([0.0]),
+        periodic_states=frozenset({0, 1}),  # Pendulum angles are periodic
     )
     action_range = (-1, +1)
     sys_constraints = SystemConstraintsBox.factory(
@@ -246,8 +249,8 @@ def train_epoch(
         initial_states = jax.random.uniform(
             sample_key,
             (batchsize, train.policy.state_dim),
-            minval=-3,
-            maxval=+3,
+            minval=-2 * jnp.pi,
+            maxval=+2 * jnp.pi,
         )
         jax_keys = jax.random.split(split_key, batchsize)
 
@@ -421,7 +424,11 @@ def train(project=None, config=None):  # noqa: PLR0915 code is using wandb refer
             if epoch % 10 == 0 or epoch == config.epochs - 1:
                 # Plot the model
                 samples_per_axis = 300
-                axis_samples = jnp.linspace(-jnp.pi, jnp.pi, samples_per_axis)
+                axis_samples = jnp.linspace(
+                    -2 * jnp.pi,
+                    +2 * jnp.pi,
+                    samples_per_axis,
+                )
                 x_coord, y_coord = jnp.meshgrid(
                     axis_samples,
                     axis_samples,
@@ -538,26 +545,26 @@ if __name__ == "__main__":
         "policy_hidden_dim": 6,
         "policy_hidden_depth": 6,
         "policy_dropout_rate": 0.15,
-        "policy_activation": "leaky_relu",
+        "policy_activation": "celu",
         "policy_intervention_cost": 0.5,
         "cost_to_go_hidden_dim": 6,
         "cost_to_go_hidden_depth": 6,
         "cost_to_go_dropout_rate": 0.15,
-        "cost_to_go_activation": "leaky_relu",
+        "cost_to_go_activation": "celu",
         "relax_to_go_hidden_dim": 6,
         "relax_to_go_hidden_depth": 6,
         "relax_to_go_dropout_rate": 0.15,
-        "relax_to_go_activation": "leaky_relu",
+        "relax_to_go_activation": "celu",
         "projection_name": "no_substitution_no_terminal",
         "projection_horizon": 50,
         "projection_relaxation_penalty": 100,
-        "solver_name": "osqp",
-        "solver_alpha": 0.25,
-        "solver_sigma": 1e-6,
-        "solver_rho_equality": 0.5,
-        "solver_rho_inequality": 0.5,
-        "solver_max_iter": 500,
-        "solver_tol": 1e-3,
+        "solver_name": "shallow",
+        "solver_alpha": 0.1,
+        "solver_sigma": 0.5,
+        "solver_rho_equality": 0.1,
+        "solver_rho_inequality": 0.1,
+        "solver_max_iter": 1e4,
+        "solver_tol": 1e-2,
         "optimizer_policy_name": "adamw",
         "optimizer_policy_learning_rate": 1e-1,
         "optimizer_cost_name": "adamw",
@@ -566,9 +573,9 @@ if __name__ == "__main__":
         "optimizer_relax_learning_rate": 1e-1,
         "batchsize": 512,
         "batches_per_epoch": 1,
-        "td_gamma": 0.95,
-        "gae_lambda": 0.9,
-        "epochs": 50,
+        "td_gamma": 0.8,
+        "gae_lambda": 0.8,
+        "epochs": 500,
     }
 
     sweep_configuration = {
@@ -579,50 +586,50 @@ if __name__ == "__main__":
             "system_name": {"value": "double_pendulum"},
             "seed": {"value": 42},
             "policy_name": {"value": "dropout_mlp"},
-            "policy_hidden_dim": {"value": 3},
-            "policy_hidden_depth": {"value": 3},
-            "policy_dropout_rate": {"value": 0.1},
+            "policy_hidden_dim": {"value": 6},
+            "policy_hidden_depth": {"value": 6},
+            "policy_dropout_rate": {"value": 0.15},
             "policy_activation": {"value": "leaky_relu"},
             "policy_intervention_cost": {"value": 0.5},
             # Cost-to-go
-            "cost_to_go_hidden_dim": {"value": 3},
-            "cost_to_go_hidden_depth": {"value": 3},
-            "cost_to_go_dropout_rate": {"value": 0.1},
+            "cost_to_go_hidden_dim": {"value": 6},
+            "cost_to_go_hidden_depth": {"value": 6},
+            "cost_to_go_dropout_rate": {"value": 0.15},
             "cost_to_go_activation": {"value": "leaky_relu"},
             # Relax-to-go
-            "relax_to_go_hidden_dim": {"value": 4},
-            "relax_to_go_hidden_depth": {"value": 3},
-            "relax_to_go_dropout_rate": {"value": 0.1},
+            "relax_to_go_hidden_dim": {"value": 6},
+            "relax_to_go_hidden_depth": {"value": 6},
+            "relax_to_go_dropout_rate": {"value": 0.15},
             "relax_to_go_activation": {"value": "leaky_relu"},
             "projection_name": {"value": "no_substitution_no_terminal"},
-            "projection_horizon": {"value": 10},
-            "projection_relaxation_penalty": {"value": 10},
+            "projection_horizon": {"value": 50},
+            "projection_relaxation_penalty": {"value": 100},
             "solver_name": {"value": "shallow"},
-            "solver_alpha": {"min": 0.1, "max": 1.9},
+            "solver_alpha": {"value": 0.1},
             "solver_sigma": {
                 "distribution": "log_uniform_values",
-                "max": 5,
+                "max": 1.0,
                 "min": 0.01,
             },
             "solver_rho_equality": {
                 "distribution": "log_uniform_values",
-                "max": 2,
-                "min": 0.01,
+                "max": 1e-1,
+                "min": 1e-4,
             },
             "solver_rho_inequality": {
                 "distribution": "log_uniform_values",
-                "max": 2,
-                "min": 0.01,
+                "max": 1e-1,
+                "min": 1e-4,
             },
-            "solver_max_iter": {"value": 2e3},
-            "solver_tol": {"value": 1e-4},
+            "solver_max_iter": {"value": 1e3},
+            "solver_tol": {"value": 1e-1},
             "optimizer_policy_name": {"value": "adamw"},
             "optimizer_policy_learning_rate": {"value": 1e-2},
             "optimizer_cost_name": {"value": "adamw"},
             "optimizer_cost_learning_rate": {"value": 1e-2},
             "optimizer_relax_name": {"value": "adamw"},
             "optimizer_relax_learning_rate": {"value": 1e-2},
-            "batchsize": {"value": 5},
+            "batchsize": {"value": 128},
             "batches_per_epoch": {"value": 1},
             "td_gamma": {"value": 0.95},
             "gae_lambda": {"value": 0.99},

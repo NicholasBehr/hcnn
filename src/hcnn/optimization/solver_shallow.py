@@ -57,18 +57,17 @@ class OptimizationSolverShallow(
             self.sigma * variables.x - problem.cost_linear + h_vjp(r_zhjx_y)[0]
         )
 
-        # preconditioned steepest descent update for x_tilde
-        # residual
+        # steepest descent update for x_tilde
+        # residual (gradient)
+        eps = 1e-12  # small value to avoid division by zero
         r = cg_rhs - cg_lhs(variables.x_tilde)
-        # preconditioned residual
-        p = r / (problem.cost_quad_diag + self.sigma)
         # step size alpha
-        alpha_sd_numerator = jnp.dot(r, p)
-        alpha_sd_denominator = jnp.dot(p, cg_lhs(p))
-        eps = jnp.finfo(problem.cost_quad_diag.dtype).eps
+        alpha_sd_numerator = jnp.dot(r, r)
+        alpha_sd_denominator = jnp.dot(r, cg_lhs(r))
         alpha_sd = alpha_sd_numerator / (alpha_sd_denominator + eps)
+
         # update
-        new_x_tilde = variables.x_tilde + alpha_sd * p
+        new_x_tilde = variables.x_tilde + alpha_sd * r
 
         ## z_tilde ##
         new_z_tilde = h + h_jvp(new_x_tilde - variables.x_tilde)

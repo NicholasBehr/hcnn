@@ -115,6 +115,9 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
     # convergence tolerance for primal and dual residuals
     tol: float = 1e-4
 
+    # gradient clipping threshold
+    gradient_clip: float = 100
+
     @partial(jax.jit, static_argnames="self")
     def solve(
         self,
@@ -268,11 +271,10 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
         v1 = g[0]  # gradient w.r.t. x_star
 
         ## Implicit VJP (step 1) - Add numerical stability
-        tau = 1e-4  # Regularization parameter for numerical stability
-
-        # Add epsilon to prevent division by zero
-        frac_upper = jax.lax.div(1.0, problem.upper_bound - z_star + tau)
-        frac_lower = jax.lax.div(1.0, z_star - problem.lower_bound + tau)
+        # Add tol to prevent division by zero
+        # (since this is the tolerance of the divisor anyways)
+        frac_upper = jax.lax.div(1.0, problem.upper_bound - z_star + self.tol)
+        frac_lower = jax.lax.div(1.0, z_star - problem.lower_bound + self.tol)
         plus_u_minus_l = y_plus * frac_upper - y_minus * frac_lower
 
         ## Precompute JVP, VJP and HVP for the constraint function
@@ -300,7 +302,6 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
                 problem.cost_quad_diag * u1
                 + h_hvp(u1)
                 + h_vjp(plus_u_minus_l * h_jvp(u1))[0]
-                + tau * u1  # Add regularization term
             )
 
         # Use more robust solver settings
@@ -342,6 +343,16 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
             phi_d,
         )[1](-u2)[0]
         g_phi_d = jax.tree_util.tree_map(jnp.add, g_phi_d_1, g_phi_d_2)
+
+        # Add gradient clipping
+        g_problem = jax.tree_util.tree_map(
+            lambda g: jnp.clip(g, -self.gradient_clip, self.gradient_clip),
+            g_problem,
+        )
+        g_phi_d = jax.tree_util.tree_map(
+            lambda g: jnp.clip(g, -self.gradient_clip, self.gradient_clip),
+            g_phi_d,
+        )
 
         return (g_problem, g_phi_d, None)
 

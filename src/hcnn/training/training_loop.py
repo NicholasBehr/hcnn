@@ -178,6 +178,7 @@ def build_solver(config) -> OptimizationSolverBase:
         rho_inequality=config.solver_rho_inequality,
         max_iter=config.solver_max_iter,
         tol=config.solver_tol,
+        gradient_clip=config.solver_gradient_clip,
     )
 
 
@@ -254,7 +255,6 @@ def train_epoch(
         )
         jax_keys = jax.random.split(split_key, batchsize)
 
-        # Pre-allocate model states to reduce overhead
         model_states = ModelStates(
             policy=nnx.state(train.policy),
             relax_to_go=nnx.state(train.relax_to_go),
@@ -280,6 +280,15 @@ def train_epoch(
         loss_array = jnp.array([loss.policy, loss.cost_to_go, loss.relax_to_go])
         aggregate_loss = jnp.sum(jnp.log1p(jnp.abs(loss_array)))
 
+        # Compute maximum absolute gradient value for monitoring and clipping
+        grad_leaves = jax.tree_util.tree_leaves(grad.policy)
+        max_gradient = jnp.max(
+            jnp.array([jnp.max(jnp.abs(leaf)) for leaf in grad_leaves])
+        )
+        mean_gradient = jnp.mean(
+            jnp.array([jnp.mean(jnp.abs(leaf)) for leaf in grad_leaves])
+        )
+
         # Update metrics with batched operations
         train.metrics.update(
             policy_loss=loss.policy,
@@ -289,6 +298,8 @@ def train_epoch(
             primal_residual=info.primal_residual,
             dual_residual=info.dual_residual,
             solver_iterations=info.solver_iterations,
+            max_gradient=max_gradient,
+            mean_gradient=mean_gradient,
         )
 
         # Update optimizers with pre-allocated gradients
@@ -380,6 +391,9 @@ def train(project=None, config=None):  # noqa: PLR0915 code is using wandb refer
             primal_residual=nnx.metrics.Average("primal_residual"),
             dual_residual=nnx.metrics.Average("dual_residual"),
             solver_iterations=nnx.metrics.Average("solver_iterations"),
+            # training metrics
+            max_gradient=nnx.metrics.Average("max_gradient"),
+            mean_gradient=nnx.metrics.Average("mean_gradient"),
         )
 
         train = TrainBundle(
@@ -545,37 +559,38 @@ if __name__ == "__main__":
         "policy_hidden_dim": 6,
         "policy_hidden_depth": 6,
         "policy_dropout_rate": 0.15,
-        "policy_activation": "celu",
+        "policy_activation": "leaky_relu",
         "policy_intervention_cost": 0.5,
         "cost_to_go_hidden_dim": 6,
         "cost_to_go_hidden_depth": 6,
         "cost_to_go_dropout_rate": 0.15,
-        "cost_to_go_activation": "celu",
+        "cost_to_go_activation": "leaky_relu",
         "relax_to_go_hidden_dim": 6,
         "relax_to_go_hidden_depth": 6,
         "relax_to_go_dropout_rate": 0.15,
-        "relax_to_go_activation": "celu",
+        "relax_to_go_activation": "leaky_relu",
         "projection_name": "no_substitution_no_terminal",
-        "projection_horizon": 50,
+        "projection_horizon": 15,
         "projection_relaxation_penalty": 100,
         "solver_name": "shallow",
-        "solver_alpha": 0.1,
-        "solver_sigma": 0.5,
-        "solver_rho_equality": 0.1,
-        "solver_rho_inequality": 0.1,
+        "solver_alpha": 0.25,
+        "solver_sigma": 0.25,
+        "solver_rho_equality": 1e-1,
+        "solver_rho_inequality": 1e-1,
         "solver_max_iter": 1e4,
-        "solver_tol": 1e-2,
+        "solver_tol": 1e-4,
+        "solver_gradient_clip": 1e4,
         "optimizer_policy_name": "adamw",
-        "optimizer_policy_learning_rate": 1e-1,
+        "optimizer_policy_learning_rate": 1e-3,
         "optimizer_cost_name": "adamw",
-        "optimizer_cost_learning_rate": 1e-1,
+        "optimizer_cost_learning_rate": 1e-2,
         "optimizer_relax_name": "adamw",
-        "optimizer_relax_learning_rate": 1e-1,
+        "optimizer_relax_learning_rate": 1e-2,
         "batchsize": 512,
-        "batches_per_epoch": 1,
-        "td_gamma": 0.8,
+        "batches_per_epoch": 5,
+        "td_gamma": 0.9,
         "gae_lambda": 0.8,
-        "epochs": 500,
+        "epochs": 200,
     }
 
     sweep_configuration = {

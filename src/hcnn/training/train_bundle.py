@@ -1,0 +1,308 @@
+import jax.numpy as jnp
+import optax
+from flax import nnx, struct
+
+from hcnn.optimization import (
+    OptimizationSolverBase,
+    OptimizationSolverOSQP,
+    OptimizationSolverShallow,
+)
+from hcnn.policy import PolicyBase, PolicyMLP
+from hcnn.projection import ProjectionBase, ProjectionNoSubsNoTerm
+from hcnn.system_constraints import SystemConstraintsBase, SystemConstraintsBox
+from hcnn.system_costs import SystemCostsBase, SystemCostsQuadratic
+from hcnn.system_dynamics import (
+    SystemDynamicsBase,
+    SystemDynamicsDoublePendulum,
+    SystemDynamicsLinear,
+)
+from hcnn.training.dropout_mlp import DropoutMLP
+from hcnn.training.loss_and_grad import LossAndGrad
+from wandb.sdk.wandb_config import Config as WandbConfig
+
+OPTIMIZERS = {
+    "adabelief": optax.adabelief,
+    "adagrad": optax.adagrad,
+    "adam": optax.adam,
+    "adamw": optax.adamw,
+    "nadamw": optax.nadamw,
+}
+
+
+@struct.dataclass
+class TrainBundle(nnx.Module):
+    policy: PolicyBase
+    cost_to_go: DropoutMLP
+    relax_to_go: DropoutMLP
+    loss_and_grad: LossAndGrad
+    opt_policy: nnx.Optimizer
+    opt_cost: nnx.Optimizer
+    opt_relax: nnx.Optimizer
+    metrics: nnx.MultiMetric
+    rngs: nnx.Rngs
+
+    @staticmethod
+    def build_double_integrator(config: WandbConfig):
+        sys_dynamics = SystemDynamicsLinear.factory(
+            state_matrix=jnp.array([[1, 1], [0, 1]]),
+            action_matrix=jnp.array([[0.5], [1]]),
+        )
+        sys_costs = SystemCostsQuadratic.factory(
+            state_cost_matrix=jnp.array([[5, 0], [0, 5]]),
+            action_cost_matrix=jnp.array([[1]]),
+        )
+        action_range = (-1, +1)
+        sys_constraints = SystemConstraintsBox.factory(
+            state_l=jnp.array([-10, -10]),
+            state_u=jnp.array([+10, +10]),
+            action_l=jnp.array(action_range[0]),
+            action_u=jnp.array(action_range[1]),
+        )
+        rngs = nnx.Rngs(config.seed)
+        policy = PolicyMLP.factory(
+            state_dim=2,
+            action_dim=1,
+            hidden_features=[config.policy_hidden_dim]
+            * config.policy_hidden_depth,
+            rngs=rngs,
+            activation=config.policy_activation,
+            dropout_rate=config.policy_dropout_rate,
+            action_range=action_range,
+        )
+        cost_to_go = DropoutMLP(
+            in_features=2,
+            out_features=1,
+            hidden_features=[config.cost_to_go_hidden_dim]
+            * config.cost_to_go_hidden_depth,
+            rngs=rngs,
+            activation=config.cost_to_go_activation,
+            dropout_rate=config.cost_to_go_dropout_rate,
+        )
+        relax_to_go = DropoutMLP(
+            in_features=2,
+            out_features=1,
+            hidden_features=[config.relax_to_go_hidden_dim]
+            * config.relax_to_go_hidden_depth,
+            rngs=rngs,
+            activation=config.relax_to_go_activation,
+            dropout_rate=config.relax_to_go_dropout_rate,
+        )
+        return (
+            sys_dynamics,
+            sys_costs,
+            sys_constraints,
+            rngs,
+            policy,
+            cost_to_go,
+            relax_to_go,
+        )
+
+    @staticmethod
+    def build_double_pendulum(config: WandbConfig):
+        sys_dynamics = SystemDynamicsDoublePendulum.factory(dt=0.02)
+        sys_costs = SystemCostsQuadratic.factory(
+            state_cost_matrix=jnp.diag(jnp.array([1.0, 1.0, 0.1, 0.1])),
+            action_cost_matrix=jnp.diag(jnp.array([0.1])),
+            reference_state=jnp.array([jnp.pi, 0.0, 0.0, 0.0]),
+            reference_action=jnp.array([0.0]),
+            periodic_states=frozenset({0, 1}),  # Pendulum angles are periodic
+        )
+        action_range = (-1, +1)
+        sys_constraints = SystemConstraintsBox.factory(
+            state_l=jnp.array([-jnp.inf, -jnp.inf, -3, -3]),
+            state_u=jnp.array([+jnp.inf, +jnp.inf, +3, +3]),
+            action_l=action_range[0] * jnp.ones(sys_dynamics.action_dim),
+            action_u=action_range[1] * jnp.ones(sys_dynamics.action_dim),
+        )
+        rngs = nnx.Rngs(config.seed)
+        periodic_states = frozenset({0, 1})  # Pendulum angles are periodic
+        policy = PolicyMLP.factory(
+            state_dim=4,
+            action_dim=1,
+            hidden_features=[config.policy_hidden_dim]
+            * config.policy_hidden_depth,
+            rngs=rngs,
+            activation=config.policy_activation,
+            dropout_rate=config.policy_dropout_rate,
+            periodic_states=periodic_states,
+            action_range=action_range,
+        )
+        cost_to_go = DropoutMLP(
+            in_features=4,
+            out_features=1,
+            hidden_features=[config.cost_to_go_hidden_dim]
+            * config.cost_to_go_hidden_depth,
+            rngs=rngs,
+            activation=config.cost_to_go_activation,
+            dropout_rate=config.cost_to_go_dropout_rate,
+            periodic_in_features=periodic_states,
+        )
+        relax_to_go = DropoutMLP(
+            in_features=4,
+            out_features=1,
+            hidden_features=[config.relax_to_go_hidden_dim]
+            * config.relax_to_go_hidden_depth,
+            rngs=rngs,
+            activation=config.relax_to_go_activation,
+            dropout_rate=config.relax_to_go_dropout_rate,
+            periodic_in_features=periodic_states,
+        )
+        return (
+            sys_dynamics,
+            sys_costs,
+            sys_constraints,
+            rngs,
+            policy,
+            cost_to_go,
+            relax_to_go,
+        )
+
+    @staticmethod
+    def build_projection_operator(
+        config: WandbConfig,
+        policy: PolicyBase,
+        relax_to_go: DropoutMLP,
+        sys_dynamics: SystemDynamicsBase,
+        sys_constraints: SystemConstraintsBase,
+    ) -> ProjectionBase:
+        if config.projection_name == "no_substitution_no_terminal":
+            return ProjectionNoSubsNoTerm.factory(
+                policy=policy,
+                relax_to_go=relax_to_go,
+                sys_dynamics=sys_dynamics,
+                sys_constraints=sys_constraints,
+                horizon=config.projection_horizon,
+                relaxation_penalty=config.projection_relaxation_penalty,
+            )
+        else:
+            raise ValueError(f"Unknown system: {config.system_name}")
+
+    @staticmethod
+    def build_solver(config: WandbConfig) -> OptimizationSolverBase:
+        if config.solver_name == "osqp":
+            solver = OptimizationSolverOSQP
+        elif config.solver_name == "shallow":
+            solver = OptimizationSolverShallow
+        else:
+            raise ValueError(f"Unknown system: {config.system_name}")
+
+        return solver(
+            alpha=config.solver_alpha,
+            sigma=config.solver_sigma,
+            rho_equality=config.solver_rho_equality,
+            rho_inequality=config.solver_rho_inequality,
+            max_iter=config.solver_max_iter,
+            tol=config.solver_tol,
+            gradient_clip=config.solver_gradient_clip,
+        )
+
+    @staticmethod
+    def build_loss_and_grad(
+        projection: ProjectionBase,
+        solver: OptimizationSolverBase,
+        sys_costs: SystemCostsBase,
+        cost_to_go: DropoutMLP,
+        relax_to_go: DropoutMLP,
+    ) -> LossAndGrad:
+        return LossAndGrad.factory(
+            projection=projection,
+            solver=solver,
+            sys_costs=sys_costs,
+            cost_to_go=cost_to_go,
+            relax_to_go=relax_to_go,
+        )
+
+    @staticmethod
+    def build_optimizer(model, kind: str, learning_rate):
+        return nnx.Optimizer(
+            model, OPTIMIZERS[kind](learning_rate=learning_rate)
+        )
+
+    @staticmethod
+    def factory_from_config(
+        config: WandbConfig,
+    ) -> "TrainBundle":
+        # Build the system components
+        system_builders = {
+            "double_integrator": TrainBundle.build_double_integrator,
+            "double_pendulum": TrainBundle.build_double_pendulum,
+        }
+        builder = system_builders.get(config.system_name)
+
+        if not builder:
+            raise ValueError(f"Unknown system: {config.system_name}")
+
+        (
+            sys_dynamics,
+            sys_costs,
+            sys_constraints,
+            rngs,
+            policy,
+            cost_to_go,
+            relax_to_go,
+        ) = builder(config)
+
+        # Build the projection operator
+        projection = TrainBundle.build_projection_operator(
+            config,
+            policy=policy,
+            relax_to_go=relax_to_go,
+            sys_dynamics=sys_dynamics,
+            sys_constraints=sys_constraints,
+        )
+
+        # Build the solver
+        solver = TrainBundle.build_solver(config)
+
+        # Build the loss and gradient computation
+        loss_and_grad = TrainBundle.build_loss_and_grad(
+            projection=projection,
+            solver=solver,
+            sys_costs=sys_costs,
+            cost_to_go=cost_to_go,
+            relax_to_go=relax_to_go,
+        )
+
+        # Build optimizers
+        opt_policy = TrainBundle.build_optimizer(
+            policy,
+            config.optimizer_policy_name,
+            config.optimizer_policy_learning_rate,
+        )
+        opt_cost = TrainBundle.build_optimizer(
+            cost_to_go,
+            config.optimizer_cost_name,
+            config.optimizer_cost_learning_rate,
+        )
+        opt_relax = TrainBundle.build_optimizer(
+            relax_to_go,
+            config.optimizer_relax_name,
+            config.optimizer_relax_learning_rate,
+        )
+
+        # Build optax metrics
+        metrics = nnx.MultiMetric(
+            # model evaluation metrics
+            policy_loss=nnx.metrics.Average("policy_loss"),
+            cost_to_go_loss=nnx.metrics.Average("cost_to_go_loss"),
+            relax_to_go_loss=nnx.metrics.Average("relax_to_go_loss"),
+            # solver metrics
+            primal_residual=nnx.metrics.Average("primal_residual"),
+            dual_residual=nnx.metrics.Average("dual_residual"),
+            solver_iterations=nnx.metrics.Average("solver_iterations"),
+            # policy training metrics
+            mean_policy_gradient=nnx.metrics.Average("mean_policy_gradient"),
+            max_policy_gradient=nnx.metrics.Average("max_policy_gradient"),
+        )
+
+        return TrainBundle(
+            policy=policy,
+            cost_to_go=cost_to_go,
+            relax_to_go=relax_to_go,
+            loss_and_grad=loss_and_grad,
+            opt_policy=opt_policy,
+            opt_cost=opt_cost,
+            opt_relax=opt_relax,
+            metrics=metrics,
+            rngs=rngs,
+        )

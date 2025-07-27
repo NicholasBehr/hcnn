@@ -12,6 +12,7 @@ from hcnn.projection.projection_base import (
 )
 from hcnn.system_constraints import SystemConstraintsBase
 from hcnn.system_dynamics import SystemDynamicsBase
+from hcnn.training.dropout_mlp import DropoutMLP
 
 
 @struct.dataclass
@@ -20,7 +21,7 @@ class ProjectionNoSubsNoTerm(ProjectionBase):
     def factory(  # noqa: PLR0913
         cls,
         policy: PolicyBase,
-        relax_to_go: nnx.Dropout,
+        relax_to_go: DropoutMLP,
         sys_dynamics: SystemDynamicsBase,
         sys_constraints: SystemConstraintsBase,
         horizon: int,

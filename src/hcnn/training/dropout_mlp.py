@@ -3,7 +3,7 @@ from typing import Any, List
 import jax.numpy as jnp
 from flax import nnx
 
-activation_map = {
+ACTIVATIONS = {
     "celu": nnx.celu,
     "relu": nnx.relu,
     "leaky_relu": nnx.leaky_relu,
@@ -81,7 +81,7 @@ class DropoutMLP(nnx.Module):
 
             # Add activation after each hidden layer (not output layer)
             if i < len(layer_sizes) - 2:
-                self.layers.append(activation_map[activation])
+                self.layers.append(ACTIVATIONS[activation])
 
                 # Add Dropout layer after the activation in hidden layers
                 if dropout_rate > 0.0:

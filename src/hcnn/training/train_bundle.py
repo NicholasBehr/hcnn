@@ -42,6 +42,24 @@ class TrainBundle(nnx.Module):
     rngs: nnx.Rngs
 
     @staticmethod
+    def build_x_to_go(
+        config: WandbConfig,
+        state_dim: int,
+        rngs: nnx.Rngs,
+        periodic_states: frozenset[int] = frozenset(),
+    ):
+        return DropoutMLP(
+            in_features=state_dim,
+            out_features=1,
+            hidden_features=[config.x_to_go_hidden_dim]
+            * config.x_to_go_hidden_depth,
+            rngs=rngs,
+            activation=config.x_to_go_activation,
+            dropout_rate=config.x_to_go_dropout_rate,
+            periodic_in_features=periodic_states,
+        )
+
+    @staticmethod
     def build_double_integrator(config: WandbConfig):
         sys_dynamics = SystemDynamicsLinear.factory(
             state_matrix=jnp.array([[1, 1], [0, 1]]),
@@ -69,24 +87,13 @@ class TrainBundle(nnx.Module):
             dropout_rate=config.policy_dropout_rate,
             action_range=action_range,
         )
-        cost_to_go = DropoutMLP(
-            in_features=2,
-            out_features=1,
-            hidden_features=[config.cost_to_go_hidden_dim]
-            * config.cost_to_go_hidden_depth,
+        cost_to_go = TrainBundle.build_x_to_go(
+            config=config,
+            state_dim=2,
             rngs=rngs,
-            activation=config.cost_to_go_activation,
-            dropout_rate=config.cost_to_go_dropout_rate,
         )
-        relax_to_go = DropoutMLP(
-            in_features=2,
-            out_features=1,
-            hidden_features=[config.relax_to_go_hidden_dim]
-            * config.relax_to_go_hidden_depth,
-            rngs=rngs,
-            activation=config.relax_to_go_activation,
-            dropout_rate=config.relax_to_go_dropout_rate,
-        )
+        relax_to_go = nnx.clone(cost_to_go)
+
         return (
             sys_dynamics,
             sys_costs,
@@ -109,8 +116,8 @@ class TrainBundle(nnx.Module):
         )
         action_range = (-1, +1)
         sys_constraints = SystemConstraintsBox.factory(
-            state_l=jnp.array([-jnp.inf, -jnp.inf, -3, -3]),
-            state_u=jnp.array([+jnp.inf, +jnp.inf, +3, +3]),
+            state_l=jnp.array([-jnp.inf, -jnp.inf, -jnp.pi, -jnp.pi]),
+            state_u=jnp.array([+jnp.inf, +jnp.inf, +jnp.pi, +jnp.pi]),
             action_l=action_range[0] * jnp.ones(sys_dynamics.action_dim),
             action_u=action_range[1] * jnp.ones(sys_dynamics.action_dim),
         )
@@ -127,26 +134,14 @@ class TrainBundle(nnx.Module):
             periodic_states=periodic_states,
             action_range=action_range,
         )
-        cost_to_go = DropoutMLP(
-            in_features=4,
-            out_features=1,
-            hidden_features=[config.cost_to_go_hidden_dim]
-            * config.cost_to_go_hidden_depth,
+        cost_to_go = TrainBundle.build_x_to_go(
+            config=config,
+            state_dim=4,
             rngs=rngs,
-            activation=config.cost_to_go_activation,
-            dropout_rate=config.cost_to_go_dropout_rate,
-            periodic_in_features=periodic_states,
+            periodic_states=periodic_states,
         )
-        relax_to_go = DropoutMLP(
-            in_features=4,
-            out_features=1,
-            hidden_features=[config.relax_to_go_hidden_dim]
-            * config.relax_to_go_hidden_depth,
-            rngs=rngs,
-            activation=config.relax_to_go_activation,
-            dropout_rate=config.relax_to_go_dropout_rate,
-            periodic_in_features=periodic_states,
-        )
+        relax_to_go = nnx.clone(cost_to_go)
+
         return (
             sys_dynamics,
             sys_costs,
@@ -198,6 +193,7 @@ class TrainBundle(nnx.Module):
 
     @staticmethod
     def build_loss_and_grad(
+        config: WandbConfig,
         projection: ProjectionBase,
         solver: OptimizationSolverBase,
         sys_costs: SystemCostsBase,
@@ -210,6 +206,10 @@ class TrainBundle(nnx.Module):
             sys_costs=sys_costs,
             cost_to_go=cost_to_go,
             relax_to_go=relax_to_go,
+            td_gamma=config.td_gamma,
+            policy_gae_lambda=config.policy_gae_lambda,
+            x_to_go_gae_lambda=config.x_to_go_gae_lambda,
+            policy_intervention_cost=config.policy_intervention_cost,
         )
 
     @staticmethod
@@ -256,6 +256,7 @@ class TrainBundle(nnx.Module):
 
         # Build the loss and gradient computation
         loss_and_grad = TrainBundle.build_loss_and_grad(
+            config=config,
             projection=projection,
             solver=solver,
             sys_costs=sys_costs,
@@ -285,6 +286,7 @@ class TrainBundle(nnx.Module):
             # model evaluation metrics
             policy_loss=nnx.metrics.Average("policy_loss"),
             cost_to_go_loss=nnx.metrics.Average("cost_to_go_loss"),
+            cost_encountered=nnx.metrics.Average("cost_encountered"),
             relax_to_go_loss=nnx.metrics.Average("relax_to_go_loss"),
             # solver metrics
             primal_residual=nnx.metrics.Average("primal_residual"),

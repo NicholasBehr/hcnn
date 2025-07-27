@@ -29,6 +29,7 @@ class ModelStates:
 class ModelLoss:
     policy: jax.Array
     cost_to_go: jax.Array
+    cost_encountered: jax.Array
     relax_to_go: jax.Array
 
 
@@ -46,6 +47,10 @@ class LossAndGrad:
     sys_costs: SystemCostsBase
     cost_to_go_graphdef: nnx.GraphDef
     relax_to_go_graphdef: nnx.GraphDef
+    td_gamma: float = 0.9
+    policy_gae_lambda: float = 0.8
+    x_to_go_gae_lambda: float = 0.8
+    policy_intervention_cost: float = 0.5
 
     @classmethod
     def factory(
@@ -55,6 +60,10 @@ class LossAndGrad:
         sys_costs: SystemCostsBase,
         cost_to_go: DropoutMLP,
         relax_to_go: DropoutMLP,
+        td_gamma: float = 0.9,
+        policy_gae_lambda: float = 0.8,
+        x_to_go_gae_lambda: float = 0.8,
+        policy_intervention_cost: float = 0.5,
     ):
         return LossAndGrad(
             projection=projection,
@@ -62,15 +71,16 @@ class LossAndGrad:
             sys_costs=sys_costs,
             cost_to_go_graphdef=nnx.split(cost_to_go)[0],
             relax_to_go_graphdef=nnx.split(relax_to_go)[0],
+            td_gamma=td_gamma,
+            policy_gae_lambda=policy_gae_lambda,
+            x_to_go_gae_lambda=x_to_go_gae_lambda,
+            policy_intervention_cost=policy_intervention_cost,
         )
 
     def policy_loss(
         self,
         cost_residuals: jax.Array,
         rollout_interventions: jax.Array,
-        td_gamma: float,
-        gae_lambda: float,
-        intervention_cost: float,
     ):
         """
         Evaluates the loss function used to train policy weights.
@@ -78,35 +88,31 @@ class LossAndGrad:
         Args:
             cost_residuals (jax.Array): shape (..., horizon-1).
             rollout_interventions (jax.Array): shape (..., horizon).
-            td_gamma (float): Temporal difference discount factor.
-            gae_lambda (float): Generalized advantage estimation lambda.
 
         Returns:
             jax.Array: Policy loss value, shape ().
         """
         advantage_t = generalized_advantage_t(
             td_residuals=cost_residuals,
-            td_gamma=td_gamma,
-            gae_lambda=gae_lambda,
+            td_gamma=self.td_gamma,
+            gae_lambda=self.policy_gae_lambda,
         )
         discounted_interventions = jnp.sum(
             rollout_interventions
-            * (td_gamma ** jnp.arange(rollout_interventions.shape[-1])),
+            * (self.td_gamma ** jnp.arange(rollout_interventions.shape[-1])),
             axis=-1,
         )
 
         # minimize discounted interventions and maximize advantage
         # (i.e., minimize the negative of the advantage)
         return (
-            -jnp.mean(advantage_t) * (1 - intervention_cost)
-            + jnp.mean(discounted_interventions) * intervention_cost
+            -jnp.mean(advantage_t) * (1 - self.policy_intervention_cost)
+            + jnp.mean(discounted_interventions) * self.policy_intervention_cost
         )
 
     def cost_to_go_loss(
         self,
         cost_residuals: jax.Array,
-        td_gamma,
-        gae_lambda,
     ):
         """
         Evaluates the loss function used to train the cost-to-go weights.
@@ -121,8 +127,8 @@ class LossAndGrad:
         """
         advantage_t = generalized_advantage_t(
             td_residuals=cost_residuals,
-            td_gamma=td_gamma,
-            gae_lambda=gae_lambda,
+            td_gamma=self.td_gamma,
+            gae_lambda=self.x_to_go_gae_lambda,
         )
 
         # eliminate the cost_residuals
@@ -132,24 +138,20 @@ class LossAndGrad:
     def relax_to_go_loss(
         self,
         relax_residuals: jax.Array,
-        td_gamma: float,
-        gae_lambda: float,
     ):
         """
         Evaluates the loss function used to train the relax-to-go weights.
 
         Args:
             relax_residuals (jax.Array): shape (..., horizon-1).
-            td_gamma (float): Temporal difference discount factor.
-            gae_lambda (float): Generalized advantage estimation lambda.
 
         Returns:
             jax.Array: Relax-to-go loss value, shape ().
         """
         advantage_t = generalized_advantage_t(
             td_residuals=relax_residuals,
-            td_gamma=td_gamma,
-            gae_lambda=gae_lambda,
+            td_gamma=self.td_gamma,
+            gae_lambda=self.x_to_go_gae_lambda,
         )
 
         # eliminate the relax_residuals
@@ -161,7 +163,6 @@ class LossAndGrad:
         states: jax.Array,
         actions: jax.Array,
         cost_to_go_state: nnx.State,
-        td_gamma: float,
     ) -> tuple[jax.Array, nnx.State]:
         """
         Calculates the cost residuals for the given states and actions.
@@ -200,7 +201,7 @@ class LossAndGrad:
 
         # Compute the temporal difference (TD) errors
         cost_residuals = td_residuals(
-            rewards=stage_cost, values=cost_to_go_eval, td_gamma=td_gamma
+            rewards=stage_cost, values=cost_to_go_eval, td_gamma=self.td_gamma
         )
         return cost_residuals, cost_to_go_state
 
@@ -210,7 +211,6 @@ class LossAndGrad:
         relaxations_plus: jax.Array,
         relaxations_minus: jax.Array,
         relax_to_go_state: nnx.State,
-        td_gamma: float,
     ) -> tuple[jax.Array, nnx.State]:
         """
         Calculates the relaxation residuals for the given states and relaxations
@@ -254,7 +254,7 @@ class LossAndGrad:
 
         # Compute the temporal difference (TD) errors
         relax_residuals = td_residuals(
-            rewards=stage_relax, values=relax_to_go_eval, td_gamma=td_gamma
+            rewards=stage_relax, values=relax_to_go_eval, td_gamma=self.td_gamma
         )
         return relax_residuals, relax_to_go_state
 
@@ -313,9 +313,6 @@ class LossAndGrad:
         model_states: ModelStates,
         initial_states: jax.Array,
         jax_keys: jax.Array,
-        td_gamma: float,
-        gae_lambda: float,
-        intervention_cost: float,
     ):
         """
         Computes the loss and gradients for the policy, cost-to-go, and
@@ -369,7 +366,6 @@ class LossAndGrad:
                 states=states,
                 actions=actions,
                 cost_to_go_state=cost_to_go_state,
-                td_gamma=td_gamma,
             ),
             rollout.states,
             rollout.actions,
@@ -382,7 +378,6 @@ class LossAndGrad:
                 relaxations_plus=rollout.relaxations_plus,
                 relaxations_minus=rollout.relaxations_minus,
                 relax_to_go_state=relax_to_go_state,
-                td_gamma=td_gamma,
             ),
             in_relax_to_go_state,
         )
@@ -402,34 +397,25 @@ class LossAndGrad:
             jax.value_and_grad(
                 self.policy_loss,
                 argnums=(0, 1),
-            )(
-                cost_residuals,
-                rollout.interventions,
-                td_gamma=td_gamma,
-                gae_lambda=gae_lambda,
-                intervention_cost=intervention_cost,
-            )
+            )(cost_residuals, rollout.interventions)
         )
 
         cost_to_go_loss, cost_val_res_grad = jax.value_and_grad(
             self.cost_to_go_loss,
-        )(
-            cost_residuals,
-            td_gamma=td_gamma,
-            gae_lambda=gae_lambda,
+        )(cost_residuals)
+
+        cost_encountered = jnp.mean(
+            self.sys_costs(rollout.states, rollout.actions)
         )
 
         relax_to_go_loss, relax_rel_res_grad = jax.value_and_grad(
-            self.relax_to_go_loss,
-        )(
-            relax_residuals,
-            td_gamma=td_gamma,
-            gae_lambda=gae_lambda,
-        )
+            self.relax_to_go_loss
+        )(relax_residuals)
 
         loss = ModelLoss(
             policy=policy_loss,
             cost_to_go=cost_to_go_loss,
+            cost_encountered=cost_encountered,
             relax_to_go=relax_to_go_loss,
         )
 

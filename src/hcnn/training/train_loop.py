@@ -14,11 +14,7 @@ from hcnn.training.train_bundle import TrainBundle
 from wandb.sdk.wandb_config import Config as WandbConfig
 
 
-@partial(
-    jax.jit,
-    static_argnames=["config", "train_graphdef"],
-    donate_argnums=(2,),  # Donate train_state to reduce memory overhead
-)
+@partial(jax.jit, static_argnames=["config", "train_graphdef"])
 def train_epoch(
     config: WandbConfig,
     train_graphdef: nnx.GraphDef,
@@ -38,13 +34,6 @@ def train_epoch(
     Returns:
         The updated train_state after completing the epoch.
     """
-
-    # Pre-compile scalar constants to avoid recompilation
-    batchsize = config.batchsize
-    td_gamma = config.td_gamma
-    gae_lambda = config.gae_lambda
-    intervention_cost = config.policy_intervention_cost
-
     # Reset metrics at the start of each epoch
     train = nnx.merge(train_graphdef, train_state)
     train.metrics.reset()
@@ -53,11 +42,8 @@ def train_epoch(
     def train_step(step_idx: int, train_state: nnx.State) -> nnx.State:
         train = nnx.merge(train_graphdef, train_state)
 
-        # Use step-dependent but deterministic sampling to reduce
-        # compilation variance
         step_key = jax.random.fold_in(train.rngs.default(), step_idx)
         sample_key, split_key = jax.random.split(step_key)
-
         model_states = ModelStates(
             policy=nnx.state(train.policy),
             relax_to_go=nnx.state(train.relax_to_go),
@@ -66,20 +52,17 @@ def train_epoch(
         # TODO, add a more sophisticated sampler
         initial_states = jax.random.uniform(
             sample_key,
-            (batchsize, train.policy.state_dim),
-            minval=-2 * jnp.pi,
-            maxval=+2 * jnp.pi,
+            (config.batchsize, train.policy.state_dim),
+            minval=-jnp.pi,
+            maxval=+jnp.pi,
         )
-        jax_keys = jax.random.split(split_key, batchsize)
+        jax_keys = jax.random.split(split_key, config.batchsize)
 
         # Use cached function parameters to reduce recompilation
         loss, grad, model_states, info = train.loss_and_grad(
             model_states=model_states,
             initial_states=initial_states,
             jax_keys=jax_keys,
-            td_gamma=td_gamma,
-            gae_lambda=gae_lambda,
-            intervention_cost=intervention_cost,
         )
 
         # Update model states with more efficient operations
@@ -100,6 +83,7 @@ def train_epoch(
         train.metrics.update(
             policy_loss=loss.policy,
             cost_to_go_loss=loss.cost_to_go,
+            cost_encountered=loss.cost_encountered,
             relax_to_go_loss=loss.relax_to_go,
             primal_residual=info.primal_residual,
             dual_residual=info.dual_residual,
@@ -138,7 +122,6 @@ def save_train_state(train_state: nnx.State):
     artifact. Each call creates a new version of the same artifact.
 
     Args:
-        train_graphdef: The graph definition of the training bundle.
         train_state: The current state of the training bundle.
     """
     # Create a persistent temporary directory for the checkpoint
@@ -222,13 +205,12 @@ def train(project, config):
                 )
                 print(header)
             values = f"{epoch:<8}" + "".join(
-                [f"{float(v):<20.2f}" for v in metrics.values()]
+                [f"{float(v):<20.3f}" for v in metrics.values()]
             )
             print(values)
 
             # Log to WandB
             wandb.log(step=epoch, data=metrics)
-
             if epoch % 25 == 0 or epoch == config.epochs - 1:
                 save_train_state(train_state)
 
@@ -239,7 +221,7 @@ if __name__ == "__main__":
     # restrict access to one GPU (check availability nvidia-smi)
     os.environ["CUDA_VISIBLE_DEVICES"] = "3"
     jax.config.update("jax_debug_nans", False)
-    jax.config.update("jax_platform_name", "cpu")
+    # jax.config.update("jax_platform_name", "cpu")
 
     # Specify the project name and configuration
     # This can be overridden by wandb.agent when running a sweep
@@ -247,42 +229,45 @@ if __name__ == "__main__":
     config = {
         "system_name": "double_pendulum",
         "seed": 0,
+        # Policy
         "policy_name": "dropout_mlp",
         "policy_hidden_dim": 6,
         "policy_hidden_depth": 6,
         "policy_dropout_rate": 0.15,
         "policy_activation": "leaky_relu",
         "policy_intervention_cost": 0.5,
-        "cost_to_go_hidden_dim": 6,
-        "cost_to_go_hidden_depth": 6,
-        "cost_to_go_dropout_rate": 0.15,
-        "cost_to_go_activation": "leaky_relu",
-        "relax_to_go_hidden_dim": 6,
-        "relax_to_go_hidden_depth": 6,
-        "relax_to_go_dropout_rate": 0.15,
-        "relax_to_go_activation": "leaky_relu",
+        "policy_gae_lambda": 0.8,
+        # Cost-to-go and Relax-to-go
+        "x_to_go_hidden_dim": 6,
+        "x_to_go_hidden_depth": 6,
+        "x_to_go_dropout_rate": 0.15,
+        "x_to_go_activation": "leaky_relu",
+        "x_to_go_gae_lambda": 0.2,
+        # Projection
         "projection_name": "no_substitution_no_terminal",
         "projection_horizon": 15,
         "projection_relaxation_penalty": 100,
-        "solver_name": "shallow",
+        # Solver
+        "solver_name": "osqp",
         "solver_alpha": 0.25,
-        "solver_sigma": 0.25,
-        "solver_rho_equality": 1e-1,
-        "solver_rho_inequality": 1e-1,
-        "solver_max_iter": 1e4,
-        "solver_tol": 1e-4,
-        "solver_gradient_clip": 1e4,
-        "optimizer_policy_name": "adamw",
-        "optimizer_policy_learning_rate": 1e-2,
-        "optimizer_cost_name": "adamw",
+        "solver_sigma": 1e-1,
+        "solver_rho_equality": 1e-2,
+        "solver_rho_inequality": 1e-2,
+        "solver_max_iter": 500,
+        "solver_tol": 1e-3,
+        "solver_gradient_clip": 1e5,
+        # Optimizers
+        "optimizer_policy_name": "adabelief",
+        "optimizer_policy_learning_rate": 1e-4,
+        "optimizer_cost_name": "adabelief",
         "optimizer_cost_learning_rate": 1e-1,
-        "optimizer_relax_name": "adamw",
+        "optimizer_relax_name": "adabelief",
         "optimizer_relax_learning_rate": 1e-1,
-        "batchsize": 5,
-        "batches_per_epoch": 1,
+        # Training parameters
+        "batchsize": 512,
+        "batches_per_epoch": 5,
         "td_gamma": 0.9,
-        "gae_lambda": 0.8,
-        "epochs": 10,
+        "epochs": 100,
     }
 
     sweep_configuration = {

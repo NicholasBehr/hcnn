@@ -39,6 +39,7 @@ class ProjectionNoSubsNoTerm(ProjectionBase):
                 interventions=2 * jnp.ones((horizon, action_dim)),
                 relaxations_plus=jnp.zeros((horizon, constraint_dim)),
                 relaxations_minus=jnp.zeros((horizon, constraint_dim)),
+                relaxation_terminal=jnp.zeros((1,)),
             )
         )[0]
         cost_linear = flatten_util.ravel_pytree(
@@ -50,6 +51,7 @@ class ProjectionNoSubsNoTerm(ProjectionBase):
                 * jnp.ones((horizon, constraint_dim)),
                 relaxations_minus=relaxation_penalty
                 * jnp.ones((horizon, constraint_dim)),
+                relaxation_terminal=jnp.zeros((1,)),
             )
         )[0]
         bound_tuple_list = [
@@ -83,17 +85,6 @@ class ProjectionNoSubsNoTerm(ProjectionBase):
             sys_dynamics=sys_dynamics,
             sys_constraints=sys_constraints,
         )
-
-    def x_to_rollout(self, x: jax.Array) -> Rollout:
-        template = Rollout(
-            actions=jnp.empty((self.horizon, self.action_dim)),
-            states=jnp.empty((self.horizon, self.state_dim)),
-            interventions=jnp.empty((self.horizon, self.action_dim)),
-            relaxations_plus=jnp.empty((self.horizon, self.constraint_dim)),
-            relaxations_minus=jnp.empty((self.horizon, self.constraint_dim)),
-        )
-        _, unravel_pytree = flatten_util.ravel_pytree(template)
-        return unravel_pytree(x)
 
     def constraint_fn(
         self, x: jax.Array, phi_d: ProjectionPhiD, phi_nd: ProjectionPhiND

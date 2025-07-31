@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from functools import partial
-from typing import Generic, Tuple, TypeVar
+from typing import Callable, Generic, Tuple, TypeVar
 
 import jax
 import jax.numpy as jnp
@@ -56,7 +56,9 @@ class OptimizationVariables(struct.PyTreeNode):
     y: jax.Array
     dual_residuals: jax.Array
     # counter
-    iter_counter: jax.Array
+    iter_nonlin: jax.Array
+    iter_lin: jax.Array
+    iter_lin_total: jax.Array
 
     @staticmethod
     def factory(
@@ -77,7 +79,9 @@ class OptimizationVariables(struct.PyTreeNode):
             y=jnp.zeros_like(z),
             dual_residuals=problem.cost_quad_diag * x + problem.cost_linear,
             # counter
-            iter_counter=jnp.array(0, dtype=int),
+            iter_nonlin=jnp.array(0, dtype=int),
+            iter_lin=jnp.array(0, dtype=int),
+            iter_lin_total=jnp.array(0, dtype=int),
         )
 
 
@@ -90,7 +94,34 @@ class OptimizationInfo:
 
     primal_residual: jax.Array
     dual_residual: jax.Array
-    solver_iterations: jax.Array
+    iterations_lin: jax.Array
+    iterations_nonlin: jax.Array
+
+
+@struct.dataclass
+class ConstraintLinearization:
+    x_lin: jax.Array
+    # h(x_lin)
+    h: jax.Array
+    # dh/dx_lin h(x_lin)
+    h_jvp: Callable[[jax.Array], jax.Array]
+    h_vjp: Callable[[jax.Array], jax.Array]
+
+    @classmethod
+    def factory(
+        cls,
+        constraint_fn: Callable[[jax.Array], jax.Array],
+        x_lin: jax.Array,
+    ) -> "ConstraintLinearization":
+        h, h_jvp = jax.linearize(constraint_fn, x_lin)
+        _, h_vjp = jax.vjp(constraint_fn, x_lin)
+        return cls(x_lin=x_lin, h=h, h_jvp=h_jvp, h_vjp=h_vjp)
+
+    def __call__(self, x: jax.Array) -> jax.Array:
+        """
+        Evaluate the linearized constraint function at x.
+        """
+        return self.h + self.h_jvp(x - self.x_lin)
 
 
 @struct.dataclass
@@ -103,20 +134,21 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
     alpha: float = 1.6
 
     # dual step-size to align x and x_tilde
-    sigma: float = 1e-2
+    sigma: float = 1e-6
 
     # dual step-size to align z and z_tilde
     rho_equality: float = 1e-1
     rho_inequality: float = 1e-1
 
     # maximum number of iterations
-    max_iter: int = int(100)
+    max_iter_nonlin: int = int(200)
+    max_iter_lin: int = int(200)
 
     # convergence tolerance for primal and dual residuals
     tol: float = 1e-4
 
     # gradient clipping threshold
-    gradient_clip: float = 100
+    gradient_clip: float = 1e12
 
     @partial(jax.jit, static_argnames="self")
     def solve(
@@ -135,8 +167,7 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
         self,
         variables: OptimizationVariables,
         problem: OptimizationProblemBase[PhiTypeDiff, PhiTypeNoDiff],
-        phi_d: PhiTypeDiff,
-        phi_nd: PhiTypeNoDiff,
+        constraint_lin: ConstraintLinearization,
     ) -> OptimizationVariables:
         pass
 
@@ -144,19 +175,20 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
         self,
         variables: OptimizationVariables,
         problem: OptimizationProblemBase[PhiTypeDiff, PhiTypeNoDiff],
-        phi_d: PhiTypeDiff,
-        phi_nd: PhiTypeNoDiff,
+        constraint_lin: ConstraintLinearization,
     ) -> OptimizationVariables:
-        ## form linearization around x
-        h, h_vjp = jax.vjp(
-            lambda x: problem.constraint_fn(x, phi_d, phi_nd), variables.x
-        )
-
-        primal_residuals = h - variables.z
+        """
+        Updates the primal and dual residuals of the optimization variables.
+        With the primal residuals defined as:
+            h(x) - z
+        and the dual residuals defined as:
+            Q x + c + (d/dx h(x))^T y
+        """
+        primal_residuals = constraint_lin(variables.x) - variables.z
         dual_residuals = (
             problem.cost_quad_diag * variables.x
             + problem.cost_linear
-            + h_vjp(variables.y)[0]
+            + constraint_lin.h_vjp(variables.y)[0]
         )
 
         return variables.replace(
@@ -164,44 +196,133 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
             dual_residuals=dual_residuals,
         )
 
-    def cond_fun(self, variables: OptimizationVariables) -> jax.Array:
-        # return true if we should enter a new iteration
-
-        # are we not converged?
+    def convergence_check(self, variables: OptimizationVariables) -> jax.Array:
+        """
+        ASSUMES recent call to update_residuals() has been made!
+        Returns:
+            jax.Array: True if any convergence criteria are not met
+            (i.e., optimization should continue).
+        """
+        # Check if primal and dual residuals are below the tolerance
         primal_check = jnp.max(jnp.abs(variables.primal_residuals)) >= self.tol
         dual_check = jnp.max(jnp.abs(variables.dual_residuals)) >= self.tol
-        not_converged_check = jnp.logical_or(primal_check, dual_check)
+        # Check if x is close to x_tilde
+        x_tilde_check = (
+            jnp.max(jnp.abs(variables.x - variables.x_tilde)) >= self.tol
+        )
 
+        return jnp.logical_or(
+            jnp.logical_or(primal_check, dual_check), x_tilde_check
+        )
+
+    def cond_linear(self, variables: OptimizationVariables):
+        """
+        ASSUMES recent call to update_residuals() has been made!
+        Returns:
+            jax.Array: True if linear convergence criteria are not met
+            (i.e., optimization should continue).
+        """
+        # are we not converged?
+        not_converged_check = self.convergence_check(variables)
         # AND do we have iterations left?
-        iter_remaining_check = variables.iter_counter < self.max_iter
+        iter_remaining_check = variables.iter_lin < self.max_iter_lin
 
         return jnp.logical_and(not_converged_check, iter_remaining_check)
 
-    def body_fun(
+    def cond_nonlinear(self, variables: OptimizationVariables):
+        """
+        ASSUMES recent call to update_residuals() has been made!
+        Returns:
+            jax.Array: True if nonlinear convergence criteria are not met
+            (i.e., optimization should continue).
+        """
+        # are we not converged?
+        not_converged_check = self.convergence_check(variables)
+        # AND do we have iterations left?
+        iter_remaining_check = variables.iter_nonlin < self.max_iter_nonlin
+
+        return jnp.logical_and(not_converged_check, iter_remaining_check)
+
+    def body_linear(
         self,
         variables: OptimizationVariables,
         problem: OptimizationProblemBase[PhiTypeDiff, PhiTypeNoDiff],
-        phi_d: PhiTypeDiff,
-        phi_nd: PhiTypeNoDiff,
-    ) -> OptimizationVariables:
+        constraint_lin: ConstraintLinearization,
+    ):
+        group_steps = 50
         # Update primal and dual variables
-        variables = self.update_primal_dual(
-            variables=variables,
-            problem=problem,
-            phi_d=phi_d,
-            phi_nd=phi_nd,
+        variables = jax.lax.fori_loop(
+            lower=0,
+            upper=group_steps,
+            body_fun=lambda _, vars: self.update_primal_dual(
+                variables=vars,
+                problem=problem,
+                constraint_lin=constraint_lin,
+            ),
+            init_val=variables,
+            unroll=5,
         )
 
         # Update residuals
         variables = self.update_residuals(
             variables=variables,
             problem=problem,
-            phi_d=phi_d,
-            phi_nd=phi_nd,
+            constraint_lin=constraint_lin,
         )
 
         # Increment iteration counter
-        variables = variables.replace(iter_counter=variables.iter_counter + 1)
+        variables = variables.replace(
+            iter_lin=variables.iter_lin + group_steps,
+        )
+
+        return variables
+
+    def body_nonlinear(
+        self,
+        variables: OptimizationVariables,
+        problem: OptimizationProblemBase[PhiTypeDiff, PhiTypeNoDiff],
+        constraint_fn: Callable[[jax.Array], jax.Array],
+    ) -> OptimizationVariables:
+        # Update constraint linearization
+        constraint_lin = ConstraintLinearization.factory(
+            constraint_fn=constraint_fn,
+            x_lin=variables.x_tilde,  # TODO: check if we should use x_tilde?
+        )
+
+        # Solve linear QP subproblem
+        variables = jax.lax.while_loop(
+            cond_fun=self.cond_linear,
+            body_fun=partial(
+                self.body_linear,
+                problem=problem,
+                constraint_lin=constraint_lin,
+            ),
+            init_val=variables,
+        )
+
+        # Reset iter_lin
+        variables = variables.replace(
+            iter_lin=jnp.array(0, dtype=int),
+            iter_lin_total=variables.iter_lin_total + variables.iter_lin,
+        )
+
+        # Update constraint linearization
+        constraint_lin = ConstraintLinearization.factory(
+            constraint_fn=constraint_fn,
+            x_lin=variables.x,  # TODO: check if we should use x_tilde?
+        )
+
+        # Update residuals
+        variables = self.update_residuals(
+            variables=variables,
+            problem=problem,
+            constraint_lin=constraint_lin,
+        )
+
+        # Increment iteration counter
+        variables = variables.replace(
+            iter_nonlin=variables.iter_nonlin + 1,
+        )
 
         return variables
 
@@ -211,19 +332,35 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
         phi_d: PhiTypeDiff,
         phi_nd: PhiTypeNoDiff,
     ) -> Tuple[OptimizationVariables, OptimizationInfo]:
+        # Initialize optimization variables
         variables = OptimizationVariables.factory(problem, phi_d, phi_nd)
+
+        # Capture phi_d and phi_nd in the constraint function closure
+        constraint_fn = partial(
+            problem.constraint_fn, phi_d=phi_d, phi_nd=phi_nd
+        )
+
+        # Calculate nonlinear fixedpoint
         variables = jax.lax.while_loop(
-            cond_fun=self.cond_fun,
+            cond_fun=self.cond_nonlinear,
             body_fun=partial(
-                self.body_fun, problem=problem, phi_d=phi_d, phi_nd=phi_nd
+                self.body_nonlinear,
+                problem=problem,
+                constraint_fn=constraint_fn,
             ),
             init_val=variables,
         )
+
+        # Populate optimization info
         info = OptimizationInfo(
             primal_residual=jnp.max(jnp.abs(variables.primal_residuals)),
             dual_residual=jnp.max(jnp.abs(variables.dual_residuals)),
-            solver_iterations=variables.iter_counter,
+            iterations_lin=jnp.array(
+                variables.iter_lin_total / variables.iter_nonlin
+            ),
+            iterations_nonlin=variables.iter_nonlin,
         )
+
         return variables, info
 
     def _solve(

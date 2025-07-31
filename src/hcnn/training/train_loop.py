@@ -11,6 +11,7 @@ from flax import nnx
 import wandb
 from hcnn.training.loss_and_grad import ModelStates
 from hcnn.training.train_bundle import TrainBundle
+from hcnn.training.visualization import visualize_receding_horizon
 from wandb.sdk.wandb_config import Config as WandbConfig
 
 
@@ -53,8 +54,8 @@ def train_epoch(
         initial_states = jax.random.uniform(
             sample_key,
             (config.batchsize, train.policy.state_dim),
-            minval=-jnp.pi,
-            maxval=+jnp.pi,
+            minval=-2 * jnp.pi,
+            maxval=+2 * jnp.pi,
         )
         jax_keys = jax.random.split(split_key, config.batchsize)
 
@@ -87,7 +88,9 @@ def train_epoch(
             relax_to_go_loss=loss.relax_to_go,
             primal_residual=info.primal_residual,
             dual_residual=info.dual_residual,
-            solver_iterations=info.solver_iterations,
+            residual=info.primal_residual + info.dual_residual,
+            solver_iter_lin=info.iterations_lin,
+            solver_iter_nonlin=info.iterations_nonlin,
             max_policy_gradient=max_policy_gradient,
             mean_policy_gradient=mean_policy_gradient,
         )
@@ -180,7 +183,9 @@ def save_train_state(train_state: nnx.State):
             )
 
 
-def train(project, config):
+def train(project=None, config=None):
+    # When called by wandb.agent, project is handled by the agent
+    # and config comes from the sweep
     with wandb.init(project=project, config=config):
         # If called by wandb.agent,
         # this config will be set by Sweep Controller
@@ -211,7 +216,12 @@ def train(project, config):
 
             # Log to WandB
             wandb.log(step=epoch, data=metrics)
-            if epoch % 25 == 0 or epoch == config.epochs - 1:
+            if (epoch % 50 == 0 and epoch > 0) or epoch == config.epochs - 1:
+                visualize_receding_horizon(
+                    train_bundle=nnx.merge(train_graphdef, train_state),
+                    steps=200,
+                    initial_state=jnp.array([1.0, 0.0, 1.0, 1.0]),
+                )
                 save_train_state(train_state)
 
 
@@ -233,105 +243,111 @@ if __name__ == "__main__":
         "policy_name": "dropout_mlp",
         "policy_hidden_dim": 6,
         "policy_hidden_depth": 6,
-        "policy_dropout_rate": 0.15,
+        "policy_dropout_rate": 0.1,
         "policy_activation": "leaky_relu",
-        "policy_intervention_cost": 0.5,
-        "policy_gae_lambda": 0.8,
+        "policy_intervention_cost": 0.5,  # range [0, 1]!
+        "policy_gae_lambda": 0.9,
         # Cost-to-go and Relax-to-go
         "x_to_go_hidden_dim": 6,
         "x_to_go_hidden_depth": 6,
-        "x_to_go_dropout_rate": 0.15,
+        "x_to_go_dropout_rate": 0.1,
         "x_to_go_activation": "leaky_relu",
-        "x_to_go_gae_lambda": 0.2,
+        "x_to_go_gae_lambda": 0.9,
         # Projection
         "projection_name": "no_substitution_no_terminal",
         "projection_horizon": 15,
-        "projection_relaxation_penalty": 100,
+        "projection_relaxation_penalty": 25,
         # Solver
         "solver_name": "osqp",
-        "solver_alpha": 0.25,
-        "solver_sigma": 1e-1,
-        "solver_rho_equality": 1e-2,
-        "solver_rho_inequality": 1e-2,
-        "solver_max_iter": 500,
-        "solver_tol": 1e-3,
-        "solver_gradient_clip": 1e5,
+        "solver_alpha": 1.6,
+        "solver_sigma": 0.25,
+        "solver_rho_equality": 1e3,
+        "solver_rho_inequality": 1e1,
+        "solver_max_iter_nonlin": 100,
+        "solver_max_iter_lin": 1e3,
+        "solver_tol": 1e-1,
+        "solver_gradient_clip": 1e3,
         # Optimizers
-        "optimizer_policy_name": "adabelief",
-        "optimizer_policy_learning_rate": 1e-4,
-        "optimizer_cost_name": "adabelief",
+        "optimizer_policy_name": "adamw",
+        "optimizer_policy_learning_rate": 1e-1,
+        "optimizer_cost_name": "adamw",
         "optimizer_cost_learning_rate": 1e-1,
-        "optimizer_relax_name": "adabelief",
+        "optimizer_relax_name": "adamw",
         "optimizer_relax_learning_rate": 1e-1,
         # Training parameters
-        "batchsize": 512,
-        "batches_per_epoch": 5,
-        "td_gamma": 0.9,
-        "epochs": 100,
+        "batchsize": 256,
+        "batches_per_epoch": 2,
+        "td_gamma": 0.95,
+        "epochs": 200,
     }
 
     sweep_configuration = {
         "method": "bayes",
-        "metric": {"goal": "minimize", "name": "solver_iterations"},
+        "metric": {"goal": "minimize", "name": "residual"},
         # "early_terminate": {"type": "hyperband", "min_iter": 20, "eta": 1.5},
         "parameters": {
             "system_name": {"value": "double_pendulum"},
-            "seed": {"value": 42},
+            "seed": {"value": 0},
+            # Policy
             "policy_name": {"value": "dropout_mlp"},
             "policy_hidden_dim": {"value": 6},
             "policy_hidden_depth": {"value": 6},
-            "policy_dropout_rate": {"value": 0.15},
+            "policy_dropout_rate": {"value": 0.2},
             "policy_activation": {"value": "leaky_relu"},
             "policy_intervention_cost": {"value": 0.5},
-            # Cost-to-go
-            "cost_to_go_hidden_dim": {"value": 6},
-            "cost_to_go_hidden_depth": {"value": 6},
-            "cost_to_go_dropout_rate": {"value": 0.15},
-            "cost_to_go_activation": {"value": "leaky_relu"},
-            # Relax-to-go
-            "relax_to_go_hidden_dim": {"value": 6},
-            "relax_to_go_hidden_depth": {"value": 6},
-            "relax_to_go_dropout_rate": {"value": 0.15},
-            "relax_to_go_activation": {"value": "leaky_relu"},
+            "policy_gae_lambda": {"value": 0.8},
+            # Cost-to-go and Relax-to-go
+            "x_to_go_hidden_dim": {"value": 6},
+            "x_to_go_hidden_depth": {"value": 6},
+            "x_to_go_dropout_rate": {"value": 0.2},
+            "x_to_go_activation": {"value": "leaky_relu"},
+            "x_to_go_gae_lambda": {"value": 0.8},
+            # Projection
             "projection_name": {"value": "no_substitution_no_terminal"},
-            "projection_horizon": {"value": 50},
-            "projection_relaxation_penalty": {"value": 100},
+            "projection_horizon": {"value": 20},
+            "projection_relaxation_penalty": {"value": 50},
             "solver_name": {"value": "shallow"},
-            "solver_alpha": {"value": 0.1},
+            "solver_alpha": {
+                "distribution": "uniform",
+                "max": 1.8,
+                "min": 0.2,
+            },
             "solver_sigma": {
                 "distribution": "log_uniform_values",
-                "max": 1.0,
-                "min": 0.01,
+                "max": 1e3,
+                "min": 1e-6,
             },
             "solver_rho_equality": {
                 "distribution": "log_uniform_values",
-                "max": 1e-1,
-                "min": 1e-4,
+                "max": 1e3,
+                "min": 1e-6,
             },
             "solver_rho_inequality": {
                 "distribution": "log_uniform_values",
-                "max": 1e-1,
-                "min": 1e-4,
+                "max": 1e3,
+                "min": 1e-6,
             },
-            "solver_max_iter": {"value": 1e3},
-            "solver_tol": {"value": 1e-1},
+            "solver_max_iter_nonlin": {"value": 100},
+            "solver_max_iter_lin": {"value": 500},
+            "solver_tol": {"value": 1e-3},
+            "solver_gradient_clip": {"value": 1e4},
+            # Optimizers
             "optimizer_policy_name": {"value": "adamw"},
             "optimizer_policy_learning_rate": {"value": 1e-2},
             "optimizer_cost_name": {"value": "adamw"},
             "optimizer_cost_learning_rate": {"value": 1e-2},
             "optimizer_relax_name": {"value": "adamw"},
             "optimizer_relax_learning_rate": {"value": 1e-2},
-            "batchsize": {"value": 128},
+            "batchsize": {"value": 512},
             "batches_per_epoch": {"value": 1},
             "td_gamma": {"value": 0.95},
-            "gae_lambda": {"value": 0.99},
             "epochs": {"value": 1},
         },
     }
 
     train(project=project, config=config)
 
-    # sweep_id = None  # Replace with your sweep ID if you have one
+    # sweep_id = "ru5crwal"  # Replace with your sweep ID if you have one
     # if sweep_id is None:
     #     print("No sweep ID provided, creating sweep.")
     #     sweep_id = wandb.sweep(sweep=sweep_configuration, project=project)

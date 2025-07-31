@@ -8,7 +8,11 @@ from hcnn.optimization import (
     OptimizationSolverShallow,
 )
 from hcnn.policy import PolicyBase, PolicyMLP
-from hcnn.projection import ProjectionBase, ProjectionNoSubsNoTerm
+from hcnn.projection import (
+    ProjectionBase,
+    ProjectionNoSubsNoTerm,
+    ProjectionNoSubsTerm,
+)
 from hcnn.system_constraints import SystemConstraintsBase, SystemConstraintsBox
 from hcnn.system_costs import SystemCostsBase, SystemCostsQuadratic
 from hcnn.system_dynamics import (
@@ -106,7 +110,7 @@ class TrainBundle(nnx.Module):
 
     @staticmethod
     def build_double_pendulum(config: WandbConfig):
-        sys_dynamics = SystemDynamicsDoublePendulum.factory(dt=0.02)
+        sys_dynamics = SystemDynamicsDoublePendulum.factory(dt=0.01)
         sys_costs = SystemCostsQuadratic.factory(
             state_cost_matrix=jnp.diag(jnp.array([1.0, 1.0, 0.1, 0.1])),
             action_cost_matrix=jnp.diag(jnp.array([0.1])),
@@ -116,8 +120,8 @@ class TrainBundle(nnx.Module):
         )
         action_range = (-1, +1)
         sys_constraints = SystemConstraintsBox.factory(
-            state_l=jnp.array([-jnp.inf, -jnp.inf, -jnp.pi, -jnp.pi]),
-            state_u=jnp.array([+jnp.inf, +jnp.inf, +jnp.pi, +jnp.pi]),
+            state_l=jnp.array([-jnp.inf, -jnp.inf, -2 * jnp.pi, -2 * jnp.pi]),
+            state_u=jnp.array([+jnp.inf, +jnp.inf, +2 * jnp.pi, +2 * jnp.pi]),
             action_l=action_range[0] * jnp.ones(sys_dynamics.action_dim),
             action_u=action_range[1] * jnp.ones(sys_dynamics.action_dim),
         )
@@ -169,8 +173,18 @@ class TrainBundle(nnx.Module):
                 horizon=config.projection_horizon,
                 relaxation_penalty=config.projection_relaxation_penalty,
             )
+        elif config.projection_name == "no_substitution_terminal":
+            return ProjectionNoSubsTerm.factory(
+                policy=policy,
+                relax_to_go=relax_to_go,
+                sys_dynamics=sys_dynamics,
+                sys_constraints=sys_constraints,
+                horizon=config.projection_horizon,
+                relaxation_penalty=config.projection_relaxation_penalty,
+                td_gamma=config.td_gamma,
+            )
         else:
-            raise ValueError(f"Unknown system: {config.system_name}")
+            raise ValueError(f"Unknown projection: {config.projection_name}")
 
     @staticmethod
     def build_solver(config: WandbConfig) -> OptimizationSolverBase:
@@ -186,7 +200,8 @@ class TrainBundle(nnx.Module):
             sigma=config.solver_sigma,
             rho_equality=config.solver_rho_equality,
             rho_inequality=config.solver_rho_inequality,
-            max_iter=config.solver_max_iter,
+            max_iter_nonlin=config.solver_max_iter_nonlin,
+            max_iter_lin=config.solver_max_iter_lin,
             tol=config.solver_tol,
             gradient_clip=config.solver_gradient_clip,
         )
@@ -291,7 +306,9 @@ class TrainBundle(nnx.Module):
             # solver metrics
             primal_residual=nnx.metrics.Average("primal_residual"),
             dual_residual=nnx.metrics.Average("dual_residual"),
-            solver_iterations=nnx.metrics.Average("solver_iterations"),
+            residual=nnx.metrics.Average("residual"),
+            solver_iter_lin=nnx.metrics.Average("solver_iter_lin"),
+            solver_iter_nonlin=nnx.metrics.Average("solver_iter_nonlin"),
             # policy training metrics
             mean_policy_gradient=nnx.metrics.Average("mean_policy_gradient"),
             max_policy_gradient=nnx.metrics.Average("max_policy_gradient"),

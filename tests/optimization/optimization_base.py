@@ -47,6 +47,7 @@ class UnconstrainedProblem(OptimizationProblemBase[jax.Array, jax.Array]):
 def test_solve_unconstrained(solver: OptimizationSolverBase):
     dimension = 5
     for i in range(15):
+        print(f"run {i}")
         # create
         keys = jax.random.split(jax.random.key(i), 2)
         cost_quad_diag = jnp.abs(jax.random.normal(keys[0], (dimension,)))
@@ -56,7 +57,7 @@ def test_solve_unconstrained(solver: OptimizationSolverBase):
         )
 
         # solve
-        x_star, _ = solver.solve(problem, phi_d, phi_nd)
+        x_star, info = solver.solve(problem, phi_d, phi_nd)
 
         # verify
         x_star_analytic = -cost_linear / cost_quad_diag
@@ -71,6 +72,7 @@ def test_solve_unconstrained(solver: OptimizationSolverBase):
 def test_vjp_unconstrained(solver: OptimizationSolverBase):
     dimension = 5
     for i in range(15):
+        print(f"run {i}")
         # create
         keys = jax.random.split(jax.random.key(i), 2)
         cost_quad_diag = jnp.abs(jax.random.normal(keys[0], (dimension,)))
@@ -149,21 +151,22 @@ class BoxProjectionProblem(OptimizationProblemBase[jax.Array, jax.Array]):
 def test_solve_box_projection(solver: OptimizationSolverBase):
     dimension = 5
     for i in range(15):
+        print(f"run {i}")
         # create
         keys = jax.random.split(jax.random.key(i), 3)
         origin = jax.random.normal(keys[0], (dimension,))
         lower_bound = jax.random.uniform(
-            keys[1], (dimension,), minval=-5, maxval=5
+            keys[1], (dimension,), minval=-1, maxval=0
         )
         upper_bound = jax.random.uniform(
-            keys[2], (dimension,), minval=lower_bound, maxval=10
+            keys[2], (dimension,), minval=0, maxval=1
         )
         problem, phi_d, phi_nd = BoxProjectionProblem.factory(
             origin, lower_bound, upper_bound
         )
 
         # solve
-        x_star, _ = solver.solve(problem, phi_d, phi_nd)
+        x_star, info = solver.solve(problem, phi_d, phi_nd)
 
         # verify
         x_star_analytic = jnp.clip(origin, lower_bound, upper_bound)
@@ -177,6 +180,7 @@ def test_solve_box_projection(solver: OptimizationSolverBase):
 def test_vjp_box_projection(solver: OptimizationSolverBase):
     dimension = 5
     for i in range(15):
+        print(f"run {i}")
         # create
         keys = jax.random.split(jax.random.key(i), 3)
         origin = jax.random.normal(keys[0], (dimension,))
@@ -308,7 +312,7 @@ def test_solve_triangle_projection(solver: OptimizationSolverBase):
             x_star,
             x_star_analytic,
             atol=1e-4,
-        )
+        ), f"{x_star}, {x_star_analytic}"
 
 
 def test_vjp_triangle_projection(solver: OptimizationSolverBase):

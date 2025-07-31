@@ -97,17 +97,13 @@ class LossAndGrad:
             td_gamma=self.td_gamma,
             gae_lambda=self.policy_gae_lambda,
         )
-        discounted_interventions = jnp.sum(
-            rollout_interventions
-            * (self.td_gamma ** jnp.arange(rollout_interventions.shape[-1])),
-            axis=-1,
-        )
+        interventions = jnp.sum(rollout_interventions, axis=-1)
 
         # minimize discounted interventions and maximize advantage
         # (i.e., minimize the negative of the advantage)
         return (
-            -jnp.mean(advantage_t) * (1 - self.policy_intervention_cost)
-            + jnp.mean(discounted_interventions) * self.policy_intervention_cost
+            -jnp.mean(advantage_t) * (1.0 - self.policy_intervention_cost)
+            + jnp.mean(interventions) * self.policy_intervention_cost
         )
 
     def cost_to_go_loss(
@@ -230,11 +226,11 @@ class LossAndGrad:
             - nnx.State: The updated state of the relax-to-go model.
         """
         # Calculate max relaxations at each time step
-        relaxations_plus_max = jnp.max(relaxations_plus, axis=-1)
-        relaxations_minus_max = jnp.max(relaxations_minus, axis=-1)
+        relaxations_plus_max = jnp.sum(jnp.abs(relaxations_plus), axis=-1)
+        relaxations_minus_max = jnp.sum(jnp.abs(relaxations_minus), axis=-1)
 
         # Shape of stage_relax is (..., horizon)
-        stage_relax = jnp.maximum(relaxations_plus_max, relaxations_minus_max)
+        stage_relax = relaxations_plus_max + relaxations_minus_max
 
         # Hydrate the relax_to_go model
         relax_to_go = nnx.merge(self.relax_to_go_graphdef, relax_to_go_state)
@@ -433,6 +429,7 @@ class LossAndGrad:
             interventions=policy_interv_grad,
             relaxations_plus=jnp.zeros_like(rollout.relaxations_plus),
             relaxations_minus=jnp.zeros_like(rollout.relaxations_minus),
+            relaxation_terminal=jnp.zeros_like(rollout.relaxation_terminal),
         )
         policy_info_grad = jax.tree_util.tree_map(
             lambda x: jnp.zeros_like(x), info
@@ -475,7 +472,8 @@ class LossAndGrad:
         info = OptimizationInfo(
             primal_residual=jnp.mean(info.primal_residual),
             dual_residual=jnp.mean(info.dual_residual),
-            solver_iterations=jnp.mean(info.solver_iterations),
+            iterations_lin=jnp.mean(info.iterations_lin),
+            iterations_nonlin=jnp.mean(info.iterations_nonlin),
         )
 
         return loss, grad, model_states, info

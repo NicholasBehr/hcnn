@@ -9,6 +9,7 @@ dependencies = [
     "jax>=0.6.2",
     "jax[cuda12]>=0.6.2; sys_platform == 'linux'",
     "mujoco-mjx>=3.3.3",
+    "plotly>=6.2.0",
     "wandb>=0.20.1",
 ]
 
@@ -24,8 +25,6 @@ dev = [
     "pytest-xdist>=3.8.0",
     "ruff>=0.11.4",
     "matplotlib>=3.10.1",
-    "pillow>=11.3.0",
-    "mediapy>=1.2.4",
 ]
 
 [tool.ruff]

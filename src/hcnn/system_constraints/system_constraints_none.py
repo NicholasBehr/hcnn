@@ -25,16 +25,12 @@ class SystemConstraintsNone(SystemConstraintsBase):
         Returns:
             SystemConstraintsNone: An instance with no constraints.
         """
-        # Get JAX's default float type to respect 32/64 bit config
-        float_dtype = jnp.ones(1).dtype
-
-        # For an unconstrained system, there are no constraints
         return cls(
             state_dim=state_dim,
             action_dim=action_dim,
-            constraint_dim=0,
-            lower_bound=jnp.array([], dtype=float_dtype),
-            upper_bound=jnp.array([], dtype=float_dtype),
+            constraint_dim=1,
+            lower_bound=-jnp.ones(1),
+            upper_bound=+jnp.ones(1),
         )
 
     def __call__(self, state: jax.Array, action: jax.Array) -> jax.Array:
@@ -46,8 +42,8 @@ class SystemConstraintsNone(SystemConstraintsBase):
             action (jax.Array): Action, shape (..., action_dim).
 
         Returns:
-            jax.Array: Empty constraint array, shape (..., 0).
+            jax.Array: Constraint array, shape (..., 1).
         """
-        # Return an empty array with the correct batch dimensions
+        # Return an array with the correct batch dimensions and constraint_dim=1
         batch_shape = jnp.broadcast_shapes(state.shape[:-1], action.shape[:-1])
-        return jnp.empty(batch_shape + (0,), dtype=state.dtype)
+        return jnp.zeros(batch_shape + (1,))

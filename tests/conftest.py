@@ -2,7 +2,7 @@ import jax
 
 
 def pytest_configure(config):
-    use_gpu = False  # Set to False to use CPU
+    use_gpu = False
 
     if use_gpu:
         # Set JAX to use GPU 3 by default

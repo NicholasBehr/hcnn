@@ -51,11 +51,12 @@ def train_epoch(
             cost_to_go=nnx.state(train.cost_to_go),
         )
         # TODO, add a more sophisticated sampler
+        # initial_states = jnp.zeros((config.batchsize, train.policy.state_dim))
         initial_states = jax.random.uniform(
             sample_key,
             (config.batchsize, train.policy.state_dim),
-            minval=-2 * jnp.pi,
-            maxval=+2 * jnp.pi,
+            minval=-11,
+            maxval=+11,
         )
         jax_keys = jax.random.split(split_key, config.batchsize)
 
@@ -84,13 +85,13 @@ def train_epoch(
         train.metrics.update(
             policy_loss=loss.policy,
             cost_to_go_loss=loss.cost_to_go,
-            cost_encountered=loss.cost_encountered,
             relax_to_go_loss=loss.relax_to_go,
             primal_residual=info.primal_residual,
             dual_residual=info.dual_residual,
             residual=info.primal_residual + info.dual_residual,
             solver_iter_lin=info.iterations_lin,
             solver_iter_nonlin=info.iterations_nonlin,
+            solver_converged=info.converged_flag,
             max_policy_gradient=max_policy_gradient,
             mean_policy_gradient=mean_policy_gradient,
         )
@@ -216,11 +217,11 @@ def train(project=None, config=None):
 
             # Log to WandB
             wandb.log(step=epoch, data=metrics)
-            if (epoch % 50 == 0 and epoch > 0) or epoch == config.epochs - 1:
+            if (epoch % 25 == 0 and epoch > 0) or epoch == config.epochs - 1:
                 visualize_receding_horizon(
                     train_bundle=nnx.merge(train_graphdef, train_state),
-                    steps=200,
-                    initial_state=jnp.array([1.0, 0.0, 1.0, 1.0]),
+                    steps=50,
+                    initial_state=jnp.array([3.0, 3.0]),
                 )
                 save_train_state(train_state)
 
@@ -235,50 +236,48 @@ if __name__ == "__main__":
 
     # Specify the project name and configuration
     # This can be overridden by wandb.agent when running a sweep
-    project = "double_pendulum_2"
+    project = "double_integrator"
     config = {
-        "system_name": "double_pendulum",
+        "system_name": project,
         "seed": 0,
         # Policy
         "policy_name": "dropout_mlp",
-        "policy_hidden_dim": 6,
-        "policy_hidden_depth": 6,
+        "policy_hidden_dim": 4,
+        "policy_hidden_depth": 4,
         "policy_dropout_rate": 0.1,
         "policy_activation": "leaky_relu",
         "policy_intervention_cost": 0.5,  # range [0, 1]!
-        "policy_gae_lambda": 0.9,
         # Cost-to-go and Relax-to-go
-        "x_to_go_hidden_dim": 6,
-        "x_to_go_hidden_depth": 6,
-        "x_to_go_dropout_rate": 0.1,
-        "x_to_go_activation": "leaky_relu",
-        "x_to_go_gae_lambda": 0.9,
+        "x_to_go_hidden_dim": 4,
+        "x_to_go_hidden_depth": 4,
+        "x_to_go_dropout_rate": 0.0,
+        "x_to_go_activation": "celu",
         # Projection
         "projection_name": "no_substitution_no_terminal",
-        "projection_horizon": 15,
-        "projection_relaxation_penalty": 25,
+        "projection_horizon": 30,
+        "projection_relaxation_penalty": 100,
         # Solver
-        "solver_name": "osqp",
+        "solver_name": "shallow",
         "solver_alpha": 1.6,
         "solver_sigma": 0.25,
-        "solver_rho_equality": 1e3,
-        "solver_rho_inequality": 1e1,
-        "solver_max_iter_nonlin": 100,
-        "solver_max_iter_lin": 1e3,
+        "solver_rho_equality": 1e-1,
+        "solver_rho_inequality": 1e-2,
+        "solver_max_iter_nonlin": 40,
+        "solver_max_iter_lin": 5e3,
         "solver_tol": 1e-1,
-        "solver_gradient_clip": 1e3,
         # Optimizers
-        "optimizer_policy_name": "adamw",
-        "optimizer_policy_learning_rate": 1e-1,
-        "optimizer_cost_name": "adamw",
+        "optimizer_policy_name": "nadamw",
+        "optimizer_policy_learning_rate": 1e-3,
+        "optimizer_cost_name": "nadamw",
         "optimizer_cost_learning_rate": 1e-1,
-        "optimizer_relax_name": "adamw",
+        "optimizer_relax_name": "nadamw",
         "optimizer_relax_learning_rate": 1e-1,
         # Training parameters
-        "batchsize": 256,
-        "batches_per_epoch": 2,
-        "td_gamma": 0.95,
-        "epochs": 200,
+        "batchsize": 512,
+        "batches_per_epoch": 1,
+        "td_gamma": 0.95,  # certainty of rollout during INFERENCE
+        "gae_lambda": 0.5,  # certainty of rollout during TRAINING
+        "epochs": 500,
     }
 
     sweep_configuration = {

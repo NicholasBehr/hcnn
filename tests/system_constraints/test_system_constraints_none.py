@@ -27,9 +27,9 @@ class TestSystemConstraintsNone(TestSystemConstraintsBase):
         assert isinstance(sys_constraints, SystemConstraintsNone)
         assert sys_constraints.state_dim == self.state_dim
         assert sys_constraints.action_dim == self.action_dim
-        assert sys_constraints.constraint_dim == 0
-        assert sys_constraints.lower_bound.shape == (0,)
-        assert sys_constraints.upper_bound.shape == (0,)
+        assert sys_constraints.constraint_dim == 1
+        assert sys_constraints.lower_bound.shape == (1,)
+        assert sys_constraints.upper_bound.shape == (1,)
         assert jnp.issubdtype(sys_constraints.lower_bound.dtype, jnp.floating)
         assert jnp.issubdtype(sys_constraints.upper_bound.dtype, jnp.floating)
 
@@ -44,7 +44,7 @@ class TestSystemConstraintsNone(TestSystemConstraintsBase):
         action = jax.random.normal(key, (self.action_dim,))
 
         constraints = sys_constraints(state, action)
-        assert constraints.shape == (0,)
+        assert constraints.shape == (1,)
 
         # Test batch
         batch_size = 10
@@ -52,7 +52,7 @@ class TestSystemConstraintsNone(TestSystemConstraintsBase):
         actions = jax.random.normal(key, (batch_size, self.action_dim))
 
         constraints_batch = sys_constraints(states, actions)
-        assert constraints_batch.shape == (batch_size, 0)
+        assert constraints_batch.shape == (batch_size, 1)
 
         # Test batch with horizon
         horizon = 20
@@ -64,7 +64,7 @@ class TestSystemConstraintsNone(TestSystemConstraintsBase):
         )
 
         constraints_horizon = sys_constraints(states_horizon, actions_horizon)
-        assert constraints_horizon.shape == (batch_size, horizon, 0)
+        assert constraints_horizon.shape == (batch_size, horizon, 1)
 
     def test_unconstrained_property(
         self, sys_constraints: SystemConstraintsNone
@@ -72,6 +72,6 @@ class TestSystemConstraintsNone(TestSystemConstraintsBase):
         """Test that the system is truly unconstrained."""
         # Since there are no constraints, any state-action pair should be valid
         # This is implicitly tested by having constraint_dim = 0
-        assert sys_constraints.constraint_dim == 0
-        assert len(sys_constraints.lower_bound) == 0
-        assert len(sys_constraints.upper_bound) == 0
+        assert sys_constraints.constraint_dim == 1
+        assert len(sys_constraints.lower_bound) == 1
+        assert len(sys_constraints.upper_bound) == 1

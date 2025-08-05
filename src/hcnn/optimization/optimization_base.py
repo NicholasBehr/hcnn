@@ -96,6 +96,7 @@ class OptimizationInfo:
     dual_residual: jax.Array
     iterations_lin: jax.Array
     iterations_nonlin: jax.Array
+    converged_flag: jax.Array
 
 
 @struct.dataclass
@@ -134,21 +135,18 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
     alpha: float = 1.6
 
     # dual step-size to align x and x_tilde
-    sigma: float = 1e-6
+    sigma: float = 0.1
 
     # dual step-size to align z and z_tilde
-    rho_equality: float = 1e-1
-    rho_inequality: float = 1e-1
+    rho_equality: float = 100
+    rho_inequality: float = 0.1
 
     # maximum number of iterations
-    max_iter_nonlin: int = int(200)
-    max_iter_lin: int = int(200)
+    max_iter_nonlin: int = int(500)
+    max_iter_lin: int = int(1e3)
 
     # convergence tolerance for primal and dual residuals
     tol: float = 1e-4
-
-    # gradient clipping threshold
-    gradient_clip: float = 1e12
 
     @partial(jax.jit, static_argnames="self")
     def solve(
@@ -260,7 +258,7 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
                 constraint_lin=constraint_lin,
             ),
             init_val=variables,
-            unroll=5,
+            unroll=True,
         )
 
         # Update residuals
@@ -355,10 +353,13 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
         info = OptimizationInfo(
             primal_residual=jnp.max(jnp.abs(variables.primal_residuals)),
             dual_residual=jnp.max(jnp.abs(variables.dual_residuals)),
-            iterations_lin=jnp.array(
-                variables.iter_lin_total / variables.iter_nonlin
+            iterations_lin=jnp.where(
+                variables.iter_nonlin == 0,
+                jnp.array(0.0),
+                variables.iter_lin_total / variables.iter_nonlin,
             ),
             iterations_nonlin=variables.iter_nonlin,
+            converged_flag=jnp.logical_not(self.convergence_check(variables)),
         )
 
         return variables, info
@@ -387,6 +388,7 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
             problem,
             phi_d,
             phi_nd,
+            info.converged_flag,
         )
 
     def _solve_bwd(
@@ -398,100 +400,109 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
             OptimizationProblemBase[PhiTypeDiff, PhiTypeNoDiff],
             PhiTypeDiff,
             PhiTypeNoDiff,
+            bool,
         ],
         g: jax.Array,
     ):
         ## Unpack and rename input
-        x_star, z_star, y_star, problem, phi_d, phi_nd = res
+        x_star, z_star, y_star, problem, phi_d, phi_nd, converged_flag = res
         y_plus = jnp.maximum(y_star, 0)
         y_minus = jnp.minimum(y_star, 0)
         v1 = g[0]  # gradient w.r.t. x_star
 
-        ## Implicit VJP (step 1) - Add numerical stability
-        # Add tol to prevent division by zero
-        # (since this is the tolerance of the divisor anyways)
-        frac_upper = jax.lax.div(1.0, problem.upper_bound - z_star + self.tol)
-        frac_lower = jax.lax.div(1.0, z_star - problem.lower_bound + self.tol)
-        plus_u_minus_l = y_plus * frac_upper - y_minus * frac_lower
-
-        ## Precompute JVP, VJP and HVP for the constraint function
-        # h(x) = problem.constraint_fn_x(x)
-        # h_jvp computes v -> dh/dx @ v
-        _, h_jvp = jax.linearize(
-            lambda x: problem.constraint_fn(x, phi_d, phi_nd), x_star
-        )
-        # h_vjp computes w -> w^T @ dh/dx
-        _, h_vjp = jax.vjp(
-            lambda x: problem.constraint_fn(x, phi_d, phi_nd), x_star
-        )
-        # h_hvp computes y.T @ d^2h/dx^2 @ v
-        _, h_hvp = jax.linearize(
-            jax.grad(
-                lambda x: jnp.dot(
-                    y_star, problem.constraint_fn(x, phi_d, phi_nd)
-                )
-            ),
-            x_star,
-        )
-
-        def schur_lhs(u1: jax.Array) -> jax.Array:
+        def compute_zero_gradients():
             return (
-                problem.cost_quad_diag * u1
-                + h_hvp(u1)
-                + h_vjp(plus_u_minus_l * h_jvp(u1))[0]
+                jax.tree_util.tree_map(lambda x: jnp.zeros_like(x), problem),
+                jax.tree_util.tree_map(lambda x: jnp.zeros_like(x), phi_d),
+                None,
             )
 
-        # Use more robust solver settings
-        u1, _ = jax.scipy.sparse.linalg.bicgstab(A=schur_lhs, b=v1)
+        def compute_vjp_gradients():
+            ## Implicit VJP (step 1) - Add numerical stability
+            # Add tol to prevent division by zero
+            # (since this is the tolerance of the divisor anyways)
+            frac_upper = jax.lax.div(1.0, problem.upper_bound - z_star + 1e-12)
+            frac_lower = jax.lax.div(1.0, z_star - problem.lower_bound + 1e-12)
+            plus_u_minus_l = y_plus * frac_upper - y_minus * frac_lower
 
-        # replace nan with zeros
-        u1 = jnp.nan_to_num(u1, nan=0.0, posinf=1e4, neginf=-1e4)
+            ## Precompute JVP, VJP and HVP for the constraint function
+            # h(x) = problem.constraint_fn_x(x)
+            # h_jvp computes v -> dh/dx @ v
+            _, h_jvp = jax.linearize(
+                lambda x: problem.constraint_fn(x, phi_d, phi_nd), x_star
+            )
+            # h_vjp computes w -> w^T @ dh/dx
+            _, h_vjp = jax.vjp(
+                lambda x: problem.constraint_fn(x, phi_d, phi_nd), x_star
+            )
+            # h_hvp computes y.T @ d^2h/dx^2 @ v
+            _, h_hvp = jax.linearize(
+                jax.grad(
+                    lambda x: jnp.dot(
+                        y_star, problem.constraint_fn(x, phi_d, phi_nd)
+                    )
+                ),
+                x_star,
+            )
 
-        h_jvp_u1 = h_jvp(u1)
-        u2 = plus_u_minus_l * h_jvp_u1
-        u3 = frac_upper * h_jvp_u1
-        u4 = frac_lower * h_jvp_u1
+            def schur_lhs(u1: jax.Array) -> jax.Array:
+                return (
+                    problem.cost_quad_diag * u1
+                    + h_hvp(u1)
+                    + h_vjp(plus_u_minus_l * h_jvp(u1))[0]
+                    + 1e-12 * u1
+                )
 
-        ## Explicit VJP (step 2)
-        g_problem = jax.tree_util.tree_map(
-            lambda x: jnp.zeros_like(x), problem
-        )  # copy
-        g_problem = g_problem.replace(
-            cost_quad_diag=-x_star * u1,
-            cost_linear=-u1,  # type: ignore -> is always jax.array
-            upper_bound=+y_plus * u3,
-            lower_bound=-y_minus * u4,
+            # Use more robust solver settings
+            u1, _ = jax.scipy.sparse.linalg.gmres(A=schur_lhs, b=v1)
+
+            # replace nan with zeros
+            u1 = jnp.nan_to_num(u1, nan=0.0, posinf=1e4, neginf=-1e4)
+
+            h_jvp_u1 = h_jvp(u1)
+            u2 = plus_u_minus_l * h_jvp_u1
+            u3 = frac_upper * h_jvp_u1
+            u4 = frac_lower * h_jvp_u1
+
+            ## Explicit VJP (step 2)
+            g_problem = jax.tree_util.tree_map(
+                lambda x: jnp.zeros_like(x), problem
+            )  # copy
+            g_problem = g_problem.replace(
+                cost_quad_diag=-x_star * u1,
+                cost_linear=-u1,  # type: ignore -> is always jax.array
+                upper_bound=+y_plus * u3,
+                lower_bound=-y_minus * u4,
+            )
+
+            g_phi_d_1 = jax.grad(
+                lambda phi_d_arg: jnp.dot(
+                    jax.jvp(
+                        lambda x_inner: problem.constraint_fn(
+                            x_inner, phi_d_arg, phi_nd
+                        ),
+                        (x_star,),
+                        (-u1,),  # type: ignore -> is always jax.array
+                    )[1],
+                    y_star,
+                ),
+            )(phi_d)
+            g_phi_d_2 = jax.vjp(
+                lambda phi_d_arg: problem.constraint_fn(
+                    x_star, phi_d_arg, phi_nd
+                ),
+                phi_d,
+            )[1](-u2)[0]
+            g_phi_d = jax.tree_util.tree_map(jnp.add, g_phi_d_1, g_phi_d_2)
+
+            return (g_problem, g_phi_d, None)
+
+        ## Return zero gradient if fixpoint wasnt found, otherwise compute VJP
+        return jax.lax.cond(
+            converged_flag,
+            compute_vjp_gradients,
+            compute_zero_gradients,
         )
-
-        g_phi_d_1 = jax.grad(
-            lambda phi_d_arg: jnp.dot(
-                jax.jvp(
-                    lambda x_inner: problem.constraint_fn(
-                        x_inner, phi_d_arg, phi_nd
-                    ),
-                    (x_star,),
-                    (-u1,),  # type: ignore -> is always jax.array
-                )[1],
-                y_star,
-            ),
-        )(phi_d)
-        g_phi_d_2 = jax.vjp(
-            lambda phi_d_arg: problem.constraint_fn(x_star, phi_d_arg, phi_nd),
-            phi_d,
-        )[1](-u2)[0]
-        g_phi_d = jax.tree_util.tree_map(jnp.add, g_phi_d_1, g_phi_d_2)
-
-        # Add gradient clipping
-        g_problem = jax.tree_util.tree_map(
-            lambda g: jnp.clip(g, -self.gradient_clip, self.gradient_clip),
-            g_problem,
-        )
-        g_phi_d = jax.tree_util.tree_map(
-            lambda g: jnp.clip(g, -self.gradient_clip, self.gradient_clip),
-            g_phi_d,
-        )
-
-        return (g_problem, g_phi_d, None)
 
     _solve_vjp = jax.custom_vjp(_solve, nondiff_argnums=(0,))
     _solve_vjp.defvjp(_solve_fwd, _solve_bwd)

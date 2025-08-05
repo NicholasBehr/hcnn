@@ -13,8 +13,16 @@ from hcnn.projection import (
     ProjectionNoSubsNoTerm,
     ProjectionNoSubsTerm,
 )
-from hcnn.system_constraints import SystemConstraintsBase, SystemConstraintsBox
-from hcnn.system_costs import SystemCostsBase, SystemCostsQuadratic
+from hcnn.system_constraints import (
+    SystemConstraintsBase,
+    SystemConstraintsBox,
+    SystemConstraintsNone,
+)
+from hcnn.system_costs import (
+    SystemCostsBase,
+    SystemCostsDoublePendulum,
+    SystemCostsQuadratic,
+)
 from hcnn.system_dynamics import (
     SystemDynamicsBase,
     SystemDynamicsDoublePendulum,
@@ -28,6 +36,7 @@ OPTIMIZERS = {
     "adabelief": optax.adabelief,
     "adagrad": optax.adagrad,
     "adam": optax.adam,
+    "nadam": optax.nadam,
     "adamw": optax.adamw,
     "nadamw": optax.nadamw,
 }
@@ -77,8 +86,8 @@ class TrainBundle(nnx.Module):
         sys_constraints = SystemConstraintsBox.factory(
             state_l=jnp.array([-10, -10]),
             state_u=jnp.array([+10, +10]),
-            action_l=jnp.array(action_range[0]),
-            action_u=jnp.array(action_range[1]),
+            action_l=jnp.array([action_range[0]]),
+            action_u=jnp.array([action_range[1]]),
         )
         rngs = nnx.Rngs(config.seed)
         policy = PolicyMLP.factory(
@@ -111,20 +120,29 @@ class TrainBundle(nnx.Module):
     @staticmethod
     def build_double_pendulum(config: WandbConfig):
         sys_dynamics = SystemDynamicsDoublePendulum.factory(dt=0.01)
-        sys_costs = SystemCostsQuadratic.factory(
-            state_cost_matrix=jnp.diag(jnp.array([1.0, 1.0, 0.1, 0.1])),
-            action_cost_matrix=jnp.diag(jnp.array([0.1])),
+        sys_costs = SystemCostsDoublePendulum.factory(
+            dynamics=sys_dynamics,
             reference_state=jnp.array([jnp.pi, 0.0, 0.0, 0.0]),
-            reference_action=jnp.array([0.0]),
-            periodic_states=frozenset({0, 1}),  # Pendulum angles are periodic
+            position_weights=jnp.ones(4),
+            action_weights=jnp.zeros(1),
         )
+        # sys_costs = SystemCostsQuadratic.factory(
+        #     state_cost_matrix=jnp.diag(jnp.array([10.0, 10.0, 0, 0])),``
+        #     action_cost_matrix=jnp.diag(jnp.array([0])),
+        #     reference_state=jnp.array([jnp.pi, 0.0, 0.0, 0.0]),
+        #     reference_action=jnp.array([0.0]),
+        #     periodic_states=frozenset({0, 1}),  # Pendulum angles are periodic
+        # )
         action_range = (-1, +1)
-        sys_constraints = SystemConstraintsBox.factory(
-            state_l=jnp.array([-jnp.inf, -jnp.inf, -2 * jnp.pi, -2 * jnp.pi]),
-            state_u=jnp.array([+jnp.inf, +jnp.inf, +2 * jnp.pi, +2 * jnp.pi]),
-            action_l=action_range[0] * jnp.ones(sys_dynamics.action_dim),
-            action_u=action_range[1] * jnp.ones(sys_dynamics.action_dim),
+        sys_constraints = SystemConstraintsNone.factory(
+            state_dim=4, action_dim=1
         )
+        # sys_constraints = SystemConstraintsBox.factory(
+        #     state_l=jnp.array([-jnp.inf, -jnp.inf, -2 * jnp.pi, -2 * jnp.pi]),
+        #     state_u=jnp.array([+jnp.inf, +jnp.inf, +2 * jnp.pi, +2 * jnp.pi]),
+        #     action_l=action_range[0] * jnp.ones(sys_dynamics.action_dim),
+        #     action_u=action_range[1] * jnp.ones(sys_dynamics.action_dim),
+        # )
         rngs = nnx.Rngs(config.seed)
         periodic_states = frozenset({0, 1})  # Pendulum angles are periodic
         policy = PolicyMLP.factory(
@@ -171,6 +189,7 @@ class TrainBundle(nnx.Module):
                 sys_dynamics=sys_dynamics,
                 sys_constraints=sys_constraints,
                 horizon=config.projection_horizon,
+                td_gamma=config.td_gamma,
                 relaxation_penalty=config.projection_relaxation_penalty,
             )
         elif config.projection_name == "no_substitution_terminal":
@@ -180,8 +199,8 @@ class TrainBundle(nnx.Module):
                 sys_dynamics=sys_dynamics,
                 sys_constraints=sys_constraints,
                 horizon=config.projection_horizon,
-                relaxation_penalty=config.projection_relaxation_penalty,
                 td_gamma=config.td_gamma,
+                relaxation_penalty=config.projection_relaxation_penalty,
             )
         else:
             raise ValueError(f"Unknown projection: {config.projection_name}")
@@ -203,7 +222,6 @@ class TrainBundle(nnx.Module):
             max_iter_nonlin=config.solver_max_iter_nonlin,
             max_iter_lin=config.solver_max_iter_lin,
             tol=config.solver_tol,
-            gradient_clip=config.solver_gradient_clip,
         )
 
     @staticmethod
@@ -222,8 +240,7 @@ class TrainBundle(nnx.Module):
             cost_to_go=cost_to_go,
             relax_to_go=relax_to_go,
             td_gamma=config.td_gamma,
-            policy_gae_lambda=config.policy_gae_lambda,
-            x_to_go_gae_lambda=config.x_to_go_gae_lambda,
+            gae_lambda=config.gae_lambda,
             policy_intervention_cost=config.policy_intervention_cost,
         )
 
@@ -301,7 +318,6 @@ class TrainBundle(nnx.Module):
             # model evaluation metrics
             policy_loss=nnx.metrics.Average("policy_loss"),
             cost_to_go_loss=nnx.metrics.Average("cost_to_go_loss"),
-            cost_encountered=nnx.metrics.Average("cost_encountered"),
             relax_to_go_loss=nnx.metrics.Average("relax_to_go_loss"),
             # solver metrics
             primal_residual=nnx.metrics.Average("primal_residual"),
@@ -309,6 +325,7 @@ class TrainBundle(nnx.Module):
             residual=nnx.metrics.Average("residual"),
             solver_iter_lin=nnx.metrics.Average("solver_iter_lin"),
             solver_iter_nonlin=nnx.metrics.Average("solver_iter_nonlin"),
+            solver_converged=nnx.metrics.Average("solver_converged"),
             # policy training metrics
             mean_policy_gradient=nnx.metrics.Average("mean_policy_gradient"),
             max_policy_gradient=nnx.metrics.Average("max_policy_gradient"),

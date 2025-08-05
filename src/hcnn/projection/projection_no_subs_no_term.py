@@ -25,6 +25,7 @@ class ProjectionNoSubsNoTerm(ProjectionBase):
         sys_dynamics: SystemDynamicsBase,
         sys_constraints: SystemConstraintsBase,
         horizon: int,
+        td_gamma: float,
         relaxation_penalty: float,
     ):
         state_dim = sys_dynamics.state_dim
@@ -32,11 +33,12 @@ class ProjectionNoSubsNoTerm(ProjectionBase):
         constraint_dim = sys_constraints.constraint_dim
 
         # OptimizationProblemBase
+        discount = (td_gamma ** jnp.arange(horizon))[:, None]
         cost_quad_diag = flatten_util.ravel_pytree(
             Rollout(
                 states=jnp.zeros((horizon, state_dim)),
                 actions=jnp.zeros((horizon, action_dim)),
-                interventions=2 * jnp.ones((horizon, action_dim)),
+                interventions=2 * jnp.ones((horizon, action_dim)) * discount,
                 relaxations_plus=jnp.zeros((horizon, constraint_dim)),
                 relaxations_minus=jnp.zeros((horizon, constraint_dim)),
                 relaxation_terminal=jnp.zeros((1,)),
@@ -48,9 +50,11 @@ class ProjectionNoSubsNoTerm(ProjectionBase):
                 actions=jnp.zeros((horizon, action_dim)),
                 interventions=jnp.zeros((horizon, action_dim)),
                 relaxations_plus=relaxation_penalty
-                * jnp.ones((horizon, constraint_dim)),
+                * jnp.ones((horizon, constraint_dim))
+                * discount,
                 relaxations_minus=relaxation_penalty
-                * jnp.ones((horizon, constraint_dim)),
+                * jnp.ones((horizon, constraint_dim))
+                * discount,
                 relaxation_terminal=jnp.zeros((1,)),
             )
         )[0]
@@ -80,6 +84,8 @@ class ProjectionNoSubsNoTerm(ProjectionBase):
             action_dim=action_dim,
             constraint_dim=constraint_dim,
             horizon=horizon,
+            td_gamma=td_gamma,
+            relaxation_penalty=relaxation_penalty,
             policy_graphdef=nnx.split(policy)[0],
             relax_to_go_graphdef=nnx.split(relax_to_go)[0],
             sys_dynamics=sys_dynamics,

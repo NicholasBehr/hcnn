@@ -30,10 +30,6 @@ class OptimizationSolverOSQP(
         )
 
         ## x_tilde ##
-        def cg_preconditioner(v: jax.Array) -> jax.Array:
-            # (Q + sigma I) @ v
-            return (problem.cost_quad_diag + self.sigma) * v
-
         def cg_lhs(v: jax.Array) -> jax.Array:
             # Q v
             a = problem.cost_quad_diag * v
@@ -61,7 +57,6 @@ class OptimizationSolverOSQP(
             A=cg_lhs,
             b=cg_rhs,
             x0=variables.x_tilde,
-            M=cg_preconditioner,
             maxiter=25,
         )
 

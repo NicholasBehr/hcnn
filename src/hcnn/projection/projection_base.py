@@ -42,6 +42,8 @@ class ProjectionBase(OptimizationProblemBase[ProjectionPhiD, ProjectionPhiND]):
     action_dim: int = struct.field(pytree_node=False)
     constraint_dim: int = struct.field(pytree_node=False)
     horizon: int = struct.field(pytree_node=False)
+    relaxation_penalty: float = struct.field(pytree_node=False)
+    td_gamma: float = struct.field(pytree_node=False)
 
     policy_graphdef: nnx.GraphDef
     relax_to_go_graphdef: nnx.GraphDef

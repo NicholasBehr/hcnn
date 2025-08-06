@@ -16,7 +16,6 @@ from hcnn.projection import (
 from hcnn.system_constraints import (
     SystemConstraintsBase,
     SystemConstraintsBox,
-    SystemConstraintsNone,
 )
 from hcnn.system_costs import (
     SystemCostsBase,
@@ -28,6 +27,7 @@ from hcnn.system_dynamics import (
     SystemDynamicsDoublePendulum,
     SystemDynamicsLinear,
 )
+from hcnn.system_dynamics.system_dynamics_bike import SystemDynamicsBike
 from hcnn.training.dropout_mlp import DropoutMLP
 from hcnn.training.loss_and_grad import LossAndGrad
 from wandb.sdk.wandb_config import Config as WandbConfig
@@ -82,12 +82,13 @@ class TrainBundle(nnx.Module):
             state_cost_matrix=jnp.array([[5, 0], [0, 5]]),
             action_cost_matrix=jnp.array([[1]]),
         )
-        action_range = (-1, +1)
+        action_min = jnp.array([-1.0])
+        action_max = jnp.array([1.0])
         sys_constraints = SystemConstraintsBox.factory(
             state_l=jnp.array([-10, -10]),
             state_u=jnp.array([+10, +10]),
-            action_l=jnp.array([action_range[0]]),
-            action_u=jnp.array([action_range[1]]),
+            action_l=action_min,
+            action_u=action_max,
         )
         rngs = nnx.Rngs(config.seed)
         policy = PolicyMLP.factory(
@@ -98,7 +99,8 @@ class TrainBundle(nnx.Module):
             rngs=rngs,
             activation=config.policy_activation,
             dropout_rate=config.policy_dropout_rate,
-            action_range=action_range,
+            action_min=action_min,
+            action_max=action_max,
         )
         cost_to_go = TrainBundle.build_x_to_go(
             config=config,
@@ -119,32 +121,23 @@ class TrainBundle(nnx.Module):
 
     @staticmethod
     def build_double_pendulum(config: WandbConfig):
-        sys_dynamics = SystemDynamicsDoublePendulum.factory(dt=0.01)
+        sys_dynamics = SystemDynamicsDoublePendulum.factory(dt=0.05)
         sys_costs = SystemCostsDoublePendulum.factory(
             dynamics=sys_dynamics,
             reference_state=jnp.array([jnp.pi, 0.0, 0.0, 0.0]),
-            position_weights=jnp.ones(4),
+            position_weights=jnp.array([0.0, 0.0, 5.0, 5.0]),
             action_weights=jnp.zeros(1),
         )
-        # sys_costs = SystemCostsQuadratic.factory(
-        #     state_cost_matrix=jnp.diag(jnp.array([10.0, 10.0, 0, 0])),``
-        #     action_cost_matrix=jnp.diag(jnp.array([0])),
-        #     reference_state=jnp.array([jnp.pi, 0.0, 0.0, 0.0]),
-        #     reference_action=jnp.array([0.0]),
-        #     periodic_states=frozenset({0, 1}),  # Pendulum angles are periodic
-        # )
-        action_range = (-1, +1)
-        sys_constraints = SystemConstraintsNone.factory(
-            state_dim=4, action_dim=1
+        action_min = jnp.array([-1.0])
+        action_max = jnp.array([1.0])
+        sys_constraints = SystemConstraintsBox.factory(
+            state_l=jnp.array([-jnp.inf, -jnp.inf, -2 * jnp.pi, -2 * jnp.pi]),
+            state_u=jnp.array([+jnp.inf, +jnp.inf, +2 * jnp.pi, +2 * jnp.pi]),
+            action_l=action_min,
+            action_u=action_max,
         )
-        # sys_constraints = SystemConstraintsBox.factory(
-        #     state_l=jnp.array([-jnp.inf, -jnp.inf, -2 * jnp.pi, -2 * jnp.pi]),
-        #     state_u=jnp.array([+jnp.inf, +jnp.inf, +2 * jnp.pi, +2 * jnp.pi]),
-        #     action_l=action_range[0] * jnp.ones(sys_dynamics.action_dim),
-        #     action_u=action_range[1] * jnp.ones(sys_dynamics.action_dim),
-        # )
         rngs = nnx.Rngs(config.seed)
-        periodic_states = frozenset({0, 1})  # Pendulum angles are periodic
+        periodic_states = frozenset({0, 1})  # Pendulum angles
         policy = PolicyMLP.factory(
             state_dim=4,
             action_dim=1,
@@ -154,11 +147,65 @@ class TrainBundle(nnx.Module):
             activation=config.policy_activation,
             dropout_rate=config.policy_dropout_rate,
             periodic_states=periodic_states,
-            action_range=action_range,
+            action_min=action_min,
+            action_max=action_max,
         )
         cost_to_go = TrainBundle.build_x_to_go(
             config=config,
             state_dim=4,
+            rngs=rngs,
+            periodic_states=periodic_states,
+        )
+        relax_to_go = nnx.clone(cost_to_go)
+
+        return (
+            sys_dynamics,
+            sys_costs,
+            sys_constraints,
+            rngs,
+            policy,
+            cost_to_go,
+            relax_to_go,
+        )
+
+    @staticmethod
+    def build_bike(config: WandbConfig):
+        sys_dynamics = SystemDynamicsBike.factory(
+            wheelbase=0.5,
+            max_steering=0.6,
+            dt=0.1,
+        )
+        sys_costs = SystemCostsQuadratic.factory(
+            state_cost_matrix=jnp.diag(jnp.array([10.0, 10.0, 0.0, 0.0])),
+            action_cost_matrix=jnp.diag(jnp.array([1.0, 1.0])),
+            reference_state=jnp.array([0.0, 0.0, 0.0, 0.0]),
+            reference_action=jnp.array([0.0, 0.0]),
+        )
+        action_min = jnp.array([-1.0, -0.5])  # [acceleration, steering]
+        action_max = jnp.array([1.0, 0.5])  # [acceleration, steering]
+        sys_constraints = SystemConstraintsBox.factory(
+            state_l=jnp.array([-jnp.inf, -jnp.inf, -jnp.pi, 0]),
+            state_u=jnp.array([+jnp.inf, +jnp.inf, +jnp.pi, +jnp.inf]),
+            action_l=action_min,
+            action_u=action_max,
+        )
+        rngs = nnx.Rngs(config.seed)
+        periodic_states = frozenset({2})  # Bike heading angle
+        policy = PolicyMLP.factory(
+            state_dim=sys_dynamics.state_dim,
+            action_dim=sys_dynamics.action_dim,
+            hidden_features=[config.policy_hidden_dim]
+            * config.policy_hidden_depth,
+            rngs=rngs,
+            activation=config.policy_activation,
+            dropout_rate=config.policy_dropout_rate,
+            periodic_states=periodic_states,
+            action_min=action_min,
+            action_max=action_max,
+        )
+        cost_to_go = TrainBundle.build_x_to_go(
+            config=config,
+            state_dim=sys_dynamics.state_dim,
             rngs=rngs,
             periodic_states=periodic_states,
         )
@@ -258,6 +305,7 @@ class TrainBundle(nnx.Module):
         system_builders = {
             "double_integrator": TrainBundle.build_double_integrator,
             "double_pendulum": TrainBundle.build_double_pendulum,
+            "bike": TrainBundle.build_bike,
         }
         builder = system_builders.get(config.system_name)
 

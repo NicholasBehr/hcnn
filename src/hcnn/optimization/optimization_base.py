@@ -146,7 +146,7 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
     max_iter_lin: int = int(1e3)
 
     # convergence tolerance for primal and dual residuals
-    tol: float = 1e-4
+    tol: float = 1e-3
 
     @partial(jax.jit, static_argnames="self")
     def solve(
@@ -284,7 +284,7 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
         # Update constraint linearization
         constraint_lin = ConstraintLinearization.factory(
             constraint_fn=constraint_fn,
-            x_lin=variables.x_tilde,  # TODO: check if we should use x_tilde?
+            x_lin=variables.x_tilde,
         )
 
         # Solve linear QP subproblem
@@ -307,7 +307,7 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
         # Update constraint linearization
         constraint_lin = ConstraintLinearization.factory(
             constraint_fn=constraint_fn,
-            x_lin=variables.x,  # TODO: check if we should use x_tilde?
+            x_lin=variables.x,
         )
 
         # Update residuals
@@ -418,11 +418,13 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
             )
 
         def compute_vjp_gradients():
-            ## Implicit VJP (step 1) - Add numerical stability
-            # Add tol to prevent division by zero
-            # (since this is the tolerance of the divisor anyways)
-            frac_upper = jax.lax.div(1.0, problem.upper_bound - z_star + 1e-12)
-            frac_lower = jax.lax.div(1.0, z_star - problem.lower_bound + 1e-12)
+            ## Implicit VJP (step 1)
+            frac_upper = jax.lax.div(
+                1.0, problem.upper_bound - z_star + self.tol
+            )
+            frac_lower = jax.lax.div(
+                1.0, z_star - problem.lower_bound + self.tol
+            )
             plus_u_minus_l = y_plus * frac_upper - y_minus * frac_lower
 
             ## Precompute JVP, VJP and HVP for the constraint function
@@ -450,10 +452,10 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
                     problem.cost_quad_diag * u1
                     + h_hvp(u1)
                     + h_vjp(plus_u_minus_l * h_jvp(u1))[0]
-                    + 1e-12 * u1
                 )
 
-            # Use more robust solver settings
+            # prefer gmres over bicgstab even though operator is symmetric!!
+            # this is a empirical observation (greatly improved stability)
             u1, _ = jax.scipy.sparse.linalg.gmres(A=schur_lhs, b=v1)
 
             # replace nan with zeros

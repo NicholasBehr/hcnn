@@ -145,7 +145,8 @@ class LossAndGrad:
         cost_encountered = self.sys_costs(rollout.states, rollout.actions)
 
         # Sum interventions over action_dim to get (..., horizon)
-        intervention_cost = jnp.sum(rollout.interventions, axis=-1)
+        intervention_cost = jnp.mean(rollout.interventions**2, axis=-1)
+
         return (
             cost_encountered * (1.0 - self.policy_intervention_cost)
             + intervention_cost * self.policy_intervention_cost

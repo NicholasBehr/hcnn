@@ -18,7 +18,8 @@ class DropoutMLP(nnx.Module):
     layers: List[nnx.Linear | nnx.Dropout | Any]
     rngs: nnx.Rngs
     periodic_in_features: frozenset[int]  # indices of 2π periodic states
-    out_feature_range: tuple[float, float] | None
+    out_feature_min: jnp.ndarray | None  # min values for each output feature
+    out_feature_max: jnp.ndarray | None  # max values for each output feature
 
     def __init__(
         self,
@@ -30,7 +31,8 @@ class DropoutMLP(nnx.Module):
         activation: str = "leaky_relu",
         dropout_rate: float = 0.0,
         periodic_in_features: frozenset[int] | None = None,
-        out_feature_range: tuple[float, float] | None = None,
+        out_feature_min: jnp.ndarray | None = None,
+        out_feature_max: jnp.ndarray | None = None,
     ):
         """Initializes the MLP module.
 
@@ -49,19 +51,51 @@ class DropoutMLP(nnx.Module):
                 2π periodic. These features will be transformed using sin and
                 cos before being fed into the network. If None or empty, no
                 periodic transformations are applied. Defaults to None.
-            out_feature_range: Optional tuple (min, max) to constrain output
-                features. If provided, output will be squashed using sigmoid and
-                scaled to the specified range. Defaults to None.
+            out_feature_min: Optional array of minimum values for each output
+                feature. If provided, must have shape (out_features,). Used
+                together with out_feature_max for output scaling. If None, no
+                minimum constraint is applied. Defaults to None.
+            out_feature_max: Optional array of maximum values for each output
+                feature. If provided, must have shape (out_features,). Used
+                together with out_feature_min for output scaling. If None, no
+                maximum constraint is applied. Defaults to None.
         """
         if dropout_rate < 0.0 or dropout_rate > 1.0:
             raise ValueError("dropout_rate must be in range [0.0, 1.0].")
+
+        # Validate output feature constraints
+        if out_feature_min is not None and out_feature_min.shape != (
+            out_features,
+        ):
+            raise ValueError(
+                f"out_feature_min must have shape ({out_features},), "
+                f"got {out_feature_min.shape}"
+            )
+        if out_feature_max is not None and out_feature_max.shape != (
+            out_features,
+        ):
+            raise ValueError(
+                f"out_feature_max must have shape ({out_features},), "
+                f"got {out_feature_max.shape}"
+            )
+        if (
+            out_feature_min is not None
+            and out_feature_max is not None
+            and jnp.any(out_feature_min >= out_feature_max)
+        ):
+            raise ValueError(
+                "out_feature_min must be less than out_feature_max "
+                "for all features"
+            )
+
         self.rngs = rngs
         self.periodic_in_features = (
             periodic_in_features
             if periodic_in_features is not None
             else frozenset(set())
         )
-        self.out_feature_range = out_feature_range
+        self.out_feature_min = out_feature_min
+        self.out_feature_max = out_feature_max
 
         # Calculate the actual input size after periodic transformation
         # Each periodic feature becomes 2 features (sin and cos)
@@ -115,7 +149,7 @@ class DropoutMLP(nnx.Module):
                 x = layer(x)
 
         # Apply output range scaling if specified
-        if self.out_feature_range is not None:
+        if self.out_feature_min is not None or self.out_feature_max is not None:
             x = self._apply_output_scaling(x)
 
         return x
@@ -157,14 +191,37 @@ class DropoutMLP(nnx.Module):
             x: Output tensor from the network.
 
         Returns:
-            Scaled tensor with values constrained to the specified range.
+            Scaled tensor with values constrained to the specified ranges.
         """
-        if self.out_feature_range is None:
+        if self.out_feature_min is None and self.out_feature_max is None:
             return x
 
-        min_val, max_val = self.out_feature_range
-        # Apply sigmoid to squash to (0, 1), then scale to (min_val, max_val)
+        # Apply sigmoid to squash to (0, 1)
         x_sigmoid = nnx.sigmoid(x)
-        # Scale from (0, 1) to (min_val, max_val)
-        scaled_x = min_val + (max_val - min_val) * x_sigmoid
-        return scaled_x
+
+        # If both min and max are provided, scale from (0, 1) to (min, max)
+        if (
+            self.out_feature_min is not None
+            and self.out_feature_max is not None
+        ):
+            scaled_x = (
+                self.out_feature_min
+                + (self.out_feature_max - self.out_feature_min) * x_sigmoid
+            )
+            return scaled_x
+
+        # If only min is provided, scale from (0, inf) to (min, inf)
+        if self.out_feature_min is not None:
+            # Use log-sigmoid to map to [0, inf), then add min
+            # sigmoid maps to (0, 1), so -log(1/sigmoid - 1) = x maps to
+            # [0, inf) but this is just the original x, so we use softplus
+            scaled_x = self.out_feature_min + nnx.softplus(x)
+            return scaled_x
+
+        # If only max is provided, scale from (-inf, 0) to (-inf, max)
+        if self.out_feature_max is not None:
+            # Use negative softplus to map to (-inf, 0], then add max
+            scaled_x = self.out_feature_max - nnx.softplus(-x)
+            return scaled_x
+
+        return x

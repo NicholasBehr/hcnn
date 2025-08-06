@@ -60,7 +60,7 @@ def visualize_receding_horizon(
     if initial_state is None:
         initial_state = jnp.zeros(sys_dynamics.state_dim)
 
-    # Create subplots - one for each state dimension and one for each action dimension
+    # Create subplots - one for each state dimension and action dimension
     total_plots = state_dim + action_dim
     subplot_titles = [f"State {i + 1}" for i in range(state_dim)] + [
         f"Action {i + 1}" for i in range(action_dim)
@@ -196,7 +196,8 @@ def visualize_receding_horizon(
     wandb.log({"receding_horizon_visualization": fig})
 
     print(
-        f"Simulated {len(actual_states)} steps with {state_dim} states and {action_dim} actions"
+        f"Simulated {len(actual_states)} steps with"
+        f" {state_dim} states and {action_dim} actions"
     )
     print("Receding horizon visualization logged to wandb")
 

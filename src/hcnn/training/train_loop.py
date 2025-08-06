@@ -55,8 +55,8 @@ def train_epoch(
         initial_states = jax.random.uniform(
             sample_key,
             (config.batchsize, train.policy.state_dim),
-            minval=-11,
-            maxval=+11,
+            minval=jnp.array([-11, -11, -jnp.pi, -5]),
+            maxval=jnp.array([+11, +11, +jnp.pi, +5]),
         )
         jax_keys = jax.random.split(split_key, config.batchsize)
 
@@ -221,7 +221,7 @@ def train(project=None, config=None):
                 visualize_receding_horizon(
                     train_bundle=nnx.merge(train_graphdef, train_state),
                     steps=50,
-                    initial_state=jnp.array([3.0, 3.0]),
+                    initial_state=jnp.ones(train.policy.state_dim),
                 )
                 save_train_state(train_state)
 
@@ -236,20 +236,20 @@ if __name__ == "__main__":
 
     # Specify the project name and configuration
     # This can be overridden by wandb.agent when running a sweep
-    project = "double_integrator"
+    project = "bike"
     config = {
         "system_name": project,
         "seed": 0,
         # Policy
         "policy_name": "dropout_mlp",
-        "policy_hidden_dim": 4,
-        "policy_hidden_depth": 4,
-        "policy_dropout_rate": 0.1,
-        "policy_activation": "leaky_relu",
+        "policy_hidden_dim": 5,
+        "policy_hidden_depth": 5,
+        "policy_dropout_rate": 0.15,
+        "policy_activation": "celu",
         "policy_intervention_cost": 0.5,  # range [0, 1]!
         # Cost-to-go and Relax-to-go
-        "x_to_go_hidden_dim": 4,
-        "x_to_go_hidden_depth": 4,
+        "x_to_go_hidden_dim": 5,
+        "x_to_go_hidden_depth": 5,
         "x_to_go_dropout_rate": 0.0,
         "x_to_go_activation": "celu",
         # Projection
@@ -258,53 +258,52 @@ if __name__ == "__main__":
         "projection_relaxation_penalty": 100,
         # Solver
         "solver_name": "shallow",
-        "solver_alpha": 1.6,
-        "solver_sigma": 0.25,
-        "solver_rho_equality": 1e-1,
-        "solver_rho_inequality": 1e-2,
-        "solver_max_iter_nonlin": 40,
+        "solver_alpha": 1.2,
+        "solver_sigma": 5e-3,
+        "solver_rho_equality": 10,
+        "solver_rho_inequality": 10,
+        "solver_max_iter_nonlin": 50,
         "solver_max_iter_lin": 5e3,
-        "solver_tol": 1e-1,
+        "solver_tol": 1e-2,
         # Optimizers
-        "optimizer_policy_name": "nadamw",
+        "optimizer_policy_name": "adamw",
         "optimizer_policy_learning_rate": 1e-3,
-        "optimizer_cost_name": "nadamw",
+        "optimizer_cost_name": "adamw",
         "optimizer_cost_learning_rate": 1e-1,
-        "optimizer_relax_name": "nadamw",
+        "optimizer_relax_name": "adamw",
         "optimizer_relax_learning_rate": 1e-1,
         # Training parameters
         "batchsize": 512,
         "batches_per_epoch": 1,
         "td_gamma": 0.95,  # certainty of rollout during INFERENCE
-        "gae_lambda": 0.5,  # certainty of rollout during TRAINING
+        "gae_lambda": 0.95,  # certainty of rollout during TRAINING
         "epochs": 500,
     }
 
     sweep_configuration = {
         "method": "bayes",
-        "metric": {"goal": "minimize", "name": "residual"},
+        "metric": {"goal": "maximize", "name": "solver_converged"},
         # "early_terminate": {"type": "hyperband", "min_iter": 20, "eta": 1.5},
         "parameters": {
-            "system_name": {"value": "double_pendulum"},
+            "system_name": {"value": project},
             "seed": {"value": 0},
             # Policy
             "policy_name": {"value": "dropout_mlp"},
-            "policy_hidden_dim": {"value": 6},
-            "policy_hidden_depth": {"value": 6},
-            "policy_dropout_rate": {"value": 0.2},
-            "policy_activation": {"value": "leaky_relu"},
+            "policy_hidden_dim": {"value": 5},
+            "policy_hidden_depth": {"value": 5},
+            "policy_dropout_rate": {"value": 0.15},
+            "policy_activation": {"value": "celu"},
             "policy_intervention_cost": {"value": 0.5},
-            "policy_gae_lambda": {"value": 0.8},
             # Cost-to-go and Relax-to-go
-            "x_to_go_hidden_dim": {"value": 6},
-            "x_to_go_hidden_depth": {"value": 6},
-            "x_to_go_dropout_rate": {"value": 0.2},
-            "x_to_go_activation": {"value": "leaky_relu"},
-            "x_to_go_gae_lambda": {"value": 0.8},
+            "x_to_go_hidden_dim": {"value": 5},
+            "x_to_go_hidden_depth": {"value": 5},
+            "x_to_go_dropout_rate": {"value": 0.0},
+            "x_to_go_activation": {"value": "celu"},
             # Projection
             "projection_name": {"value": "no_substitution_no_terminal"},
-            "projection_horizon": {"value": 20},
-            "projection_relaxation_penalty": {"value": 50},
+            "projection_horizon": {"value": 30},
+            "projection_relaxation_penalty": {"value": 100},
+            # Solver
             "solver_name": {"value": "shallow"},
             "solver_alpha": {
                 "distribution": "uniform",
@@ -314,39 +313,40 @@ if __name__ == "__main__":
             "solver_sigma": {
                 "distribution": "log_uniform_values",
                 "max": 1e3,
-                "min": 1e-6,
+                "min": 1e-3,
             },
             "solver_rho_equality": {
                 "distribution": "log_uniform_values",
                 "max": 1e3,
-                "min": 1e-6,
+                "min": 1e-3,
             },
             "solver_rho_inequality": {
                 "distribution": "log_uniform_values",
                 "max": 1e3,
-                "min": 1e-6,
+                "min": 1e-3,
             },
-            "solver_max_iter_nonlin": {"value": 100},
-            "solver_max_iter_lin": {"value": 500},
-            "solver_tol": {"value": 1e-3},
-            "solver_gradient_clip": {"value": 1e4},
+            "solver_max_iter_nonlin": {"value": 20},
+            "solver_max_iter_lin": {"value": 3e3},
+            "solver_tol": {"value": 1e-2},
             # Optimizers
             "optimizer_policy_name": {"value": "adamw"},
-            "optimizer_policy_learning_rate": {"value": 1e-2},
+            "optimizer_policy_learning_rate": {"value": 1e-3},
             "optimizer_cost_name": {"value": "adamw"},
-            "optimizer_cost_learning_rate": {"value": 1e-2},
+            "optimizer_cost_learning_rate": {"value": 1e-1},
             "optimizer_relax_name": {"value": "adamw"},
-            "optimizer_relax_learning_rate": {"value": 1e-2},
-            "batchsize": {"value": 512},
+            "optimizer_relax_learning_rate": {"value": 1e-1},
+            # Training parameters
+            "batchsize": {"value": 256},
             "batches_per_epoch": {"value": 1},
             "td_gamma": {"value": 0.95},
+            "gae_lambda": {"value": 0.95},
             "epochs": {"value": 1},
         },
     }
 
     train(project=project, config=config)
 
-    # sweep_id = "ru5crwal"  # Replace with your sweep ID if you have one
+    # sweep_id = "bczbuuql"  # Replace with your sweep ID if you have one
     # if sweep_id is None:
     #     print("No sweep ID provided, creating sweep.")
     #     sweep_id = wandb.sweep(sweep=sweep_configuration, project=project)
@@ -355,5 +355,5 @@ if __name__ == "__main__":
     #     sweep_id=sweep_id,
     #     function=train,
     #     project=project,
-    #     count=50,
+    #     count=10,
     # )

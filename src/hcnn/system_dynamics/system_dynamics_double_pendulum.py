@@ -51,10 +51,10 @@ class SystemDynamicsDoublePendulum(SystemDynamicsContinuous):
     """
 
     # Physical parameters - with defaults to avoid field ordering issues
-    m1: float = 1.0  # Mass of link 1 (kg)
-    m2: float = 1.0  # Mass of link 2 (kg)
-    l1: float = 1.0  # Length of link 1 (m)
-    l2: float = 1.0  # Length of link 2 (m)
+    m1: float = 0.1  # Mass of link 1 (kg)
+    m2: float = 0.1  # Mass of link 2 (kg)
+    l1: float = 0.1  # Length of link 1 (m)
+    l2: float = 0.1  # Length of link 2 (m)
     g: float = 9.81  # Gravitational acceleration (m/s²)
     b1: float = 0.1  # Damping coefficient at joint 1 (N⋅m⋅s/rad)
     b2: float = 0.1  # Damping coefficient at joint 2 (N⋅m⋅s/rad)

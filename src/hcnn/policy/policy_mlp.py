@@ -64,8 +64,5 @@ class PolicyMLP(PolicyBase):
     def __call__(
         self,
         state: jax.Array,
-        *,
-        jax_key: jax.Array | None = None,
     ) -> jax.Array:
-        rngs = None if jax_key is None else nnx.Rngs(jax_key)
-        return self.dropout_mlp(x=state, rngs=rngs)
+        return self.dropout_mlp(x=state)

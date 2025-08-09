@@ -6,10 +6,8 @@ from flax import nnx, struct
 from jax import flatten_util
 
 from hcnn.optimization import OptimizationProblemBase
-from hcnn.policy import PolicyBase
 from hcnn.system_constraints import SystemConstraintsBase
 from hcnn.system_dynamics import SystemDynamicsBase
-from hcnn.training import DropoutMLP
 
 
 @struct.dataclass
@@ -19,7 +17,6 @@ class Rollout:
     interventions: jax.Array  # Shape: (horizon, action_dim)
     relaxations_plus: jax.Array  # Shape: (horizon, constraint_dim)
     relaxations_minus: jax.Array  # Shape: (horizon, constraint_dim)
-    relaxation_terminal: jax.Array  # Shape: (1,)
 
 
 @struct.dataclass
@@ -33,7 +30,6 @@ class ProjectionPhiND:
     policy_non_params: nnx.State
     relax_to_go_non_params: nnx.State
     initial_state: jax.Array  # Shape: (state_dim,)
-    jax_key: jax.Array
 
 
 @struct.dataclass
@@ -46,7 +42,6 @@ class ProjectionBase(OptimizationProblemBase[ProjectionPhiD, ProjectionPhiND]):
     td_gamma: float = struct.field(pytree_node=False)
 
     policy_graphdef: nnx.GraphDef
-    relax_to_go_graphdef: nnx.GraphDef
     sys_dynamics: SystemDynamicsBase
     sys_constraints: SystemConstraintsBase
 
@@ -57,7 +52,6 @@ class ProjectionBase(OptimizationProblemBase[ProjectionPhiD, ProjectionPhiND]):
             interventions=jnp.empty((self.horizon, self.action_dim)),
             relaxations_plus=jnp.empty((self.horizon, self.constraint_dim)),
             relaxations_minus=jnp.empty((self.horizon, self.constraint_dim)),
-            relaxation_terminal=jnp.empty((1,)),
         )
         _, unravel_pytree = flatten_util.ravel_pytree(template)
         return unravel_pytree(x)
@@ -65,18 +59,18 @@ class ProjectionBase(OptimizationProblemBase[ProjectionPhiD, ProjectionPhiND]):
     def get_x0(
         self, phi_d: ProjectionPhiD, phi_nd: ProjectionPhiND
     ) -> jax.Array:
-        def next_state_action_row(state, _):
-            policy = nnx.merge(
-                self.policy_graphdef,
-                phi_d.policy_params,
-                phi_nd.policy_non_params,
-            )
-            action = policy(state, jax_key=phi_nd.jax_key)
+        policy_state = nnx.State.merge(
+            phi_d.policy_params, phi_nd.policy_non_params
+        )
+
+        def scan_fn(state, _):
+            policy = nnx.merge(self.policy_graphdef, policy_state)
+            action = policy(state)
             next_state = self.sys_dynamics(state, action)
             return next_state, (action, state)
 
         _, (actions, states) = jax.lax.scan(
-            next_state_action_row,
+            scan_fn,
             init=phi_nd.initial_state,
             length=self.horizon,
         )
@@ -88,21 +82,12 @@ class ProjectionBase(OptimizationProblemBase[ProjectionPhiD, ProjectionPhiND]):
         relaxations_minus = jnp.maximum(
             0.0, constraint_values - self.sys_constraints.upper_bound
         )
-        relaxation_to_go = nnx.merge(
-            self.relax_to_go_graphdef,
-            phi_d.relax_to_go_params,
-            phi_nd.relax_to_go_non_params,
-        )
-        relaxation_terminal = relaxation_to_go(
-            states[-1], rngs=nnx.Rngs(phi_nd.jax_key)
-        )
         rollout = Rollout(
             states=states,
             actions=actions,
             interventions=jnp.zeros((self.horizon, self.action_dim)),
             relaxations_plus=relaxations_plus,
             relaxations_minus=relaxations_minus,
-            relaxation_terminal=relaxation_terminal,
         )
 
         return flatten_util.ravel_pytree(rollout)[0]
@@ -145,12 +130,15 @@ class ProjectionBase(OptimizationProblemBase[ProjectionPhiD, ProjectionPhiND]):
     # (3) policy
     @staticmethod
     def constraints_policy(
-        rollout: Rollout, policy: PolicyBase, jax_key: jax.Array
+        rollout: Rollout, policy_graphdef: nnx.GraphDef, policy_state: nnx.State
     ) -> jax.Array:
-        constraints = (
-            rollout.actions
-            - policy(rollout.states, jax_key=jax_key)
-            - rollout.interventions
+        def vmap_fn(policy_state, rollout):
+            policy = nnx.merge(policy_graphdef, policy_state)
+            action = policy(rollout.states)
+            return rollout.actions - action - rollout.interventions
+
+        constraints = jax.vmap(vmap_fn, in_axes=(None, 0))(
+            policy_state, rollout
         )
         return constraints.ravel()
 
@@ -203,20 +191,4 @@ class ProjectionBase(OptimizationProblemBase[ProjectionPhiD, ProjectionPhiND]):
         return (
             jnp.zeros(2 * horizon * constraint_dim),
             jnp.ones(2 * horizon * constraint_dim) * jnp.inf,
-        )
-
-    # (6) terminal relaxation
-    @staticmethod
-    def constraints_terminal_relax(
-        rollout: Rollout, relax_to_go: DropoutMLP, jax_key: jax.Array
-    ) -> jax.Array:
-        return rollout.relaxation_terminal - relax_to_go(
-            rollout.states[-1], rngs=nnx.Rngs(jax_key)
-        )
-
-    @staticmethod
-    def bounds_terminal_relax() -> tuple[jax.Array, jax.Array]:
-        return (
-            jnp.zeros(1),
-            jnp.zeros(1),
         )

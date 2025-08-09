@@ -29,7 +29,6 @@ def sample_rollout(train_bundle: TrainBundle, initial_state: jax.Array):
         policy_non_params=policy_non_params,
         relax_to_go_non_params=relax_to_go_non_params,
         initial_state=initial_state,
-        jax_key=jax.random.key(0),
     )
     x_star, _ = train_bundle.loss_and_grad.solver.solve(
         train_bundle.loss_and_grad.projection, phi_d, phi_nd

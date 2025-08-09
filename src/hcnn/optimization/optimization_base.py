@@ -450,16 +450,17 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
             def schur_lhs(u1: jax.Array) -> jax.Array:
                 return (
                     problem.cost_quad_diag * u1
-                    + h_hvp(u1)
+                    # + h_hvp(u1) TODO: check if this is needed
                     + h_vjp(plus_u_minus_l * h_jvp(u1))[0]
+                    + self.tol * u1
                 )
 
             # prefer gmres over bicgstab even though operator is symmetric!!
             # this is a empirical observation (greatly improved stability)
-            u1, _ = jax.scipy.sparse.linalg.gmres(A=schur_lhs, b=v1)
+            u1, _ = jax.scipy.sparse.linalg.cg(A=schur_lhs, b=v1)
 
             # replace nan with zeros
-            u1 = jnp.nan_to_num(u1, nan=0.0, posinf=1e4, neginf=-1e4)
+            # u1 = jnp.nan_to_num(u1, nan=0.0, posinf=1e4, neginf=-1e4)
 
             h_jvp_u1 = h_jvp(u1)
             u2 = plus_u_minus_l * h_jvp_u1

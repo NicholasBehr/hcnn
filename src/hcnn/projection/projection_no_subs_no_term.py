@@ -12,7 +12,6 @@ from hcnn.projection.projection_base import (
 )
 from hcnn.system_constraints import SystemConstraintsBase
 from hcnn.system_dynamics import SystemDynamicsBase
-from hcnn.training.dropout_mlp import DropoutMLP
 
 
 @struct.dataclass
@@ -21,7 +20,6 @@ class ProjectionNoSubsNoTerm(ProjectionBase):
     def factory(  # noqa: PLR0913
         cls,
         policy: PolicyBase,
-        relax_to_go: DropoutMLP,
         sys_dynamics: SystemDynamicsBase,
         sys_constraints: SystemConstraintsBase,
         horizon: int,
@@ -33,15 +31,13 @@ class ProjectionNoSubsNoTerm(ProjectionBase):
         constraint_dim = sys_constraints.constraint_dim
 
         # OptimizationProblemBase
-        discount = (td_gamma ** jnp.arange(horizon))[:, None]
         cost_quad_diag = flatten_util.ravel_pytree(
             Rollout(
                 states=jnp.zeros((horizon, state_dim)),
                 actions=jnp.zeros((horizon, action_dim)),
-                interventions=2 * jnp.ones((horizon, action_dim)) * discount,
+                interventions=2 * jnp.ones((horizon, action_dim)),
                 relaxations_plus=jnp.zeros((horizon, constraint_dim)),
                 relaxations_minus=jnp.zeros((horizon, constraint_dim)),
-                relaxation_terminal=jnp.zeros((1,)),
             )
         )[0]
         cost_linear = flatten_util.ravel_pytree(
@@ -50,12 +46,9 @@ class ProjectionNoSubsNoTerm(ProjectionBase):
                 actions=jnp.zeros((horizon, action_dim)),
                 interventions=jnp.zeros((horizon, action_dim)),
                 relaxations_plus=relaxation_penalty
-                * jnp.ones((horizon, constraint_dim))
-                * discount,
+                * jnp.ones((horizon, constraint_dim)),
                 relaxations_minus=relaxation_penalty
-                * jnp.ones((horizon, constraint_dim))
-                * discount,
-                relaxation_terminal=jnp.zeros((1,)),
+                * jnp.ones((horizon, constraint_dim)),
             )
         )[0]
         bound_tuple_list = [
@@ -87,32 +80,38 @@ class ProjectionNoSubsNoTerm(ProjectionBase):
             td_gamma=td_gamma,
             relaxation_penalty=relaxation_penalty,
             policy_graphdef=nnx.split(policy)[0],
-            relax_to_go_graphdef=nnx.split(relax_to_go)[0],
             sys_dynamics=sys_dynamics,
             sys_constraints=sys_constraints,
         )
 
+    @jax.jit
     def constraint_fn(
         self, x: jax.Array, phi_d: ProjectionPhiD, phi_nd: ProjectionPhiND
     ) -> jax.Array:
         rollout = self.x_to_rollout(x)
-        policy = nnx.merge(
-            self.policy_graphdef, phi_d.policy_params, phi_nd.policy_non_params
-        )
 
         constraints_list = [
             self.constraints_initial_state(
-                rollout=rollout, initial_state=phi_nd.initial_state
+                rollout=rollout,
+                initial_state=phi_nd.initial_state,
             ),
             self.constraints_sys_dynamics(
-                rollout=rollout, sys_dynamics=self.sys_dynamics
+                rollout=rollout,
+                sys_dynamics=self.sys_dynamics,
             ),
             self.constraints_policy(
-                rollout=rollout, policy=policy, jax_key=phi_nd.jax_key
+                rollout=rollout,
+                policy_graphdef=self.policy_graphdef,
+                policy_state=nnx.State.merge(
+                    phi_d.policy_params, phi_nd.policy_non_params
+                ),
             ),
             self.constraints_sys_constraints(
-                rollout=rollout, sys_constraints=self.sys_constraints
+                rollout=rollout,
+                sys_constraints=self.sys_constraints,
             ),
-            self.constraints_non_neg_relax(rollout=rollout),
+            self.constraints_non_neg_relax(
+                rollout=rollout,
+            ),
         ]
         return jnp.concatenate(constraints_list)

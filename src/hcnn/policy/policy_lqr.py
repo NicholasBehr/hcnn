@@ -145,7 +145,5 @@ class PolicyLQR(PolicyBase):
     def __call__(
         self,
         state: jax.Array,
-        *,
-        jax_key: jax.Array | None = None,
     ) -> jax.Array:
         return -state @ self.gain_matrix.T

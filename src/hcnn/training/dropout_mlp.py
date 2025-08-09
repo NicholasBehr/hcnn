@@ -119,11 +119,9 @@ class DropoutMLP(nnx.Module):
 
                 # Add Dropout layer after the activation in hidden layers
                 if dropout_rate > 0.0:
-                    self.layers.append(nnx.Dropout(dropout_rate))
+                    self.layers.append(nnx.Dropout(dropout_rate, rngs=rngs))
 
-    def __call__(
-        self, x: jnp.ndarray, *, rngs: nnx.Rngs | None = None
-    ) -> jnp.ndarray:
+    def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
         """Performs the forward pass through the MLP.
 
         Args:
@@ -133,20 +131,13 @@ class DropoutMLP(nnx.Module):
         Returns:
             The output tensor after passing through the MLP.
         """
-        # if no rngs are provided use internal ones
-        if rngs is None:
-            rngs = self.rngs
-
         # Apply periodic transformations if any periodic indices are specified
         if self.periodic_in_features:
             x = self._apply_periodic_transform(x)
 
         # iteratively apply all layers
         for layer in self.layers:
-            if isinstance(layer, nnx.Dropout):
-                x = layer(x, rngs=rngs)
-            else:
-                x = layer(x)
+            x = layer(x)
 
         # Apply output range scaling if specified
         if self.out_feature_min is not None or self.out_feature_max is not None:

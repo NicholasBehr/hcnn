@@ -57,7 +57,7 @@ class OptimizationSolverOSQP(
             A=cg_lhs,
             b=cg_rhs,
             x0=variables.x_tilde,
-            maxiter=25,
+            tol=self.tol / 2,
         )
 
         ## z_tilde ##

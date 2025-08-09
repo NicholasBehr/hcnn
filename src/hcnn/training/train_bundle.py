@@ -11,8 +11,8 @@ from hcnn.policy import PolicyBase, PolicyMLP
 from hcnn.projection import (
     ProjectionBase,
     ProjectionNoSubsNoTerm,
-    ProjectionNoSubsTerm,
 )
+from hcnn.sampler import SamplerUniform
 from hcnn.system_constraints import (
     SystemConstraintsBase,
     SystemConstraintsBox,
@@ -52,7 +52,7 @@ class TrainBundle(nnx.Module):
     opt_cost: nnx.Optimizer
     opt_relax: nnx.Optimizer
     metrics: nnx.MultiMetric
-    rngs: nnx.Rngs
+    sampler: SamplerUniform
 
     @staticmethod
     def build_x_to_go(
@@ -79,24 +79,32 @@ class TrainBundle(nnx.Module):
             action_matrix=jnp.array([[0.5], [1]]),
         )
         sys_costs = SystemCostsQuadratic.factory(
-            state_cost_matrix=jnp.array([[5, 0], [0, 5]]),
+            state_cost_matrix=jnp.array([[10, 0], [0, 10]]),
             action_cost_matrix=jnp.array([[1]]),
         )
         action_min = jnp.array([-1.0])
         action_max = jnp.array([1.0])
+        state_min = jnp.array([-10.0, -10.0])
+        state_max = jnp.array([+10.0, +10.0])
         sys_constraints = SystemConstraintsBox.factory(
-            state_l=jnp.array([-10, -10]),
-            state_u=jnp.array([+10, +10]),
+            state_l=state_min,
+            state_u=state_max,
             action_l=action_min,
             action_u=action_max,
         )
-        rngs = nnx.Rngs(config.seed)
+        sampler = SamplerUniform.factory(
+            state_dim=2,
+            batch_size=config.batchsize,
+            lower_bound=state_min * 1.1,
+            upper_bound=state_max * 1.1,
+            rngs=nnx.Rngs(config.seed + 0),
+        )
         policy = PolicyMLP.factory(
             state_dim=2,
             action_dim=1,
             hidden_features=[config.policy_hidden_dim]
             * config.policy_hidden_depth,
-            rngs=rngs,
+            rngs=nnx.Rngs(config.seed + 1),
             activation=config.policy_activation,
             dropout_rate=config.policy_dropout_rate,
             action_min=action_min,
@@ -105,15 +113,19 @@ class TrainBundle(nnx.Module):
         cost_to_go = TrainBundle.build_x_to_go(
             config=config,
             state_dim=2,
-            rngs=rngs,
+            rngs=nnx.Rngs(config.seed + 2),
         )
-        relax_to_go = nnx.clone(cost_to_go)
+        relax_to_go = TrainBundle.build_x_to_go(
+            config=config,
+            state_dim=2,
+            rngs=nnx.Rngs(config.seed + 3),
+        )
 
         return (
             sys_dynamics,
             sys_costs,
             sys_constraints,
-            rngs,
+            sampler,
             policy,
             cost_to_go,
             relax_to_go,
@@ -136,14 +148,22 @@ class TrainBundle(nnx.Module):
             action_l=action_min,
             action_u=action_max,
         )
-        rngs = nnx.Rngs(config.seed)
+        sampler = SamplerUniform.factory(
+            state_dim=4,
+            batch_size=config.batchsize,
+            lower_bound=jnp.array([-jnp.pi, -jnp.pi, -2 * jnp.pi, -2 * jnp.pi])
+            * 1.1,
+            upper_bound=jnp.array([+jnp.pi, +jnp.pi, +2 * jnp.pi, +2 * jnp.pi])
+            * 1.1,
+            rngs=nnx.Rngs(config.seed + 0),
+        )
         periodic_states = frozenset({0, 1})  # Pendulum angles
         policy = PolicyMLP.factory(
             state_dim=4,
             action_dim=1,
             hidden_features=[config.policy_hidden_dim]
             * config.policy_hidden_depth,
-            rngs=rngs,
+            rngs=nnx.Rngs(config.seed + 1),
             activation=config.policy_activation,
             dropout_rate=config.policy_dropout_rate,
             periodic_states=periodic_states,
@@ -153,16 +173,21 @@ class TrainBundle(nnx.Module):
         cost_to_go = TrainBundle.build_x_to_go(
             config=config,
             state_dim=4,
-            rngs=rngs,
+            rngs=nnx.Rngs(config.seed + 2),
             periodic_states=periodic_states,
         )
-        relax_to_go = nnx.clone(cost_to_go)
+        relax_to_go = TrainBundle.build_x_to_go(
+            config=config,
+            state_dim=4,
+            rngs=nnx.Rngs(config.seed + 3),
+            periodic_states=periodic_states,
+        )
 
         return (
             sys_dynamics,
             sys_costs,
             sys_constraints,
-            rngs,
+            sampler,
             policy,
             cost_to_go,
             relax_to_go,
@@ -173,7 +198,7 @@ class TrainBundle(nnx.Module):
         sys_dynamics = SystemDynamicsBike.factory(
             wheelbase=0.5,
             max_steering=0.6,
-            dt=0.1,
+            dt=0.25,  # 250 ms
         )
         sys_costs = SystemCostsQuadratic.factory(
             state_cost_matrix=jnp.diag(jnp.array([10.0, 10.0, 0.0, 0.0])),
@@ -181,22 +206,28 @@ class TrainBundle(nnx.Module):
             reference_state=jnp.array([0.0, 0.0, 0.0, 0.0]),
             reference_action=jnp.array([0.0, 0.0]),
         )
-        action_min = jnp.array([-1.0, -0.5])  # [acceleration, steering]
-        action_max = jnp.array([1.0, 0.5])  # [acceleration, steering]
+        action_min = jnp.array([-2.5, -0.5])  # [acceleration, steering]
+        action_max = jnp.array([+2.5, +0.5])  # [acceleration, steering]
         sys_constraints = SystemConstraintsBox.factory(
-            state_l=jnp.array([-jnp.inf, -jnp.inf, -jnp.pi, 0]),
-            state_u=jnp.array([+jnp.inf, +jnp.inf, +jnp.pi, +jnp.inf]),
+            state_l=jnp.array([-10, -10, -jnp.inf, -1.0]),
+            state_u=jnp.array([+10, +10, +jnp.inf, +5.0]),
             action_l=action_min,
             action_u=action_max,
         )
-        rngs = nnx.Rngs(config.seed)
+        sampler = SamplerUniform.factory(
+            state_dim=4,
+            batch_size=config.batchsize,
+            lower_bound=jnp.array([-10.0, -10.0, -jnp.pi, -1.0]) * 1.1,
+            upper_bound=jnp.array([+10.0, +10.0, +jnp.pi, +5.0]) * 1.1,
+            rngs=nnx.Rngs(config.seed + 0),
+        )
         periodic_states = frozenset({2})  # Bike heading angle
         policy = PolicyMLP.factory(
             state_dim=sys_dynamics.state_dim,
             action_dim=sys_dynamics.action_dim,
             hidden_features=[config.policy_hidden_dim]
             * config.policy_hidden_depth,
-            rngs=rngs,
+            rngs=nnx.Rngs(config.seed + 1),
             activation=config.policy_activation,
             dropout_rate=config.policy_dropout_rate,
             periodic_states=periodic_states,
@@ -206,16 +237,21 @@ class TrainBundle(nnx.Module):
         cost_to_go = TrainBundle.build_x_to_go(
             config=config,
             state_dim=sys_dynamics.state_dim,
-            rngs=rngs,
+            rngs=nnx.Rngs(config.seed + 2),
             periodic_states=periodic_states,
         )
-        relax_to_go = nnx.clone(cost_to_go)
+        relax_to_go = TrainBundle.build_x_to_go(
+            config=config,
+            state_dim=sys_dynamics.state_dim,
+            rngs=nnx.Rngs(config.seed + 3),
+            periodic_states=periodic_states,
+        )
 
         return (
             sys_dynamics,
             sys_costs,
             sys_constraints,
-            rngs,
+            sampler,
             policy,
             cost_to_go,
             relax_to_go,
@@ -232,17 +268,6 @@ class TrainBundle(nnx.Module):
         if config.projection_name == "no_substitution_no_terminal":
             return ProjectionNoSubsNoTerm.factory(
                 policy=policy,
-                relax_to_go=relax_to_go,
-                sys_dynamics=sys_dynamics,
-                sys_constraints=sys_constraints,
-                horizon=config.projection_horizon,
-                td_gamma=config.td_gamma,
-                relaxation_penalty=config.projection_relaxation_penalty,
-            )
-        elif config.projection_name == "no_substitution_terminal":
-            return ProjectionNoSubsTerm.factory(
-                policy=policy,
-                relax_to_go=relax_to_go,
                 sys_dynamics=sys_dynamics,
                 sys_constraints=sys_constraints,
                 horizon=config.projection_horizon,
@@ -316,7 +341,7 @@ class TrainBundle(nnx.Module):
             sys_dynamics,
             sys_costs,
             sys_constraints,
-            rngs,
+            sampler,
             policy,
             cost_to_go,
             relax_to_go,
@@ -388,5 +413,5 @@ class TrainBundle(nnx.Module):
             opt_cost=opt_cost,
             opt_relax=opt_relax,
             metrics=metrics,
-            rngs=rngs,
+            sampler=sampler,
         )

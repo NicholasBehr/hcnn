@@ -13,15 +13,11 @@ class PolicyBase(nnx.Module, ABC):
     def __call__(
         self,
         state: jax.Array,
-        *,
-        jax_key: jax.Array | None = None,
     ) -> jax.Array:
         """Computes the policy action given the current state.
 
         Args:
-            state (jax.Array): Current state, shape (..., state_dim).
-            jax_key (jax.Array, optional):
-                Optional PRNG key for stochastic policies.
+            state (jax.Array): Current state, shape (..., state_dim)
 
         Returns:
             jax.Array: Policy action, shape (..., action_dim).

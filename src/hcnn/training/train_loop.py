@@ -12,14 +12,13 @@ import wandb
 from hcnn.training.loss_and_grad import ModelStates
 from hcnn.training.train_bundle import TrainBundle
 from hcnn.training.visualization import visualize_receding_horizon
-from wandb.sdk.wandb_config import Config as WandbConfig
 
 
-@partial(jax.jit, static_argnames=["config", "train_graphdef"])
+@partial(jax.jit, static_argnames=["batches_per_epoch", "train_graphdef"])
 def train_epoch(
-    config: WandbConfig,
     train_graphdef: nnx.GraphDef,
     train_state: nnx.State,
+    batches_per_epoch: int = 1,
 ) -> tuple[nnx.State, dict["str", jax.Array]]:
     """
     Train a single epoch of the model.
@@ -40,31 +39,16 @@ def train_epoch(
     train.metrics.reset()
     train_state = nnx.state(train)
 
-    def train_step(step_idx: int, train_state: nnx.State) -> nnx.State:
+    def train_step(_, train_state: nnx.State) -> nnx.State:
         train = nnx.merge(train_graphdef, train_state)
 
-        step_key = jax.random.fold_in(train.rngs.default(), step_idx)
-        sample_key, split_key = jax.random.split(step_key)
-        model_states = ModelStates(
-            policy=nnx.state(train.policy),
-            relax_to_go=nnx.state(train.relax_to_go),
-            cost_to_go=nnx.state(train.cost_to_go),
-        )
-        # TODO, add a more sophisticated sampler
-        # initial_states = jnp.zeros((config.batchsize, train.policy.state_dim))
-        initial_states = jax.random.uniform(
-            sample_key,
-            (config.batchsize, train.policy.state_dim),
-            minval=jnp.array([-11, -11, -jnp.pi, -5]),
-            maxval=jnp.array([+11, +11, +jnp.pi, +5]),
-        )
-        jax_keys = jax.random.split(split_key, config.batchsize)
-
-        # Use cached function parameters to reduce recompilation
         loss, grad, model_states, info = train.loss_and_grad(
-            model_states=model_states,
-            initial_states=initial_states,
-            jax_keys=jax_keys,
+            model_states=ModelStates(
+                policy=nnx.state(train.policy),
+                relax_to_go=nnx.state(train.relax_to_go),
+                cost_to_go=nnx.state(train.cost_to_go),
+            ),
+            initial_states=train.sampler(),
         )
 
         # Update model states with more efficient operations
@@ -106,7 +90,7 @@ def train_epoch(
     # Iterate over training steps
     train_state = jax.lax.fori_loop(
         lower=0,
-        upper=config.batches_per_epoch,
+        upper=batches_per_epoch,
         body_fun=train_step,
         init_val=train_state,
     )
@@ -199,9 +183,9 @@ def train(project=None, config=None):
         for epoch in range(config.epochs):
             # Advance the training by one epoch
             train_state, metrics = train_epoch(
-                config=config,
                 train_graphdef=train_graphdef,
                 train_state=train_state,
+                batches_per_epoch=config.batches_per_epoch,
             )
 
             # Print metrics in a nicely formatted table
@@ -217,11 +201,11 @@ def train(project=None, config=None):
 
             # Log to WandB
             wandb.log(step=epoch, data=metrics)
-            if (epoch % 25 == 0 and epoch > 0) or epoch == config.epochs - 1:
+            if epoch % 25 == 0 or epoch == config.epochs - 1:
                 visualize_receding_horizon(
                     train_bundle=nnx.merge(train_graphdef, train_state),
                     steps=50,
-                    initial_state=jnp.ones(train.policy.state_dim),
+                    initial_state=3 * jnp.ones(train.policy.state_dim),
                 )
                 save_train_state(train_state)
 
@@ -230,13 +214,14 @@ if __name__ == "__main__":
     print("This is a training loop with Weights & Biases integration.")
 
     # restrict access to one GPU (check availability nvidia-smi)
-    os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "2"
     jax.config.update("jax_debug_nans", False)
-    # jax.config.update("jax_platform_name", "cpu")
+    # jax.config.update("jax_platform_name", "cpu")  # Uncomment to run on CPU
 
     # Specify the project name and configuration
     # This can be overridden by wandb.agent when running a sweep
-    project = "bike"
+    project = "double_integrator"
+
     config = {
         "system_name": project,
         "seed": 0,
@@ -244,45 +229,44 @@ if __name__ == "__main__":
         "policy_name": "dropout_mlp",
         "policy_hidden_dim": 5,
         "policy_hidden_depth": 5,
-        "policy_dropout_rate": 0.15,
+        "policy_dropout_rate": 0.2,
         "policy_activation": "celu",
-        "policy_intervention_cost": 0.5,  # range [0, 1]!
+        "policy_intervention_cost": 0.1,  # range [0, 1]!
         # Cost-to-go and Relax-to-go
         "x_to_go_hidden_dim": 5,
         "x_to_go_hidden_depth": 5,
-        "x_to_go_dropout_rate": 0.0,
+        "x_to_go_dropout_rate": 0.5,
         "x_to_go_activation": "celu",
         # Projection
         "projection_name": "no_substitution_no_terminal",
         "projection_horizon": 30,
-        "projection_relaxation_penalty": 100,
+        "projection_relaxation_penalty": 1e3,
         # Solver
         "solver_name": "shallow",
-        "solver_alpha": 1.2,
-        "solver_sigma": 5e-3,
-        "solver_rho_equality": 10,
-        "solver_rho_inequality": 10,
-        "solver_max_iter_nonlin": 50,
-        "solver_max_iter_lin": 5e3,
+        "solver_alpha": 0.85,
+        "solver_sigma": 0.03,
+        "solver_rho_equality": 3,
+        "solver_rho_inequality": 1.5,
+        "solver_max_iter_nonlin": 100,
+        "solver_max_iter_lin": 1e3,
         "solver_tol": 1e-2,
         # Optimizers
         "optimizer_policy_name": "adamw",
         "optimizer_policy_learning_rate": 1e-3,
-        "optimizer_cost_name": "adamw",
-        "optimizer_cost_learning_rate": 1e-1,
-        "optimizer_relax_name": "adamw",
-        "optimizer_relax_learning_rate": 1e-1,
+        "optimizer_cost_name": "nadamw",
+        "optimizer_cost_learning_rate": 1e-2,
+        "optimizer_relax_name": "nadamw",
+        "optimizer_relax_learning_rate": 1e-2,
         # Training parameters
-        "batchsize": 512,
-        "batches_per_epoch": 1,
-        "td_gamma": 0.95,  # certainty of rollout during INFERENCE
-        "gae_lambda": 0.95,  # certainty of rollout during TRAINING
+        "batchsize": 128,
+        "batches_per_epoch": 5,
+        "td_gamma": 0.9,  # certainty of rollout during INFERENCE
+        "gae_lambda": 0.999,  # certainty of rollout during TRAINING
         "epochs": 500,
     }
-
     sweep_configuration = {
         "method": "bayes",
-        "metric": {"goal": "maximize", "name": "solver_converged"},
+        "metric": {"goal": "minimize", "name": "residual"},
         # "early_terminate": {"type": "hyperband", "min_iter": 20, "eta": 1.5},
         "parameters": {
             "system_name": {"value": project},
@@ -292,13 +276,13 @@ if __name__ == "__main__":
             "policy_hidden_dim": {"value": 5},
             "policy_hidden_depth": {"value": 5},
             "policy_dropout_rate": {"value": 0.15},
-            "policy_activation": {"value": "celu"},
+            "policy_activation": {"value": "leaky_relu"},
             "policy_intervention_cost": {"value": 0.5},
             # Cost-to-go and Relax-to-go
             "x_to_go_hidden_dim": {"value": 5},
             "x_to_go_hidden_depth": {"value": 5},
-            "x_to_go_dropout_rate": {"value": 0.0},
-            "x_to_go_activation": {"value": "celu"},
+            "x_to_go_dropout_rate": {"value": 0.15},
+            "x_to_go_activation": {"value": "leaky_relu"},
             # Projection
             "projection_name": {"value": "no_substitution_no_terminal"},
             "projection_horizon": {"value": 30},
@@ -325,9 +309,9 @@ if __name__ == "__main__":
                 "max": 1e3,
                 "min": 1e-3,
             },
-            "solver_max_iter_nonlin": {"value": 20},
-            "solver_max_iter_lin": {"value": 3e3},
-            "solver_tol": {"value": 1e-2},
+            "solver_max_iter_nonlin": {"value": 1},
+            "solver_max_iter_lin": {"value": 1e3},
+            "solver_tol": {"value": 1e-3},
             # Optimizers
             "optimizer_policy_name": {"value": "adamw"},
             "optimizer_policy_learning_rate": {"value": 1e-3},
@@ -336,7 +320,7 @@ if __name__ == "__main__":
             "optimizer_relax_name": {"value": "adamw"},
             "optimizer_relax_learning_rate": {"value": 1e-1},
             # Training parameters
-            "batchsize": {"value": 256},
+            "batchsize": {"value": 32},
             "batches_per_epoch": {"value": 1},
             "td_gamma": {"value": 0.95},
             "gae_lambda": {"value": 0.95},
@@ -346,7 +330,7 @@ if __name__ == "__main__":
 
     train(project=project, config=config)
 
-    # sweep_id = "bczbuuql"  # Replace with your sweep ID if you have one
+    # sweep_id = "visfhxho"  # Replace with your sweep ID if you have one
     # if sweep_id is None:
     #     print("No sweep ID provided, creating sweep.")
     #     sweep_id = wandb.sweep(sweep=sweep_configuration, project=project)
@@ -355,5 +339,5 @@ if __name__ == "__main__":
     #     sweep_id=sweep_id,
     #     function=train,
     #     project=project,
-    #     count=10,
+    #     count=15,
     # )

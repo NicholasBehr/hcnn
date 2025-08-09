@@ -80,7 +80,6 @@ class LossAndGrad:
         policy_non_params: nnx.State,
         relax_to_go_non_params: nnx.State,
         initial_states: jax.Array,
-        jax_keys: jax.Array,
     ):
         """
         Calculates the rollout for the given initial state and policy
@@ -103,7 +102,6 @@ class LossAndGrad:
 
         def sample_rollout(
             initial_state,
-            jax_key,
         ):
             phi_d = ProjectionPhiD(
                 policy_params=policy_params,
@@ -113,16 +111,12 @@ class LossAndGrad:
                 policy_non_params=policy_non_params,
                 relax_to_go_non_params=relax_to_go_non_params,
                 initial_state=initial_state,
-                jax_key=jax_key,
             )
             x_star, info = self.solver.solve(self.projection, phi_d, phi_nd)
             rollout = self.projection.x_to_rollout(x_star)
             return rollout, info
 
-        return jax.vmap(sample_rollout)(
-            initial_states,
-            jax_keys,
-        )
+        return jax.vmap(sample_rollout)(initial_states)
 
     def policy_costs(
         self,
@@ -252,8 +246,8 @@ class LossAndGrad:
         # discounted sum + discounted terminal value - initial value
         td_difference = (
             discounted_sum
-            + self.td_gamma**horizon * terminal_costs
-            - jax.lax.stop_gradient(initial_costs)
+            # + self.td_gamma**horizon * terminal_costs
+            # - jax.lax.stop_gradient(initial_costs)
         )
 
         return jnp.mean(td_difference), cost_to_go_state
@@ -320,7 +314,6 @@ class LossAndGrad:
         self,
         model_states: ModelStates,
         initial_states: jax.Array,
-        jax_keys: jax.Array,
     ):
         """
         Computes the loss and gradients for the policy, cost-to-go, and
@@ -332,8 +325,6 @@ class LossAndGrad:
             cost_to_go_state (nnx.State): The state of the cost-to-go model.
             initial_states (jax.Array): Initial states for the rollout.
                 shape (batch_size, state_dim).
-            jax_keys (jax.Array): JAX random keys for stochastic policies.
-                shape (batch_size,).
             td_gamma (float): Temporal difference discount factor.
             gae_lambda (float): Generalized advantage estimation lambda.
 
@@ -349,7 +340,12 @@ class LossAndGrad:
         cost_to_go_state = model_states.cost_to_go
         relax_to_go_state = model_states.relax_to_go
 
-        # (1) Calculate the rollout (does not modify the model states!)
+        # (1.1) Advance the State of the policy model
+        policy = nnx.merge(self.projection.policy_graphdef, policy_state)
+        _ = policy(initial_states[0])
+        policy_state = nnx.state(policy)
+
+        # (1.2) Calculate the rollout (does not modify the policy state)
         policy_params, policy_non_params = nnx.filter_state(
             policy_state, nnx.Param, ...
         )
@@ -363,7 +359,6 @@ class LossAndGrad:
                 policy_non_params=policy_non_params,
                 relax_to_go_non_params=relax_to_go_non_params,
                 initial_states=initial_states,
-                jax_keys=jax_keys,
             ),
             policy_params,
             has_aux=True,
@@ -433,7 +428,7 @@ class LossAndGrad:
 
         # (5.3) Construct model states output
         model_states = ModelStates(
-            policy=policy_state,  # the policy state is not altered!
+            policy=policy_state,
             relax_to_go=relax_to_go_state,
             cost_to_go=cost_to_go_state,
         )

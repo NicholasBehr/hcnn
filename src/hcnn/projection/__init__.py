@@ -5,4 +5,3 @@ from .projection_base import (
     Rollout,
 )
 from .projection_no_subs_no_term import ProjectionNoSubsNoTerm
-from .projection_no_subs_term import ProjectionNoSubsTerm

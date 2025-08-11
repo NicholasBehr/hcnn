@@ -95,8 +95,8 @@ class TrainBundle(nnx.Module):
         sampler = SamplerUniform.factory(
             state_dim=2,
             batch_size=config.batchsize,
-            lower_bound=state_min * 1.1,
-            upper_bound=state_max * 1.1,
+            lower_bound=state_min * 1.15,
+            upper_bound=state_max * 1.15,
             rngs=nnx.Rngs(config.seed + 0),
         )
         policy = PolicyMLP.factory(
@@ -152,9 +152,9 @@ class TrainBundle(nnx.Module):
             state_dim=4,
             batch_size=config.batchsize,
             lower_bound=jnp.array([-jnp.pi, -jnp.pi, -2 * jnp.pi, -2 * jnp.pi])
-            * 1.1,
+            * 1.15,
             upper_bound=jnp.array([+jnp.pi, +jnp.pi, +2 * jnp.pi, +2 * jnp.pi])
-            * 1.1,
+            * 1.15,
             rngs=nnx.Rngs(config.seed + 0),
         )
         periodic_states = frozenset({0, 1})  # Pendulum angles
@@ -217,8 +217,8 @@ class TrainBundle(nnx.Module):
         sampler = SamplerUniform.factory(
             state_dim=4,
             batch_size=config.batchsize,
-            lower_bound=jnp.array([-10.0, -10.0, -jnp.pi, -1.0]) * 1.1,
-            upper_bound=jnp.array([+10.0, +10.0, +jnp.pi, +5.0]) * 1.1,
+            lower_bound=jnp.array([-10.0, -10.0, -jnp.pi, -1.0]) * 1.15,
+            upper_bound=jnp.array([+10.0, +10.0, +jnp.pi, +5.0]) * 1.15,
             rngs=nnx.Rngs(config.seed + 0),
         )
         periodic_states = frozenset({2})  # Bike heading angle
@@ -402,6 +402,9 @@ class TrainBundle(nnx.Module):
             # policy training metrics
             mean_policy_gradient=nnx.metrics.Average("mean_policy_gradient"),
             max_policy_gradient=nnx.metrics.Average("max_policy_gradient"),
+            # cost training metrics
+            mean_cost_gradient=nnx.metrics.Average("mean_cost_gradient"),
+            max_cost_gradient=nnx.metrics.Average("max_cost_gradient"),
         )
 
         return TrainBundle(

@@ -84,7 +84,6 @@ class ProjectionNoSubsNoTerm(ProjectionBase):
             sys_constraints=sys_constraints,
         )
 
-    @jax.jit
     def constraint_fn(
         self, x: jax.Array, phi_d: ProjectionPhiD, phi_nd: ProjectionPhiND
     ) -> jax.Array:

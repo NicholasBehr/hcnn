@@ -246,8 +246,8 @@ class LossAndGrad:
         # discounted sum + discounted terminal value - initial value
         td_difference = (
             discounted_sum
-            # + self.td_gamma**horizon * terminal_costs
-            # - jax.lax.stop_gradient(initial_costs)
+            + self.td_gamma**horizon * terminal_costs
+            - jax.lax.stop_gradient(initial_costs)
         )
 
         return jnp.mean(td_difference), cost_to_go_state

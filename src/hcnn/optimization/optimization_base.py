@@ -450,17 +450,13 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
             def schur_lhs(u1: jax.Array) -> jax.Array:
                 return (
                     problem.cost_quad_diag * u1
-                    # + h_hvp(u1) TODO: check if this is needed
+                    # + h_hvp(u1)  # TODO if added select GMRES solver
                     + h_vjp(plus_u_minus_l * h_jvp(u1))[0]
-                    + self.tol * u1
+                    + 1e-12 * u1
                 )
 
-            # prefer gmres over bicgstab even though operator is symmetric!!
-            # this is a empirical observation (greatly improved stability)
+            # Solve the Schur complement system
             u1, _ = jax.scipy.sparse.linalg.cg(A=schur_lhs, b=v1)
-
-            # replace nan with zeros
-            # u1 = jnp.nan_to_num(u1, nan=0.0, posinf=1e4, neginf=-1e4)
 
             h_jvp_u1 = h_jvp(u1)
             u2 = plus_u_minus_l * h_jvp_u1
@@ -473,7 +469,7 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
             )  # copy
             g_problem = g_problem.replace(
                 cost_quad_diag=-x_star * u1,
-                cost_linear=-u1,  # type: ignore -> is always jax.array
+                cost_linear=-u1,
                 upper_bound=+y_plus * u3,
                 lower_bound=-y_minus * u4,
             )
@@ -485,7 +481,7 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
                             x_inner, phi_d_arg, phi_nd
                         ),
                         (x_star,),
-                        (-u1,),  # type: ignore -> is always jax.array
+                        (-u1,),
                     )[1],
                     y_star,
                 ),

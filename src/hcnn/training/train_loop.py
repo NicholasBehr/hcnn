@@ -57,12 +57,21 @@ def train_epoch(
         nnx.update(train.cost_to_go, model_states.cost_to_go)
 
         # Compute maximum absolute gradient value for monitoring and clipping
-        grad_leaves = jax.tree_util.tree_leaves(grad.policy)
+        # Compute gradient statistics for monitoring
+        policy_grad_leaves = jax.tree_util.tree_leaves(grad.policy)
+        cost_grad_leaves = jax.tree_util.tree_leaves(grad.cost_to_go)
+
         max_policy_gradient = jnp.max(
-            jnp.array([jnp.max(jnp.abs(leaf)) for leaf in grad_leaves])
+            jnp.array([jnp.max(jnp.abs(leaf)) for leaf in policy_grad_leaves])
         )
         mean_policy_gradient = jnp.mean(
-            jnp.array([jnp.mean(jnp.abs(leaf)) for leaf in grad_leaves])
+            jnp.array([jnp.mean(jnp.abs(leaf)) for leaf in policy_grad_leaves])
+        )
+        max_cost_gradient = jnp.max(
+            jnp.array([jnp.max(jnp.abs(leaf)) for leaf in cost_grad_leaves])
+        )
+        mean_cost_gradient = jnp.mean(
+            jnp.array([jnp.mean(jnp.abs(leaf)) for leaf in cost_grad_leaves])
         )
 
         # Update metrics with batched operations
@@ -78,6 +87,8 @@ def train_epoch(
             solver_converged=info.converged_flag,
             max_policy_gradient=max_policy_gradient,
             mean_policy_gradient=mean_policy_gradient,
+            max_cost_gradient=max_cost_gradient,
+            mean_cost_gradient=mean_cost_gradient,
         )
 
         # Update optimizers with pre-allocated gradients
@@ -227,41 +238,41 @@ if __name__ == "__main__":
         "seed": 0,
         # Policy
         "policy_name": "dropout_mlp",
-        "policy_hidden_dim": 5,
-        "policy_hidden_depth": 5,
-        "policy_dropout_rate": 0.2,
-        "policy_activation": "celu",
+        "policy_hidden_dim": 4,
+        "policy_hidden_depth": 4,
+        "policy_dropout_rate": 0.1,
+        "policy_activation": "leaky_relu",
         "policy_intervention_cost": 0.1,  # range [0, 1]!
         # Cost-to-go and Relax-to-go
-        "x_to_go_hidden_dim": 5,
-        "x_to_go_hidden_depth": 5,
-        "x_to_go_dropout_rate": 0.5,
-        "x_to_go_activation": "celu",
+        "x_to_go_hidden_dim": 4,
+        "x_to_go_hidden_depth": 4,
+        "x_to_go_dropout_rate": 0.1,
+        "x_to_go_activation": "leaky_relu",
         # Projection
         "projection_name": "no_substitution_no_terminal",
         "projection_horizon": 30,
         "projection_relaxation_penalty": 1e3,
         # Solver
         "solver_name": "shallow",
-        "solver_alpha": 0.85,
-        "solver_sigma": 0.03,
-        "solver_rho_equality": 3,
-        "solver_rho_inequality": 1.5,
+        "solver_alpha": 1.6,
+        "solver_sigma": 1e-3,
+        "solver_rho_equality": 0.1,
+        "solver_rho_inequality": 0.05,
         "solver_max_iter_nonlin": 100,
-        "solver_max_iter_lin": 1e3,
-        "solver_tol": 1e-2,
+        "solver_max_iter_lin": 2e3,
+        "solver_tol": 1e-1,
         # Optimizers
         "optimizer_policy_name": "adamw",
-        "optimizer_policy_learning_rate": 1e-3,
-        "optimizer_cost_name": "nadamw",
-        "optimizer_cost_learning_rate": 1e-2,
-        "optimizer_relax_name": "nadamw",
-        "optimizer_relax_learning_rate": 1e-2,
+        "optimizer_policy_learning_rate": 1e-4,
+        "optimizer_cost_name": "adamw",
+        "optimizer_cost_learning_rate": 1e-1,
+        "optimizer_relax_name": "adamw",
+        "optimizer_relax_learning_rate": 1e-1,
         # Training parameters
         "batchsize": 128,
-        "batches_per_epoch": 5,
-        "td_gamma": 0.9,  # certainty of rollout during INFERENCE
-        "gae_lambda": 0.999,  # certainty of rollout during TRAINING
+        "batches_per_epoch": 1,
+        "td_gamma": 0.95,
+        "gae_lambda": 0.999,
         "epochs": 500,
     }
     sweep_configuration = {
@@ -285,10 +296,10 @@ if __name__ == "__main__":
             "x_to_go_activation": {"value": "leaky_relu"},
             # Projection
             "projection_name": {"value": "no_substitution_no_terminal"},
-            "projection_horizon": {"value": 30},
-            "projection_relaxation_penalty": {"value": 100},
+            "projection_horizon": {"value": 20},
+            "projection_relaxation_penalty": {"value": 1e4},
             # Solver
-            "solver_name": {"value": "shallow"},
+            "solver_name": {"value": "osqp"},
             "solver_alpha": {
                 "distribution": "uniform",
                 "max": 1.8,
@@ -320,7 +331,7 @@ if __name__ == "__main__":
             "optimizer_relax_name": {"value": "adamw"},
             "optimizer_relax_learning_rate": {"value": 1e-1},
             # Training parameters
-            "batchsize": {"value": 32},
+            "batchsize": {"value": 64},
             "batches_per_epoch": {"value": 1},
             "td_gamma": {"value": 0.95},
             "gae_lambda": {"value": 0.95},
@@ -330,7 +341,7 @@ if __name__ == "__main__":
 
     train(project=project, config=config)
 
-    # sweep_id = "visfhxho"  # Replace with your sweep ID if you have one
+    # sweep_id = None  # Replace with your sweep ID if you have one
     # if sweep_id is None:
     #     print("No sweep ID provided, creating sweep.")
     #     sweep_id = wandb.sweep(sweep=sweep_configuration, project=project)
@@ -339,5 +350,5 @@ if __name__ == "__main__":
     #     sweep_id=sweep_id,
     #     function=train,
     #     project=project,
-    #     count=15,
+    #     count=20,
     # )

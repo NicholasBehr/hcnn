@@ -6,8 +6,8 @@ from flax import struct
 
 @struct.dataclass
 class SystemConstraintsBase(ABC):
-    state_dim: int | None
-    action_dim: int | None
+    state_dim: int
+    action_dim: int
     constraint_dim: int
     lower_bound: jax.Array  # 1d float array
     upper_bound: jax.Array  # 1d float array

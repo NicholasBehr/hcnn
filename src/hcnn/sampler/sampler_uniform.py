@@ -20,11 +20,10 @@ class SamplerUniform(nnx.Module):
     @classmethod
     def factory(
         cls,
-        state_dim: int,
         batch_size: int,
         lower_bound: jax.Array,
         upper_bound: jax.Array,
-        rngs: nnx.Rngs | None = None,
+        rngs: nnx.Rngs,
     ) -> "SamplerUniform":
         """Factory method to create a SamplerUniform instance.
 
@@ -52,16 +51,9 @@ class SamplerUniform(nnx.Module):
         upper_bound = jnp.asarray(upper_bound, dtype=float_dtype)
 
         # Validate shapes
-        if lower_bound.shape != (state_dim,):
-            raise ValueError(
-                f"lower_bound must have shape ({state_dim},), "
-                f"got {lower_bound.shape}"
-            )
-        if upper_bound.shape != (state_dim,):
-            raise ValueError(
-                f"upper_bound must have shape ({state_dim},), "
-                f"got {upper_bound.shape}"
-            )
+        if lower_bound.shape != upper_bound.shape:
+            raise ValueError("lower_bound must have same shape as upper_bound!")
+        state_dim = lower_bound.shape[0]
 
         # Validate bounds order
         if jnp.any(lower_bound >= upper_bound):
@@ -73,10 +65,6 @@ class SamplerUniform(nnx.Module):
         # Validate batch_size
         if batch_size <= 0:
             raise ValueError("batch_size must be positive")
-
-        # Create rngs if not provided
-        if rngs is None:
-            rngs = nnx.Rngs(0)  # Use default seed of 0
 
         return cls(
             state_dim=state_dim,

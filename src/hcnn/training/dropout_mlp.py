@@ -16,7 +16,6 @@ class DropoutMLP(nnx.Module):
     """A Multi-Layer Perceptron (MLP) module with Dropout."""
 
     layers: List[nnx.Linear | nnx.Dropout | Any]
-    rngs: nnx.Rngs
     periodic_in_features: frozenset[int]  # indices of 2π periodic states
     out_feature_min: jnp.ndarray | None  # min values for each output feature
     out_feature_max: jnp.ndarray | None  # max values for each output feature
@@ -88,7 +87,6 @@ class DropoutMLP(nnx.Module):
                 "for all features"
             )
 
-        self.rngs = rngs
         self.periodic_in_features = (
             periodic_in_features
             if periodic_in_features is not None

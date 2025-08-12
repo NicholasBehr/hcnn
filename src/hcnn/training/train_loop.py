@@ -9,9 +9,50 @@ import orbax.checkpoint as ocp
 from flax import nnx
 
 import wandb
-from hcnn.training.loss_and_grad import ModelStates
+from hcnn.optimization import OptimizationInfo
+from hcnn.projection import ProjectionLayer
+from hcnn.state_to_rollout.state_to_rollout_base import StateToRolloutBase
+from hcnn.system_costs.system_costs_base import SystemCostsBase
 from hcnn.training.train_bundle import TrainBundle
-from hcnn.training.visualization import visualize_receding_horizon
+
+# from hcnn.training.visualization import visualize_receding_horizon
+
+
+def loss_fn(
+    state_to_rollout: StateToRolloutBase,
+    initial_states: jax.Array,
+    projection_layer: ProjectionLayer,
+    sys_costs: SystemCostsBase,
+    projection_cost=1.0,
+):
+    """Compute the loss for the training step."""
+    rollout = state_to_rollout(initial_states)
+    rollout_proj, _, info = projection_layer(rollout, initial_states)
+    rollout_proj_cost = sys_costs(rollout_proj.states, rollout_proj.actions)
+
+    # Compute the cost and difference
+    cost = jnp.mean(rollout_proj_cost)
+    state_diff = jnp.mean(
+        jnp.abs(rollout.states - jax.lax.stop_gradient(rollout_proj.states))
+    )
+    action_diff = jnp.mean(
+        jnp.abs(rollout.actions - jax.lax.stop_gradient(rollout_proj.actions))
+    )
+    diff = state_diff + action_diff
+
+    # Combine cost and difference into a single loss
+    loss = cost + projection_cost * diff
+
+    # Aggregate the optimization info
+    info = OptimizationInfo(
+        primal_residual=jnp.mean(info.primal_residual),
+        dual_residual=jnp.mean(info.dual_residual),
+        iterations_lin=jnp.mean(info.iterations_lin),
+        iterations_nonlin=jnp.mean(info.iterations_nonlin),
+        converged_flag=jnp.mean(info.converged_flag),
+    )
+
+    return loss, (loss, cost, diff, info)
 
 
 @partial(jax.jit, static_argnames=["batches_per_epoch", "train_graphdef"])
@@ -19,6 +60,7 @@ def train_epoch(
     train_graphdef: nnx.GraphDef,
     train_state: nnx.State,
     batches_per_epoch: int = 1,
+    projection_cost: float = 1.0,
 ) -> tuple[nnx.State, dict["str", jax.Array]]:
     """
     Train a single epoch of the model.
@@ -42,59 +84,31 @@ def train_epoch(
     def train_step(_, train_state: nnx.State) -> nnx.State:
         train = nnx.merge(train_graphdef, train_state)
 
-        loss, grad, model_states, info = train.loss_and_grad(
-            model_states=ModelStates(
-                policy=nnx.state(train.policy),
-                relax_to_go=nnx.state(train.relax_to_go),
-                cost_to_go=nnx.state(train.cost_to_go),
-            ),
-            initial_states=train.sampler(),
+        grads, aux = nnx.grad(loss_fn, has_aux=True)(
+            train.state_to_rollout,
+            train.sampler(),
+            train.projection_layer,
+            train.system.sys_costs,
+            projection_cost,
         )
 
-        # Update model states with more efficient operations
-        nnx.update(train.policy, model_states.policy)
-        nnx.update(train.relax_to_go, model_states.relax_to_go)
-        nnx.update(train.cost_to_go, model_states.cost_to_go)
+        # Apply the gradients to the optimizer
+        train.optimizer.update(grads)
 
-        # Compute maximum absolute gradient value for monitoring and clipping
-        # Compute gradient statistics for monitoring
-        policy_grad_leaves = jax.tree_util.tree_leaves(grad.policy)
-        cost_grad_leaves = jax.tree_util.tree_leaves(grad.cost_to_go)
+        # Unpack the auxiliary values
+        loss, cost, diff, info = aux
 
-        max_policy_gradient = jnp.max(
-            jnp.array([jnp.max(jnp.abs(leaf)) for leaf in policy_grad_leaves])
-        )
-        mean_policy_gradient = jnp.mean(
-            jnp.array([jnp.mean(jnp.abs(leaf)) for leaf in policy_grad_leaves])
-        )
-        max_cost_gradient = jnp.max(
-            jnp.array([jnp.max(jnp.abs(leaf)) for leaf in cost_grad_leaves])
-        )
-        mean_cost_gradient = jnp.mean(
-            jnp.array([jnp.mean(jnp.abs(leaf)) for leaf in cost_grad_leaves])
-        )
-
-        # Update metrics with batched operations
+        # Update metrics
         train.metrics.update(
-            policy_loss=loss.policy,
-            cost_to_go_loss=loss.cost_to_go,
-            relax_to_go_loss=loss.relax_to_go,
+            cost=cost,
+            difference=diff,
+            loss=loss,
             primal_residual=info.primal_residual,
             dual_residual=info.dual_residual,
-            residual=info.primal_residual + info.dual_residual,
             solver_iter_lin=info.iterations_lin,
             solver_iter_nonlin=info.iterations_nonlin,
             solver_converged=info.converged_flag,
-            max_policy_gradient=max_policy_gradient,
-            mean_policy_gradient=mean_policy_gradient,
-            max_cost_gradient=max_cost_gradient,
-            mean_cost_gradient=mean_cost_gradient,
         )
-
-        # Update optimizers with pre-allocated gradients
-        train.opt_policy.update(grad.policy)
-        train.opt_relax.update(grad.relax_to_go)
-        train.opt_cost.update(grad.cost_to_go)
 
         return nnx.state(train)
 
@@ -212,68 +226,56 @@ def train(project=None, config=None):
 
             # Log to WandB
             wandb.log(step=epoch, data=metrics)
-            if epoch % 25 == 0 or epoch == config.epochs - 1:
-                visualize_receding_horizon(
-                    train_bundle=nnx.merge(train_graphdef, train_state),
-                    steps=50,
-                    initial_state=3 * jnp.ones(train.policy.state_dim),
-                )
-                save_train_state(train_state)
+            # if epoch % 25 == 0 or epoch == config.epochs - 1:
+            #     visualize_receding_horizon(
+            #         train_bundle=nnx.merge(train_graphdef, train_state),
+            #         steps=50,
+            #         initial_state=3 * jnp.ones(train.policy.state_dim),
+            #     )
+            #     save_train_state(train_state)
 
 
 if __name__ == "__main__":
     print("This is a training loop with Weights & Biases integration.")
 
     # restrict access to one GPU (check availability nvidia-smi)
-    os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "3"
     jax.config.update("jax_debug_nans", False)
     # jax.config.update("jax_platform_name", "cpu")  # Uncomment to run on CPU
 
     # Specify the project name and configuration
     # This can be overridden by wandb.agent when running a sweep
-    project = "double_integrator"
+    project = "double_integrator_mpc"
 
     config = {
-        "system_name": project,
+        "system_name": "double_integrator",
         "seed": 0,
-        # Policy
-        "policy_name": "dropout_mlp",
-        "policy_hidden_dim": 4,
-        "policy_hidden_depth": 4,
-        "policy_dropout_rate": 0.1,
-        "policy_activation": "leaky_relu",
-        "policy_intervention_cost": 0.1,  # range [0, 1]!
-        # Cost-to-go and Relax-to-go
-        "x_to_go_hidden_dim": 4,
-        "x_to_go_hidden_depth": 4,
-        "x_to_go_dropout_rate": 0.1,
-        "x_to_go_activation": "leaky_relu",
-        # Projection
-        "projection_name": "no_substitution_no_terminal",
-        "projection_horizon": 30,
-        "projection_relaxation_penalty": 1e3,
+        # Neural Network
+        "nn_name": "action",
+        "nn_hidden_dim": 16,
+        "nn_hidden_depth": 8,
+        "nn_dropout_rate": 0.1,
+        "nn_activation": "leaky_relu",
+        # Optimizer
+        "optimizer_learning_rate": 1e-2,
+        "optimizer_b1": 0.9,
+        "optimizer_b2": 0.999,
+        "optimizer_weight_decay": 1e-4,
         # Solver
         "solver_name": "shallow",
         "solver_alpha": 1.6,
         "solver_sigma": 1e-3,
-        "solver_rho_equality": 0.1,
-        "solver_rho_inequality": 0.05,
-        "solver_max_iter_nonlin": 100,
-        "solver_max_iter_lin": 2e3,
+        "solver_rho_equality": 1,
+        "solver_rho_inequality": 1,
+        "solver_max_iter_nonlin": 1,
+        "solver_max_iter_lin": 5e3,
         "solver_tol": 1e-1,
-        # Optimizers
-        "optimizer_policy_name": "adamw",
-        "optimizer_policy_learning_rate": 1e-4,
-        "optimizer_cost_name": "adamw",
-        "optimizer_cost_learning_rate": 1e-1,
-        "optimizer_relax_name": "adamw",
-        "optimizer_relax_learning_rate": 1e-1,
+        # Projection
+        "projection_horizon": 30,
         # Training parameters
-        "batchsize": 128,
-        "batches_per_epoch": 1,
-        "td_gamma": 0.95,
-        "gae_lambda": 0.999,
-        "epochs": 500,
+        "batch_size": 512,
+        "batches_per_epoch": 16,
+        "epochs": 50,
     }
     sweep_configuration = {
         "method": "bayes",

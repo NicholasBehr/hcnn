@@ -67,16 +67,17 @@ class OptimizationVariables(struct.PyTreeNode):
         phi_nd: PhiTypeNoDiff,
     ) -> "OptimizationVariables":
         x = problem.get_x0(phi_d, phi_nd)
-        z = problem.constraint_fn(x, phi_d, phi_nd)
+        z_raw = problem.constraint_fn(x, phi_d, phi_nd)
+        z_clip = jnp.clip(z_raw, problem.lower_bound, problem.upper_bound)
         return OptimizationVariables(
             # primal
             x=x,
             x_tilde=x,
-            z=z,
-            z_tilde=z,
-            primal_residuals=jnp.zeros_like(z),
+            z=z_clip,
+            z_tilde=z_clip,
+            primal_residuals=z_raw - z_clip,
             # dual
-            y=jnp.zeros_like(z),
+            y=jnp.zeros_like(z_clip),
             dual_residuals=problem.cost_quad_diag * x + problem.cost_linear,
             # counter
             iter_nonlin=jnp.array(0, dtype=int),
@@ -450,9 +451,9 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
             def schur_lhs(u1: jax.Array) -> jax.Array:
                 return (
                     problem.cost_quad_diag * u1
-                    # + h_hvp(u1)  # TODO if added select GMRES solver
+                    # + h_hvp(u1)
                     + h_vjp(plus_u_minus_l * h_jvp(u1))[0]
-                    + 1e-12 * u1
+                    + self.tol * u1
                 )
 
             # Solve the Schur complement system

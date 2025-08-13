@@ -119,7 +119,7 @@ class ProjectionLayer:
         # Check if we need to vmap based on the batch dimensions
         # Single rollout: states.shape = (horizon, state_dim)
         # Batch rollout: states.shape = (batch_size, horizon, state_dim)
-        if rollout.states.ndim > 2:  # batch dimension present
+        if rollout.states.ndim > 2:  # batch dimension present?  # noqa: PLR2004
             return jax.vmap(sample_rollout)(rollout, initial_state)
         else:
             return sample_rollout(rollout, initial_state)

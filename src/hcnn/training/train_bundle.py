@@ -9,7 +9,12 @@ from hcnn.optimization import (
 )
 from hcnn.projection import ProjectionLayer
 from hcnn.sampler import SamplerUniform
-from hcnn.state_to_rollout import StateToRolloutActions, StateToRolloutBase
+from hcnn.state_to_rollout import (
+    StateToRolloutActions,
+    StateToRolloutBase,
+    StateToRolloutDense,
+    StateToRolloutScan,
+)
 from hcnn.system_constraints import (
     SystemConstraintsBase,
     SystemConstraintsBox,
@@ -164,8 +169,8 @@ class TrainBundle(nnx.Module):
 
         return SamplerUniform.factory(
             batch_size=config.batch_size,
-            lower_bound=lower_bound * 1.1,  # 10% margin
-            upper_bound=upper_bound * 1.1,  # 10% margin
+            lower_bound=lower_bound * 1.15,  # 15% margin
+            upper_bound=upper_bound * 1.15,  # 15% margin
             rngs=nnx.Rngs(config.seed),
         )
 
@@ -175,6 +180,34 @@ class TrainBundle(nnx.Module):
     ) -> StateToRolloutBase:
         if config.nn_name == "action":
             return StateToRolloutActions.factory(
+                state_dim=system.sys_dynamics.state_dim,
+                action_dim=system.sys_dynamics.action_dim,
+                hidden_features=[config.nn_hidden_dim] * config.nn_hidden_depth,
+                horizon=config.projection_horizon,
+                sys_dynamics=system.sys_dynamics,
+                rngs=nnx.Rngs(config.seed),
+                activation=config.nn_activation,
+                dropout_rate=config.nn_dropout_rate,
+                periodic_states=system.periodic_states,
+                action_min=system.action_min,
+                action_max=system.action_max,
+            )
+        elif config.nn_name == "dense":
+            return StateToRolloutDense.factory(
+                state_dim=system.sys_dynamics.state_dim,
+                action_dim=system.sys_dynamics.action_dim,
+                hidden_features=[config.nn_hidden_dim] * config.nn_hidden_depth,
+                horizon=config.projection_horizon,
+                sys_dynamics=system.sys_dynamics,
+                rngs=nnx.Rngs(config.seed),
+                activation=config.nn_activation,
+                dropout_rate=config.nn_dropout_rate,
+                periodic_states=system.periodic_states,
+                action_min=system.action_min,
+                action_max=system.action_max,
+            )
+        elif config.nn_name == "scan":
+            return StateToRolloutScan.factory(
                 state_dim=system.sys_dynamics.state_dim,
                 action_dim=system.sys_dynamics.action_dim,
                 hidden_features=[config.nn_hidden_dim] * config.nn_hidden_depth,
@@ -204,8 +237,8 @@ class TrainBundle(nnx.Module):
         return solver(
             alpha=config.solver_alpha,
             sigma=config.solver_sigma,
-            rho_equality=config.solver_rho_equality,
-            rho_inequality=config.solver_rho_inequality,
+            rho=config.solver_rho_base,
+            rho_equality_multiplier=config.solver_rho_eq_mult,
             max_iter_nonlin=config.solver_max_iter_nonlin,
             max_iter_lin=config.solver_max_iter_lin,
             tol=config.solver_tol,
@@ -281,6 +314,7 @@ class TrainBundle(nnx.Module):
         # Build optax metrics
         metrics = nnx.MultiMetric(
             loss=nnx.metrics.Average("loss"),
+            cost=nnx.metrics.Average("cost"),
             primal_residual=nnx.metrics.Average("primal_residual"),
             dual_residual=nnx.metrics.Average("dual_residual"),
             iterations_lin=nnx.metrics.Average("iterations_lin"),

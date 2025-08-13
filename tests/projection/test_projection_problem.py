@@ -43,6 +43,7 @@ class TestProjection:
         return ProjectionProblem.factory(
             sys_constraints=sys_constraints,
             horizon=self.horizon,
+            relaxation_penalty=10.0,
         )
 
     @pytest.fixture
@@ -51,21 +52,31 @@ class TestProjection:
         key = jax.random.key(42)
         states = jax.random.normal(key, (self.horizon, self.state_dim))
         actions = jax.random.normal(key, (self.horizon, self.action_dim))
-        return Rollout(states=states, actions=actions)
+        states_relax = jnp.zeros_like(states)
+        return Rollout(
+            states=states, actions=actions, states_relax=states_relax
+        )
 
     @pytest.fixture
     def phi_d(self, rollout_ref):
         """Create ProjectionPhiD."""
-        return ProjectionPhiD(rollout_ref=rollout_ref)
+        return ProjectionPhiD(
+            states_ref=rollout_ref.states,
+            actions_ref=rollout_ref.actions,
+        )
 
     @pytest.fixture
     def phi_nd(self, sys_dynamics):
         """Create ProjectionPhiND."""
         key = jax.random.key(123)
         initial_state = jax.random.normal(key, (self.state_dim,))
+        states_relax_pos = jnp.zeros((self.horizon, self.state_dim))
+        states_relax_neg = jnp.zeros((self.horizon, self.state_dim))
         return ProjectionPhiND(
             sys_dynamics=sys_dynamics,
             initial_state=initial_state,
+            states_relax_pos=states_relax_pos,
+            states_relax_neg=states_relax_neg,
         )
 
     def test_projection_factory(self, sys_constraints):
@@ -73,6 +84,7 @@ class TestProjection:
         projection = ProjectionProblem.factory(
             sys_constraints=sys_constraints,
             horizon=self.horizon,
+            relaxation_penalty=10.0,
         )
 
         assert isinstance(projection, ProjectionProblem)
@@ -89,19 +101,18 @@ class TestProjection:
 
     def test_optimization_variable_creation(self, rollout_ref):
         """Test OptimizationVariable dataclass creation."""
-        rollout_diff = Rollout(
-            states=jnp.zeros((self.horizon, self.state_dim)),
-            actions=jnp.zeros((self.horizon, self.action_dim)),
-        )
-
         optvar = OptimizationVariable(
-            rollout=rollout_ref,
-            rollout_diff=rollout_diff,
+            states=rollout_ref.states,
+            actions=rollout_ref.actions,
+            states_diff=jnp.zeros((self.horizon, self.state_dim)),
+            actions_diff=jnp.zeros((self.horizon, self.action_dim)),
+            states_relax_pos=jnp.zeros((self.horizon, self.state_dim)),
+            states_relax_neg=jnp.zeros((self.horizon, self.state_dim)),
         )
 
         assert isinstance(optvar, OptimizationVariable)
-        assert optvar.rollout == rollout_ref
-        assert optvar.rollout_diff == rollout_diff
+        assert jnp.allclose(optvar.states, rollout_ref.states)
+        assert jnp.allclose(optvar.actions, rollout_ref.actions)
 
     def test_bounds_rollout_diff(self):
         """Test bounds for rollout difference constraints."""
@@ -154,23 +165,24 @@ class TestProjection:
 
     def test_constraints_rollout_diff(self, rollout_ref):
         """Test rollout difference constraints."""
-        rollout_diff = Rollout(
-            states=jnp.ones((self.horizon, self.state_dim)) * 0.1,
-            actions=jnp.ones((self.horizon, self.action_dim)) * 0.2,
-        )
-        rollout = Rollout(
-            states=rollout_ref.states + rollout_diff.states,
-            actions=rollout_ref.actions + rollout_diff.actions,
-        )
+        states_diff = jnp.ones((self.horizon, self.state_dim)) * 0.1
+        actions_diff = jnp.ones((self.horizon, self.action_dim)) * 0.2
 
         optvar = OptimizationVariable(
-            rollout=rollout,
-            rollout_diff=rollout_diff,
+            states=rollout_ref.states + states_diff,
+            actions=rollout_ref.actions + actions_diff,
+            states_diff=states_diff,
+            actions_diff=actions_diff,
+            states_relax_pos=jnp.zeros((self.horizon, self.state_dim)),
+            states_relax_neg=jnp.zeros((self.horizon, self.state_dim)),
         )
 
-        constraints = ProjectionProblem.constraints_rollout_diff(
-            optvar, rollout_ref
+        phi_d = ProjectionPhiD(
+            states_ref=rollout_ref.states,
+            actions_ref=rollout_ref.actions,
         )
+
+        constraints = ProjectionProblem.constraints_rollout_diff(optvar, phi_d)
 
         # Should be zero when rollout = rollout_ref + rollout_diff
         expected_size = self.horizon * (self.state_dim + self.action_dim)
@@ -180,8 +192,12 @@ class TestProjection:
     def test_constraints_sys_dynamics(self, rollout_ref, sys_dynamics):
         """Test system dynamics constraints."""
         optvar = OptimizationVariable(
-            rollout=rollout_ref,
-            rollout_diff=rollout_ref,  # Not used in this constraint
+            states=rollout_ref.states,
+            actions=rollout_ref.actions,
+            states_diff=jnp.zeros_like(rollout_ref.states),
+            actions_diff=jnp.zeros_like(rollout_ref.actions),
+            states_relax_pos=jnp.zeros_like(rollout_ref.states),
+            states_relax_neg=jnp.zeros_like(rollout_ref.states),
         )
 
         constraints = ProjectionProblem.constraints_sys_dynamics(
@@ -197,8 +213,12 @@ class TestProjection:
     def test_constraints_sys_constraints(self, rollout_ref, sys_constraints):
         """Test system constraints."""
         optvar = OptimizationVariable(
-            rollout=rollout_ref,
-            rollout_diff=rollout_ref,  # Not used in this constraint
+            states=rollout_ref.states,
+            actions=rollout_ref.actions,
+            states_diff=jnp.zeros_like(rollout_ref.states),
+            actions_diff=jnp.zeros_like(rollout_ref.actions),
+            states_relax_pos=jnp.zeros_like(rollout_ref.states),
+            states_relax_neg=jnp.zeros_like(rollout_ref.states),
         )
 
         constraints = ProjectionProblem.constraints_sys_constraints(
@@ -208,22 +228,23 @@ class TestProjection:
         expected_size = self.horizon * sys_constraints.constraint_dim
         assert constraints.shape == (expected_size,)
 
-    def test_constraints_initial_state(self, rollout_ref):
+    def test_constraints_initial_state(self, rollout_ref, phi_nd):
         """Test initial state constraints."""
-        key = jax.random.key(456)
-        initial_state = jax.random.normal(key, (self.state_dim,))
-
         optvar = OptimizationVariable(
-            rollout=rollout_ref,
-            rollout_diff=rollout_ref,  # Not used in this constraint
+            states=rollout_ref.states,
+            actions=rollout_ref.actions,
+            states_diff=jnp.zeros_like(rollout_ref.states),
+            actions_diff=jnp.zeros_like(rollout_ref.actions),
+            states_relax_pos=jnp.zeros_like(rollout_ref.states),
+            states_relax_neg=jnp.zeros_like(rollout_ref.states),
         )
 
         constraints = ProjectionProblem.constraints_initial_state(
-            optvar, initial_state
+            optvar, phi_nd
         )
 
         assert constraints.shape == (self.state_dim,)
-        expected = rollout_ref.states[0] - initial_state
+        expected = rollout_ref.states[0] - phi_nd.initial_state
         assert jnp.allclose(constraints, expected)
 
     def test_get_x0(self, projection, phi_d, phi_nd):
@@ -238,9 +259,12 @@ class TestProjection:
         expected_rollout_size = self.horizon * (
             self.state_dim + self.action_dim
         )
+        expected_relax_size = self.horizon * self.state_dim  # only states
         expected_size = (
-            2 * expected_rollout_size
-        )  # rollout, rollout_ref, rollout_diff
+            2
+            * expected_rollout_size  # states + actions + states_diff + actions_diff  # noqa
+            + 2 * expected_relax_size  # states_relax_pos + states_relax_neg
+        )
         assert x0.shape == (expected_size,)
 
     def test_x_to_optvar(self, projection, phi_d, phi_nd):
@@ -249,15 +273,23 @@ class TestProjection:
         optvar = projection.x_to_optvar(x0)
 
         assert isinstance(optvar, OptimizationVariable)
-        assert optvar.rollout.states.shape == (self.horizon, self.state_dim)
-        assert optvar.rollout.actions.shape == (self.horizon, self.action_dim)
-        assert optvar.rollout_diff.states.shape == (
+        assert optvar.states.shape == (self.horizon, self.state_dim)
+        assert optvar.actions.shape == (self.horizon, self.action_dim)
+        assert optvar.states_diff.shape == (
             self.horizon,
             self.state_dim,
         )
-        assert optvar.rollout_diff.actions.shape == (
+        assert optvar.actions_diff.shape == (
             self.horizon,
             self.action_dim,
+        )
+        assert optvar.states_relax_pos.shape == (
+            self.horizon,
+            self.state_dim,
+        )
+        assert optvar.states_relax_neg.shape == (
+            self.horizon,
+            self.state_dim,
         )
 
     def test_x_to_optvar_roundtrip(self, projection, phi_d, phi_nd):
@@ -289,12 +321,14 @@ class TestProjection:
             self.state_dim + self.action_dim
         )  # Mock returns [state, action]
         expected_initial_state_size = self.state_dim
+        expected_relaxation_size = self.horizon * 2 * self.state_dim
 
         expected_total_size = (
             expected_rollout_diff_size
             + expected_dynamics_size
             + expected_sys_constraints_size
             + expected_initial_state_size
+            + expected_relaxation_size
         )
 
         assert constraints.shape == (expected_total_size,)
@@ -326,24 +360,34 @@ class TestProjection:
 
     def test_projection_phi_d_creation(self, rollout_ref):
         """Test ProjectionPhiD dataclass creation."""
-        phi_d = ProjectionPhiD(rollout_ref=rollout_ref)
+        phi_d = ProjectionPhiD(
+            states_ref=rollout_ref.states,
+            actions_ref=rollout_ref.actions,
+        )
 
         assert isinstance(phi_d, ProjectionPhiD)
-        assert phi_d.rollout_ref == rollout_ref
+        assert jnp.allclose(phi_d.states_ref, rollout_ref.states)
+        assert jnp.allclose(phi_d.actions_ref, rollout_ref.actions)
 
     def test_projection_phi_nd_creation(self, sys_dynamics):
         """Test ProjectionPhiND dataclass creation."""
         key = jax.random.key(789)
         initial_state = jax.random.normal(key, (self.state_dim,))
+        states_relax_pos = jnp.zeros((self.horizon, self.state_dim))
+        states_relax_neg = jnp.zeros((self.horizon, self.state_dim))
 
         phi_nd = ProjectionPhiND(
             sys_dynamics=sys_dynamics,
             initial_state=initial_state,
+            states_relax_pos=states_relax_pos,
+            states_relax_neg=states_relax_neg,
         )
 
         assert isinstance(phi_nd, ProjectionPhiND)
         assert phi_nd.sys_dynamics == sys_dynamics
         assert jnp.allclose(phi_nd.initial_state, initial_state)
+        assert jnp.allclose(phi_nd.states_relax_pos, states_relax_pos)
+        assert jnp.allclose(phi_nd.states_relax_neg, states_relax_neg)
 
     def test_different_horizons(self, sys_constraints):
         """Test projection with different horizon values."""
@@ -353,13 +397,17 @@ class TestProjection:
             projection = ProjectionProblem.factory(
                 sys_constraints=sys_constraints,
                 horizon=horizon,
+                relaxation_penalty=10.0,
             )
 
             assert projection.horizon == horizon
 
             # Check that all arrays have consistent sizes
             expected_rollout_size = horizon * (self.state_dim + self.action_dim)
-            expected_optvar_size = 2 * expected_rollout_size
+            expected_relax_size = horizon * self.state_dim
+            expected_optvar_size = (
+                2 * expected_rollout_size + 2 * expected_relax_size
+            )
 
             assert projection.cost_quad_diag.shape == (expected_optvar_size,)
             assert projection.cost_linear.shape == (expected_optvar_size,)
@@ -378,6 +426,7 @@ class TestProjection:
         projection = ProjectionProblem.factory(
             sys_constraints=sys_constraints,
             horizon=self.horizon,
+            relaxation_penalty=10.0,
         )
 
         # Check that the quadratic cost is only on the difference term
@@ -386,5 +435,39 @@ class TestProjection:
             jnp.sum(projection.cost_quad_diag) > 0
         )  # Should have some non-zero elements
 
-        # Linear cost should be all zeros
-        assert jnp.allclose(projection.cost_linear, 0.0)
+        # Linear cost should have relaxation penalties on relax variables only
+        # The cost_linear structure should match the OptimizationVariable layout
+        expected_total_size = (
+            2
+            * self.horizon
+            * (
+                self.state_dim + self.action_dim
+            )  # states + actions + states_diff + actions_diff  # noqa
+            + 2
+            * self.horizon
+            * self.state_dim  # states_relax_pos + states_relax_neg  # noqa
+        )
+        assert projection.cost_linear.shape == (expected_total_size,)
+
+        # Create a test OptimizationVariable to understand the structure
+        test_optvar = OptimizationVariable(
+            states=jnp.ones((self.horizon, self.state_dim)),
+            actions=jnp.ones((self.horizon, self.action_dim)),
+            states_diff=jnp.ones((self.horizon, self.state_dim)),
+            actions_diff=jnp.ones((self.horizon, self.action_dim)),
+            states_relax_pos=jnp.ones((self.horizon, self.state_dim)),
+            states_relax_neg=jnp.ones((self.horizon, self.state_dim)),
+        )
+        flat_test, _ = flatten_util.ravel_pytree(test_optvar)
+
+        # The relaxation penalty should only be on the last
+        # 2*horizon*state_dim elements
+        relax_start_idx = flat_test.size - 2 * self.horizon * self.state_dim
+        non_relax_part = projection.cost_linear[:relax_start_idx]
+        relax_part = projection.cost_linear[relax_start_idx:]
+
+        # Non-relaxation parts should be zeros
+        assert jnp.allclose(non_relax_part, 0.0)
+
+        # Relaxation part should have the penalty values
+        assert jnp.allclose(relax_part, 10.0)

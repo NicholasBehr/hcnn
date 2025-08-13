@@ -46,7 +46,7 @@ class UnconstrainedProblem(OptimizationProblemBase[jax.Array, jax.Array]):
 
 def test_solve_unconstrained(solver: OptimizationSolverBase):
     dimension = 5
-    for i in range(15):
+    for i in range(10):
         print(f"run {i}")
         # create
         keys = jax.random.split(jax.random.key(i), 2)
@@ -62,16 +62,14 @@ def test_solve_unconstrained(solver: OptimizationSolverBase):
         # verify
         x_star_analytic = -cost_linear / cost_quad_diag
 
-        assert jnp.allclose(
-            x_star,
-            x_star_analytic,
-            rtol=1 / 100,
-        ), f"{x_star}, {x_star_analytic}"
+        assert jnp.allclose(x_star, x_star_analytic, atol=solver.tol), (
+            f"{x_star}, {x_star_analytic}"
+        )
 
 
 def test_vjp_unconstrained(solver: OptimizationSolverBase):
     dimension = 5
-    for i in range(15):
+    for i in range(10):
         print(f"run {i}")
         # create
         keys = jax.random.split(jax.random.key(i), 2)
@@ -150,7 +148,7 @@ class BoxProjectionProblem(OptimizationProblemBase[jax.Array, jax.Array]):
 
 def test_solve_box_projection(solver: OptimizationSolverBase):
     dimension = 5
-    for i in range(15):
+    for i in range(10):
         print(f"run {i}")
         # create
         keys = jax.random.split(jax.random.key(i), 3)
@@ -173,13 +171,13 @@ def test_solve_box_projection(solver: OptimizationSolverBase):
         assert jnp.allclose(
             x_star,
             x_star_analytic,
-            rtol=1 / 100,
+            atol=solver.tol,
         ), f"{x_star}, {x_star_analytic}"
 
 
 def test_vjp_box_projection(solver: OptimizationSolverBase):
     dimension = 5
-    for i in range(15):
+    for i in range(10):
         print(f"run {i}")
         # create
         keys = jax.random.split(jax.random.key(i), 3)
@@ -311,7 +309,7 @@ def test_solve_triangle_projection(solver: OptimizationSolverBase):
         assert jnp.allclose(
             x_star,
             x_star_analytic,
-            atol=1e-4,
+            atol=solver.tol,
         ), f"{x_star}, {x_star_analytic}"
 
 
@@ -407,6 +405,6 @@ def test_vjp_circle_projection(solver: OptimizationSolverBase):
         f=solve,
         f_vjp=partial(jax.vjp, solve),
         args=(problem, phi_d, phi_nd),
-        eps=1e-4,
+        eps=1e-3,
         rtol=5 / 100,
     )

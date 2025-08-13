@@ -1,41 +1,17 @@
 import jax
 import jax.numpy as jnp
 import plotly.graph_objects as go
-from flax import nnx
 from plotly.subplots import make_subplots
 
 import wandb
-from hcnn.projection import (
-    ProjectionPhiD,
-    ProjectionPhiND,
-)
 
 from .train_bundle import TrainBundle
 
 
-def sample_rollout(train_bundle: TrainBundle, initial_state: jax.Array):
-    policy_params, policy_non_params = nnx.state(
-        train_bundle.policy, nnx.Param, ...
-    )
-    relax_to_go_params, relax_to_go_non_params = nnx.state(
-        train_bundle.relax_to_go, nnx.Param, ...
-    )
-
-    phi_d = ProjectionPhiD(
-        policy_params=policy_params,
-        relax_to_go_params=relax_to_go_params,
-    )
-    phi_nd = ProjectionPhiND(
-        policy_non_params=policy_non_params,
-        relax_to_go_non_params=relax_to_go_non_params,
-        initial_state=initial_state,
-    )
-    x_star, _ = train_bundle.loss_and_grad.solver.solve(
-        train_bundle.loss_and_grad.projection, phi_d, phi_nd
-    )
-    rollout = train_bundle.loss_and_grad.projection.x_to_rollout(x_star)
-
-    return rollout.states, rollout.actions
+def sample_rollout(train_bundle: TrainBundle, initial_states: jax.Array):
+    rollout = train_bundle.state_to_rollout(initial_states)
+    rollout_proj, _ = train_bundle.projection_layer(rollout, initial_states)
+    return rollout_proj.states, rollout_proj.actions, rollout.states_relax
 
 
 def visualize_receding_horizon(
@@ -50,10 +26,10 @@ def visualize_receding_horizon(
     # make everything in bundle deterministic
     train_bundle.eval()
 
-    sys_dynamics = train_bundle.loss_and_grad.projection.sys_dynamics
+    sys_dynamics = train_bundle.system.sys_dynamics
     state_dim = sys_dynamics.state_dim
     action_dim = sys_dynamics.action_dim
-    horizon = train_bundle.loss_and_grad.projection.horizon
+    horizon = train_bundle.projection_layer.horizon
 
     # If no initial state is provided, use zero state
     if initial_state is None:
@@ -90,8 +66,8 @@ def visualize_receding_horizon(
     # Simulate receding horizon for the specified number of steps
     for step in range(steps):
         # Get rollout from current state
-        planned_states, planned_actions = sample_rollout(
-            train_bundle, initial_state=current_state
+        planned_states, planned_actions, states_relax = sample_rollout(
+            train_bundle, initial_states=current_state
         )
 
         # Time steps for this rollout (offset by current step)
@@ -99,6 +75,9 @@ def visualize_receding_horizon(
         action_time_steps = (
             jnp.arange(horizon - 1) + step
         )  # Actions are one step shorter
+
+        # Calculate relaxed states (states + states_relax)
+        relaxed_states = planned_states + states_relax
 
         # Add planned state trajectory (light color)
         for state_idx in range(state_dim):
@@ -108,7 +87,25 @@ def visualize_receding_horizon(
                     y=planned_states[:, state_idx],
                     mode="lines",
                     line=dict(color=light_color, width=1),
-                    showlegend=False,
+                    name="States" if step == 0 and state_idx == 0 else None,
+                    showlegend=True if step == 0 and state_idx == 0 else False,
+                ),
+                row=state_idx + 1,
+                col=1,
+            )
+
+        # Add relaxed state trajectory (light green)
+        for state_idx in range(state_dim):
+            fig.add_trace(
+                go.Scatter(
+                    x=rollout_time_steps,
+                    y=relaxed_states[:, state_idx],
+                    mode="lines",
+                    line=dict(color="rgba(0, 255, 0, 0.3)", width=1),
+                    name="States + Relaxations"
+                    if step == 0 and state_idx == 0
+                    else None,
+                    showlegend=True if step == 0 and state_idx == 0 else False,
                 ),
                 row=state_idx + 1,
                 col=1,
@@ -124,7 +121,10 @@ def visualize_receding_horizon(
                     ],  # Exclude last action as it's not used
                     mode="lines",
                     line=dict(color=action_light_color, width=1),
-                    showlegend=False,
+                    name="Planned Actions"
+                    if step == 0 and action_idx == 0
+                    else None,
+                    showlegend=True if step == 0 and action_idx == 0 else False,
                 ),
                 row=state_dim + action_idx + 1,
                 col=1,
@@ -143,7 +143,10 @@ def visualize_receding_horizon(
                     mode="lines+markers",
                     line=dict(color=dark_color, width=3),
                     marker=dict(size=6, color=dark_color),
-                    showlegend=False,
+                    name="Actual States"
+                    if step == 0 and state_idx == 0
+                    else None,
+                    showlegend=True if step == 0 and state_idx == 0 else False,
                 ),
                 row=state_idx + 1,
                 col=1,
@@ -157,7 +160,10 @@ def visualize_receding_horizon(
                     y=[first_action[action_idx]],
                     mode="markers",
                     marker=dict(size=8, color=action_dark_color),
-                    showlegend=False,
+                    name="Actual Actions"
+                    if step == 0 and action_idx == 0
+                    else None,
+                    showlegend=True if step == 0 and action_idx == 0 else False,
                 ),
                 row=state_dim + action_idx + 1,
                 col=1,

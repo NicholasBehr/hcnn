@@ -33,11 +33,11 @@ class StateToRolloutActions(StateToRolloutBase):
         action_in_feat = state_dim
         action_out_feat = action_dim * horizon
         action_out_min = None
-        action_out_min = None
+        action_out_max = None
         if action_min is not None:
             action_out_min = jnp.tile(action_min, horizon)
         if action_max is not None:
-            action_out_min = jnp.tile(action_max, horizon)
+            action_out_max = jnp.tile(action_max, horizon)
 
         dropout_mlp = DropoutMLP(
             in_features=action_in_feat,
@@ -48,7 +48,7 @@ class StateToRolloutActions(StateToRolloutBase):
             dropout_rate=dropout_rate,
             periodic_in_features=periodic_states,
             out_feature_min=action_out_min,
-            out_feature_max=action_out_min,
+            out_feature_max=action_out_max,
         )
 
         return StateToRolloutActions(

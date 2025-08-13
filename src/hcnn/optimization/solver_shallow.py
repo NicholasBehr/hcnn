@@ -23,10 +23,12 @@ class OptimizationSolverShallow(
         constraint_lin: ConstraintLinearization,
     ) -> OptimizationVariables:
         # form rho vector
+        rho_inequality = self.rho * variables.rho_balance_multiplier
+        rho_equality = rho_inequality * self.rho_equality_multiplier
         rho_vec = jnp.where(
             problem.lower_bound == problem.upper_bound,
-            self.rho_equality,
-            self.rho_inequality,
+            rho_equality,
+            rho_inequality,
         )
 
         ## x_tilde ##

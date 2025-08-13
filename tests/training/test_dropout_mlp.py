@@ -287,17 +287,16 @@ class TestDropoutMLP:
 
     def test_external_rngs(self, basic_mlp, batch_input, key):
         """Test using external RNGs during forward pass."""
-        external_rngs = nnx.Rngs(jax.random.key(123))
+        # Should work with default RNGs (no external rngs passed)
+        output1 = basic_mlp(batch_input)
 
-        # Should work with external RNGs
-        output1 = basic_mlp(batch_input, rngs=external_rngs)
-
-        # Should also work with default RNGs (None)
-        output2 = basic_mlp(batch_input, rngs=None)
+        # Should also work without passing any rngs
+        output2 = basic_mlp(batch_input)
 
         # Both should have correct shape
         assert output1.shape == output2.shape
         assert jnp.isfinite(output1).all()
+        assert jnp.isfinite(output2).all()
         assert jnp.isfinite(output2).all()
 
     def test_single_input_vector(self, basic_mlp, in_features, out_features):

@@ -164,7 +164,9 @@ class ProjectionProblem(
         optvar: OptimizationVariable, sys_constraints: SystemConstraintsBase
     ) -> jax.Array:
         constraints = sys_constraints(
+            # relaxed states
             optvar.states + optvar.states_relax_pos - optvar.states_relax_neg,
+            # unrelaxed actions
             optvar.actions,
         )
         return constraints.ravel()

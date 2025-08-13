@@ -23,10 +23,12 @@ class OptimizationSolverOSQP(
         constraint_lin: ConstraintLinearization,
     ) -> OptimizationVariables:
         # form rho vector
+        rho_inequality = self.rho * variables.rho_balance_multiplier
+        rho_equality = rho_inequality * self.rho_equality_multiplier
         rho_vec = jnp.where(
             problem.lower_bound == problem.upper_bound,
-            self.rho_equality,
-            self.rho_inequality,
+            rho_equality,
+            rho_inequality,
         )
 
         ## x_tilde ##
@@ -57,7 +59,8 @@ class OptimizationSolverOSQP(
             A=cg_lhs,
             b=cg_rhs,
             x0=variables.x_tilde,
-            tol=self.tol / 2,
+            maxiter=25,
+            # tol=self.tol / 2,
         )
 
         ## z_tilde ##

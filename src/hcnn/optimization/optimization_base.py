@@ -59,6 +59,8 @@ class OptimizationVariables(struct.PyTreeNode):
     iter_nonlin: jax.Array
     iter_lin: jax.Array
     iter_lin_total: jax.Array
+    # rho
+    rho_balance_multiplier: jax.Array
 
     @staticmethod
     def factory(
@@ -83,6 +85,8 @@ class OptimizationVariables(struct.PyTreeNode):
             iter_nonlin=jnp.array(0, dtype=int),
             iter_lin=jnp.array(0, dtype=int),
             iter_lin_total=jnp.array(0, dtype=int),
+            # rho
+            rho_balance_multiplier=jnp.array(1.0),
         )
 
 
@@ -136,14 +140,14 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
     alpha: float = 1.6
 
     # dual step-size to align x and x_tilde
-    sigma: float = 0.1
+    sigma: float = 1e-4
 
     # dual step-size to align z and z_tilde
-    rho_equality: float = 100
-    rho_inequality: float = 0.1
+    rho: float = 1
+    rho_equality_multiplier: float = 100
 
     # maximum number of iterations
-    max_iter_nonlin: int = int(500)
+    max_iter_nonlin: int = int(20)
     max_iter_lin: int = int(1e3)
 
     # convergence tolerance for primal and dual residuals
@@ -195,6 +199,43 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
             dual_residuals=dual_residuals,
         )
 
+    def update_multiplier(
+        self,
+        variables: OptimizationVariables,
+    ):
+        """
+        Assumes recent run of update_residuals!!
+        """
+        mu_sqr = 10**2
+        tau_incr = 2
+        tau_decr = 2
+
+        prim_norm_sqr = jnp.dot(
+            variables.primal_residuals, variables.primal_residuals
+        )
+        dual_norm_sqr = jnp.dot(
+            variables.dual_residuals, variables.dual_residuals
+        )
+
+        cond_increase = prim_norm_sqr > mu_sqr * dual_norm_sqr
+        cond_decrease = dual_norm_sqr > mu_sqr * prim_norm_sqr
+        cond_nochange = ~(cond_increase | cond_decrease)
+
+        dtype = variables.rho_balance_multiplier.dtype
+
+        rho_balance_multiplier = (
+            tau_incr
+            * variables.rho_balance_multiplier
+            * cond_increase.astype(dtype)
+            + (variables.rho_balance_multiplier / tau_decr)
+            * cond_decrease.astype(dtype)
+            + variables.rho_balance_multiplier * cond_nochange.astype(dtype)
+        )
+
+        return variables.replace(
+            rho_balance_multiplier=rho_balance_multiplier,
+        )
+
     def convergence_check(self, variables: OptimizationVariables) -> jax.Array:
         """
         ASSUMES recent call to update_residuals() has been made!
@@ -209,9 +250,14 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
         x_tilde_check = (
             jnp.max(jnp.abs(variables.x - variables.x_tilde)) >= self.tol
         )
+        # Check if z is close to z_tilde
+        z_tilde_check = (
+            jnp.max(jnp.abs(variables.z - variables.z_tilde)) >= self.tol
+        )
 
         return jnp.logical_or(
-            jnp.logical_or(primal_check, dual_check), x_tilde_check
+            jnp.logical_or(primal_check, dual_check),
+            jnp.logical_or(x_tilde_check, z_tilde_check),
         )
 
     def cond_linear(self, variables: OptimizationVariables):
@@ -269,6 +315,9 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
             constraint_lin=constraint_lin,
         )
 
+        # Update rho_balance_multiplier
+        variables = self.update_multiplier(variables)
+
         # Increment iteration counter
         variables = variables.replace(
             iter_lin=variables.iter_lin + group_steps,
@@ -287,6 +336,9 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
             constraint_fn=constraint_fn,
             x_lin=variables.x_tilde,
         )
+
+        # reset rho_multiplier after re-linearization
+        variables = variables.replace(rho_balance_multiplier=1.0)
 
         # Solve linear QP subproblem
         variables = jax.lax.while_loop(
@@ -451,13 +503,12 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
             def schur_lhs(u1: jax.Array) -> jax.Array:
                 return (
                     problem.cost_quad_diag * u1
-                    # + h_hvp(u1)
+                    + h_hvp(u1)
                     + h_vjp(plus_u_minus_l * h_jvp(u1))[0]
-                    + self.tol * u1
                 )
 
             # Solve the Schur complement system
-            u1, _ = jax.scipy.sparse.linalg.cg(A=schur_lhs, b=v1)
+            u1, _ = jax.scipy.sparse.linalg.bicgstab(A=schur_lhs, b=v1)
 
             h_jvp_u1 = h_jvp(u1)
             u2 = plus_u_minus_l * h_jvp_u1

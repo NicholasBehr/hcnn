@@ -36,6 +36,7 @@ class TestProjectionLayer:
     state_dim: int = 4
     action_dim: int = 2
     horizon: int = 5
+    relaxation_penalty: float = 10
 
     @pytest.fixture
     def sys_constraints(self):
@@ -65,6 +66,7 @@ class TestProjectionLayer:
             sys_dynamics=sys_dynamics,
             sys_constraints=sys_constraints,
             horizon=self.horizon,
+            relaxation_penalty=self.relaxation_penalty,
             solver=solver,
         )
 
@@ -94,7 +96,7 @@ class TestProjectionLayer:
         key = jax.random.PRNGKey(42)
         initial_state = jax.random.normal(key, (self.state_dim,))
 
-        projected_rollout, rollout_diff, info = projection_layer(
+        projected_rollout, info = projection_layer(
             single_rollout, initial_state
         )
 
@@ -103,8 +105,12 @@ class TestProjectionLayer:
         expected_actions_shape = (self.horizon, self.action_dim)
         assert projected_rollout.states.shape == expected_states_shape
         assert projected_rollout.actions.shape == expected_actions_shape
-        assert rollout_diff.states.shape == expected_states_shape
-        assert rollout_diff.actions.shape == expected_actions_shape
+
+        # Check that info contains the expected fields
+        assert hasattr(info, "state_diff")
+        assert hasattr(info, "action_diff")
+        assert hasattr(info, "relax_diff")
+        assert hasattr(info, "relax_mean")
 
     def test_batch_rollout_forward(self, projection_layer, batch_rollout):
         """Test ProjectionLayer forward pass with batch rollout."""
@@ -112,20 +118,24 @@ class TestProjectionLayer:
         key = jax.random.PRNGKey(42)
         initial_state = jax.random.normal(key, (batch_size, self.state_dim))
 
-        projected_rollout, rollout_diff, info = projection_layer(
-            batch_rollout, initial_state
-        )
+        projected_rollout, info = projection_layer(batch_rollout, initial_state)
 
         # Check output shapes include batch dimension
         expected_states_shape = (batch_size, self.horizon, self.state_dim)
         expected_actions_shape = (batch_size, self.horizon, self.action_dim)
         assert projected_rollout.states.shape == expected_states_shape
         assert projected_rollout.actions.shape == expected_actions_shape
-        assert rollout_diff.states.shape == expected_states_shape
-        assert rollout_diff.actions.shape == expected_actions_shape
+
+        # Check that info contains the expected fields
+        assert hasattr(info, "state_diff")
+        assert hasattr(info, "action_diff")
+        assert hasattr(info, "relax_diff")
+        assert hasattr(info, "relax_mean")
 
     def test_jit_compatibility_single(self, projection_layer, single_rollout):
-        """Test that the layer works without JIT (architecture not JIT-friendly)."""
+        """
+        Test that the layer works without JIT (architecture not JIT-friendly).
+        """
         key = jax.random.PRNGKey(42)
         initial_state = jax.random.normal(key, (self.state_dim,))
 
@@ -141,7 +151,9 @@ class TestProjectionLayer:
         )
 
     def test_jit_compatibility_batch(self, projection_layer, batch_rollout):
-        """Test that the layer works without JIT (architecture not JIT-friendly)."""
+        """
+        Test that the layer works without JIT (architecture not JIT-friendly).
+        """
         batch_size = 3
         key = jax.random.PRNGKey(42)
         initial_state = jax.random.normal(key, (batch_size, self.state_dim))
@@ -196,9 +208,7 @@ class TestProjectionLayer:
             initial_state = jax.random.normal(key, (batch_size, self.state_dim))
             rollout = Rollout.from_actions(actions, sys_dynamics, initial_state)
 
-            projected_rollout, rollout_diff, info = projection_layer(
-                rollout, initial_state
-            )
+            projected_rollout, info = projection_layer(rollout, initial_state)
 
             # Check shapes are correct for this batch size
             assert projected_rollout.states.shape == (

@@ -92,7 +92,7 @@ class TestStateToRolloutActions:
         assert basic_model.state_dim == state_dim
         assert basic_model.action_dim == action_dim
         assert basic_model.horizon == horizon
-        assert hasattr(basic_model, "dropout_mlp")
+        assert hasattr(basic_model, "action_estimator")
         assert hasattr(basic_model, "sys_dynamics")
 
     def test_call_single_state(
@@ -140,9 +140,7 @@ class TestStateToRolloutActions:
         assert isinstance(model, StateToRolloutActions)
         # The periodic_in_features should be set in the MLP
         # horizon = 3, state_dim = 4
-        assert model.dropout_mlp.periodic_in_features == frozenset(
-            [0, 2, 4, 6, 8, 10]
-        )
+        assert model.action_estimator.periodic_in_features == periodic_states
 
     def test_factory_with_action_bounds(
         self,
@@ -170,10 +168,12 @@ class TestStateToRolloutActions:
 
         assert isinstance(model, StateToRolloutActions)
         assert jnp.all(
-            model.dropout_mlp.out_feature_min == jnp.tile(action_min, horizon)
+            model.action_estimator.out_feature_min
+            == jnp.tile(action_min, horizon)
         )
         assert jnp.all(
-            model.dropout_mlp.out_feature_max == jnp.tile(action_max, horizon)
+            model.action_estimator.out_feature_max
+            == jnp.tile(action_max, horizon)
         )
 
     def test_output_shapes_consistency(self, basic_model, test_state):

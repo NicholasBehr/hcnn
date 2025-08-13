@@ -48,21 +48,29 @@ class TestRollout:
         key = jax.random.key(42)
         states = jax.random.normal(key, (self.horizon, self.state_dim))
         actions = jax.random.normal(key, (self.horizon, self.action_dim))
+        states_relax = jnp.zeros_like(states)
 
-        rollout = Rollout(states=states, actions=actions)
+        rollout = Rollout(
+            states=states, actions=actions, states_relax=states_relax
+        )
 
         assert rollout.states.shape == (self.horizon, self.state_dim)
         assert rollout.actions.shape == (self.horizon, self.action_dim)
+        assert rollout.states_relax.shape == (self.horizon, self.state_dim)
         assert jnp.allclose(rollout.states, states)
         assert jnp.allclose(rollout.actions, actions)
+        assert jnp.allclose(rollout.states_relax, states_relax)
 
     def test_rollout_properties(self):
         """Test the state_dim and action_dim properties."""
         key = jax.random.key(42)
         states = jax.random.normal(key, (self.horizon, self.state_dim))
         actions = jax.random.normal(key, (self.horizon, self.action_dim))
+        states_relax = jnp.zeros_like(states)
 
-        rollout = Rollout(states=states, actions=actions)
+        rollout = Rollout(
+            states=states, actions=actions, states_relax=states_relax
+        )
 
         assert rollout.state_dim == self.state_dim
         assert rollout.action_dim == self.action_dim
@@ -77,8 +85,11 @@ class TestRollout:
         actions = jax.random.normal(
             key, (batch_size, self.horizon, self.action_dim)
         )
+        states_relax = jnp.zeros_like(states)
 
-        rollout = Rollout(states=states, actions=actions)
+        rollout = Rollout(
+            states=states, actions=actions, states_relax=states_relax
+        )
 
         # Properties should still return the last dimension
         assert rollout.state_dim == self.state_dim

@@ -1,7 +1,6 @@
 import os
 import shutil
 import tempfile
-from functools import partial
 
 import jax
 import jax.numpy as jnp
@@ -13,6 +12,7 @@ from hcnn.projection import ProjectionLayer
 from hcnn.state_to_rollout.state_to_rollout_base import StateToRolloutBase
 from hcnn.system_costs.system_costs_base import SystemCostsBase
 from hcnn.training.train_bundle import TrainBundle
+from hcnn.training.visualization import visualize_receding_horizon
 
 # from hcnn.training.visualization import visualize_receding_horizon
 
@@ -52,10 +52,10 @@ def loss_fn(
     # Aggregate the optimization info
     info = jax.tree.map(jnp.mean, info)
 
-    return loss, (loss, info)
+    return loss, (loss, cost, info)
 
 
-@partial(jax.jit, static_argnames=["batches_per_epoch", "train_graphdef"])
+@jax.jit
 def train_epoch(
     train_graphdef: nnx.GraphDef,
     train_state: nnx.State,
@@ -96,10 +96,10 @@ def train_epoch(
         train.optimizer.update(grads)
 
         # Unpack the auxiliary values
-        loss, info = aux
+        loss, cost, info = aux
 
         # Update metrics
-        train.metrics.update(loss=loss, **vars(info))
+        train.metrics.update(loss=loss, cost=cost, **vars(info))
 
         return nnx.state(train)
 
@@ -218,13 +218,14 @@ def train(project=None, config=None):
 
             # Log to WandB
             wandb.log(step=epoch, data=metrics)
-            # if epoch % 25 == 0 or epoch == config.epochs - 1:
-            #     visualize_receding_horizon(
-            #         train_bundle=nnx.merge(train_graphdef, train_state),
-            #         steps=50,
-            #         initial_state=3 * jnp.ones(train.policy.state_dim),
-            #     )
-            #     save_train_state(train_state)
+            if (epoch % 25 == 0 and epoch > 0) or epoch == config.epochs - 1:
+                state_dim = train.system.sys_dynamics.state_dim
+                visualize_receding_horizon(
+                    train_bundle=nnx.merge(train_graphdef, train_state),
+                    steps=10,
+                    initial_state=4 * jnp.ones(state_dim),
+                )
+                save_train_state(train_state)
 
 
 if __name__ == "__main__":
@@ -243,11 +244,11 @@ if __name__ == "__main__":
         "system_name": "double_integrator",
         "seed": 0,
         # Neural Network
-        "nn_name": "action",
-        "nn_hidden_dim": 16,
-        "nn_hidden_depth": 8,
-        "nn_dropout_rate": 0.1,
-        "nn_activation": "leaky_relu",
+        "nn_name": "scan",
+        "nn_hidden_dim": 4,
+        "nn_hidden_depth": 4,
+        "nn_dropout_rate": 0,
+        "nn_activation": "celu",
         # Optimizer
         "optimizer_learning_rate": 1e-2,
         "optimizer_b1": 0.9,
@@ -256,20 +257,20 @@ if __name__ == "__main__":
         # Solver
         "solver_name": "shallow",
         "solver_alpha": 1.6,
-        "solver_sigma": 1e-3,
-        "solver_rho_equality": 1,
-        "solver_rho_inequality": 1,
+        "solver_sigma": 1e-6,
+        "solver_rho_base": 0.1,
+        "solver_rho_eq_mult": 100,
         "solver_max_iter_nonlin": 1,
-        "solver_max_iter_lin": 5e3,
-        "solver_tol": 1e-2,
+        "solver_max_iter_lin": 1e3,
+        "solver_tol": 1e-1,
         # Projection
-        "projection_horizon": 30,
-        "projection_relaxation_penalty": 1e3,
+        "projection_horizon": 20,
+        "projection_relaxation_penalty": 10,
         # Training parameters
-        "batch_size": 512,
-        "batches_per_epoch": 16,
-        "epochs": 50,
-        "alignment_weight": 1e-3,
+        "batch_size": 1,
+        "batches_per_epoch": 1,
+        "epochs": 1,
+        "alignment_weight": 1e-2,
     }
     sweep_configuration = {
         "method": "bayes",

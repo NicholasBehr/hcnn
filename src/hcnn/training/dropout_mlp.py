@@ -124,7 +124,6 @@ class DropoutMLP(nnx.Module):
 
         Args:
             x: The input tensor.
-            rngs: Optional NNX Rngs object.
 
         Returns:
             The output tensor after passing through the MLP.

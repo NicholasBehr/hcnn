@@ -38,11 +38,7 @@ def loss_fn(
         (rollout.actions - jax.lax.stop_gradient(rollout_proj.actions)) ** 2
     )
     relax_sqr_dst = jnp.sum(
-        (
-            rollout.states_relax
-            - jax.lax.stop_gradient(rollout_proj.states_relax)
-        )
-        ** 2
+        (rollout.relax - jax.lax.stop_gradient(rollout_proj.relax)) ** 2
     )
     sqr_dst = state_sqr_dst + action_sqr_dst + relax_sqr_dst
 
@@ -222,8 +218,8 @@ def train(project=None, config=None):
                 state_dim = train.system.sys_dynamics.state_dim
                 visualize_receding_horizon(
                     train_bundle=nnx.merge(train_graphdef, train_state),
-                    steps=10,
-                    initial_state=4 * jnp.ones(state_dim),
+                    steps=50,
+                    initial_state=3 * jnp.ones(state_dim),
                 )
                 save_train_state(train_state)
 
@@ -245,9 +241,9 @@ if __name__ == "__main__":
         "seed": 0,
         # Neural Network
         "nn_name": "scan",
-        "nn_hidden_dim": 4,
-        "nn_hidden_depth": 4,
-        "nn_dropout_rate": 0,
+        "nn_hidden_dim": 6,
+        "nn_hidden_depth": 6,
+        "nn_dropout_rate": 0.5,
         "nn_activation": "celu",
         # Optimizer
         "optimizer_learning_rate": 1e-2,
@@ -261,16 +257,16 @@ if __name__ == "__main__":
         "solver_rho_base": 0.1,
         "solver_rho_eq_mult": 0.1,
         "solver_max_iter_nonlin": 1,
-        "solver_max_iter_lin": 1e3,
+        "solver_max_iter_lin": 1e4,
         "solver_tol": 1e-1,
         # Projection
-        "projection_horizon": 20,
-        "projection_relaxation_penalty": 10,
+        "projection_horizon": 30,
+        "projection_relaxation_penalty": 100,
         # Training parameters
         "batch_size": 512,
         "batches_per_epoch": 16,
         "epochs": 500,
-        "alignment_weight": 1,
+        "alignment_weight": 1e-3,
     }
     sweep_configuration = {
         "method": "bayes",

@@ -18,8 +18,8 @@ class OptimizationVariable:
     actions_diff: jax.Array  # shape (horizon, action_dim)
     # state relaxation for ineq. constraint satisfaction
     # action constraints are not to be relaxed
-    states_relax_pos: jax.Array  # shape (horizon, state_dim)
-    states_relax_neg: jax.Array  # shape (horizon, state_dim)
+    relax_pos: jax.Array  # shape (horizon, constr_dim)
+    relax_neg: jax.Array  # shape (horizon, constr_dim)
 
 
 @struct.dataclass
@@ -34,8 +34,8 @@ class ProjectionPhiND:
     sys_dynamics: SystemDynamicsBase
     initial_state: jax.Array
     # for warm start
-    states_relax_pos: jax.Array  # shape (horizon, state_dim)
-    states_relax_neg: jax.Array  # shape (horizon, state_dim)
+    relax_pos: jax.Array  # shape (horizon, constr_dim)
+    relax_neg: jax.Array  # shape (horizon, constr_dim)
 
 
 @struct.dataclass
@@ -58,9 +58,11 @@ class ProjectionProblem(
     ):
         state_dim = sys_constraints.state_dim
         action_dim = sys_constraints.action_dim
+        constr_dim = sys_constraints.constraint_dim
 
         states_one = jnp.ones((horizon, state_dim))
         actions_one = jnp.ones((horizon, action_dim))
+        constr_one = jnp.ones((horizon, constr_dim))
 
         cost_quad_diag = flatten_util.ravel_pytree(
             OptimizationVariable(
@@ -68,8 +70,8 @@ class ProjectionProblem(
                 actions=0 * actions_one,
                 states_diff=2 * states_one,
                 actions_diff=2 * actions_one,
-                states_relax_pos=2 * states_one,
-                states_relax_neg=2 * states_one,
+                relax_pos=2 * constr_one,
+                relax_neg=2 * constr_one,
             )
         )[0]
         cost_linear = flatten_util.ravel_pytree(
@@ -78,8 +80,8 @@ class ProjectionProblem(
                 actions=0 * actions_one,
                 states_diff=0 * states_one,
                 actions_diff=0 * actions_one,
-                states_relax_pos=relaxation_penalty * states_one,
-                states_relax_neg=relaxation_penalty * states_one,
+                relax_pos=relaxation_penalty * constr_one,
+                relax_neg=relaxation_penalty * constr_one,
             )
         )[0]
         bound_tuple_list = [
@@ -101,7 +103,7 @@ class ProjectionProblem(
             ),
             cls.bounds_relaxation(
                 horizon=horizon,
-                state_dim=state_dim,
+                constr_dim=constr_dim,
             ),
         ]
         lower_bound_list, upper_bound_list = zip(
@@ -163,11 +165,10 @@ class ProjectionProblem(
     def constraints_sys_constraints(
         optvar: OptimizationVariable, sys_constraints: SystemConstraintsBase
     ) -> jax.Array:
-        constraints = sys_constraints(
-            # relaxed states
-            optvar.states + optvar.states_relax_pos - optvar.states_relax_neg,
-            # unrelaxed actions
-            optvar.actions,
+        constraints = (
+            sys_constraints(optvar.states, optvar.actions)
+            + optvar.relax_pos
+            - optvar.relax_neg
         )
         return constraints.ravel()
 
@@ -198,16 +199,16 @@ class ProjectionProblem(
     @staticmethod
     def constraints_relaxation(optvar: OptimizationVariable) -> jax.Array:
         return jnp.concatenate(
-            [optvar.states_relax_pos.ravel(), optvar.states_relax_neg.ravel()]
+            [optvar.relax_pos.ravel(), optvar.relax_neg.ravel()]
         )
 
     @staticmethod
     def bounds_relaxation(
-        horizon: int, state_dim: int
+        horizon: int, constr_dim: int
     ) -> tuple[jax.Array, jax.Array]:
         return (
-            jnp.repeat(0, horizon * 2 * state_dim),
-            jnp.repeat(jnp.inf, horizon * 2 * state_dim),
+            jnp.repeat(0, horizon * 2 * constr_dim),
+            jnp.repeat(jnp.inf, horizon * 2 * constr_dim),
         )
 
     def get_x0(
@@ -218,23 +219,26 @@ class ProjectionProblem(
             actions=phi_d.actions_ref,
             states_diff=jnp.zeros_like(phi_d.states_ref),
             actions_diff=jnp.zeros_like(phi_d.actions_ref),
-            states_relax_pos=phi_nd.states_relax_pos,
-            states_relax_neg=phi_nd.states_relax_neg,
+            relax_pos=phi_nd.relax_pos,
+            relax_neg=phi_nd.relax_neg,
         )
         return flatten_util.ravel_pytree(optvar)[0]
 
     def x_to_optvar(self, x: jax.Array) -> OptimizationVariable:
         state_dim = self.sys_constraints.state_dim
         action_dim = self.sys_constraints.action_dim
+        constr_dim = self.sys_constraints.constraint_dim
         state_template = jnp.empty((self.horizon, state_dim))
         action_template = jnp.empty((self.horizon, action_dim))
+        constr_template = jnp.empty((self.horizon, constr_dim))
+
         optvar_template = OptimizationVariable(
             states=state_template,
             actions=action_template,
             states_diff=state_template,
             actions_diff=action_template,
-            states_relax_pos=state_template,
-            states_relax_neg=state_template,
+            relax_pos=constr_template,
+            relax_neg=constr_template,
         )
         _, unravel_pytree = flatten_util.ravel_pytree(optvar_template)
         return unravel_pytree(x)

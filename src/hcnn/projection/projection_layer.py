@@ -72,8 +72,8 @@ class ProjectionLayer:
             rollout: Rollout,
             initial_state: jax.Array,
         ):
-            states_relax_pos = +jnp.clip(rollout.states_relax, 0, None)
-            states_relax_neg = -jnp.clip(rollout.states_relax, None, 0)
+            relax_pos = +jnp.clip(rollout.relax, 0, None)
+            relax_neg = -jnp.clip(rollout.relax, None, 0)
             phi_d = ProjectionPhiD(
                 states_ref=rollout.states,
                 actions_ref=rollout.actions,
@@ -81,8 +81,8 @@ class ProjectionLayer:
             phi_nd = ProjectionPhiND(
                 sys_dynamics=self.sys_dynamics,
                 initial_state=initial_state,
-                states_relax_pos=states_relax_pos,
-                states_relax_neg=states_relax_neg,
+                relax_pos=relax_pos,
+                relax_neg=relax_neg,
             )
             x_star, solver_info = self.solver.solve(
                 self.projection_problem, phi_d, phi_nd
@@ -91,7 +91,7 @@ class ProjectionLayer:
             rollout_proj = Rollout(
                 states=optvar.states,
                 actions=optvar.actions,
-                states_relax=optvar.states_relax_pos - optvar.states_relax_neg,
+                relax=optvar.relax_pos - optvar.relax_neg,
             )
             state_diff = jnp.mean(
                 jnp.abs(rollout.states - rollout_proj.states),
@@ -100,9 +100,9 @@ class ProjectionLayer:
                 jnp.abs(rollout.actions - rollout_proj.actions),
             )
             relax_diff = jnp.mean(
-                jnp.abs(rollout.states_relax - rollout_proj.states_relax),
+                jnp.abs(rollout.relax - rollout_proj.relax),
             )
-            relax_mean = jnp.mean(jnp.abs(rollout_proj.states_relax))
+            relax_mean = jnp.mean(jnp.abs(rollout_proj.relax))
             proj_info = ProjectionInfo(
                 primal_residual=solver_info.primal_residual,
                 dual_residual=solver_info.dual_residual,

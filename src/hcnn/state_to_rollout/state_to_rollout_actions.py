@@ -19,6 +19,7 @@ class StateToRolloutActions(StateToRolloutBase):
         cls,
         state_dim: int,
         action_dim: int,
+        constr_dim: int,
         hidden_features: list[int],
         horizon: int,
         sys_dynamics: SystemDynamicsBase,
@@ -54,6 +55,7 @@ class StateToRolloutActions(StateToRolloutBase):
         return StateToRolloutActions(
             state_dim=state_dim,
             action_dim=action_dim,
+            constr_dim=constr_dim,
             horizon=horizon,
             action_estimator=dropout_mlp,
             sys_dynamics=sys_dynamics,

@@ -21,6 +21,7 @@ class StateToRolloutDense(StateToRolloutBase):
         cls,
         state_dim: int,
         action_dim: int,
+        constr_dim: int,
         hidden_features: list[int],
         horizon: int,
         sys_dynamics: SystemDynamicsBase,
@@ -93,6 +94,7 @@ class StateToRolloutDense(StateToRolloutBase):
         return StateToRolloutDense(
             state_dim=state_dim,
             action_dim=action_dim,
+            constr_dim=constr_dim,
             horizon=horizon,
             state_estimator=state_mlp,
             action_estimator=action_mlp,

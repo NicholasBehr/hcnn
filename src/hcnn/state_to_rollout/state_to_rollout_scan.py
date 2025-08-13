@@ -20,6 +20,7 @@ class StateToRolloutScan(StateToRolloutBase):
         cls,
         state_dim: int,
         action_dim: int,
+        constr_dim: int,
         hidden_features: list[int],
         horizon: int,
         sys_dynamics: SystemDynamicsBase,
@@ -47,7 +48,7 @@ class StateToRolloutScan(StateToRolloutBase):
         ## RELAXATION ESTIMATOR ##
         relax_mlp = DropoutMLP(
             in_features=state_dim,
-            out_features=state_dim,
+            out_features=constr_dim,
             hidden_features=hidden_features,
             rngs=rngs,
             activation=activation,
@@ -58,6 +59,7 @@ class StateToRolloutScan(StateToRolloutBase):
         return StateToRolloutScan(
             state_dim=state_dim,
             action_dim=action_dim,
+            constr_dim=constr_dim,
             horizon=horizon,
             action_estimator=action_mlp,
             relax_estimator=relax_mlp,
@@ -109,8 +111,6 @@ class StateToRolloutScan(StateToRolloutBase):
         # Reshape back
         states = out[0].reshape(*batch_dims, self.horizon, self.state_dim)
         actions = out[1].reshape(*batch_dims, self.horizon, self.action_dim)
-        states_relax = out[2].reshape(*batch_dims, self.horizon, self.state_dim)
+        relax = out[2].reshape(*batch_dims, self.horizon, self.constr_dim)
 
-        return Rollout(
-            states=states, actions=actions, states_relax=states_relax
-        )
+        return Rollout(states=states, actions=actions, relax=relax)

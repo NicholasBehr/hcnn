@@ -10,6 +10,7 @@ from hcnn.projection import Rollout
 class StateToRolloutBase(nnx.Module, ABC):
     state_dim: int
     action_dim: int
+    constr_dim: int
     horizon: int
 
     @abstractmethod
@@ -23,5 +24,6 @@ class StateToRolloutBase(nnx.Module, ABC):
             Estimated rollout with states and actions
                 states, shape (..., horizon, state_dim)
                 actions, shape (..., horizon, action_dim)
+                relax, shape (..., horizon, constr_dim)
         """
         pass

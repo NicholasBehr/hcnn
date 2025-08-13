@@ -63,8 +63,8 @@ class TrainBundle(nnx.Module):
             action_matrix=jnp.array([[0.5], [1]]),
         )
         sys_costs = SystemCostsQuadratic.factory(
-            state_cost_matrix=jnp.array([[10, 0], [0, 10]]),
-            action_cost_matrix=jnp.array([[1]]),
+            state_cost_matrix=jnp.array([[1, 0], [0, 1]]),
+            action_cost_matrix=jnp.array([[10]]),
         )
         state_min = jnp.array([-10.0, -10.0])
         state_max = jnp.array([+10.0, +10.0])
@@ -182,6 +182,7 @@ class TrainBundle(nnx.Module):
             return StateToRolloutActions.factory(
                 state_dim=system.sys_dynamics.state_dim,
                 action_dim=system.sys_dynamics.action_dim,
+                constr_dim=system.sys_constraints.constraint_dim,
                 hidden_features=[config.nn_hidden_dim] * config.nn_hidden_depth,
                 horizon=config.projection_horizon,
                 sys_dynamics=system.sys_dynamics,
@@ -196,6 +197,7 @@ class TrainBundle(nnx.Module):
             return StateToRolloutDense.factory(
                 state_dim=system.sys_dynamics.state_dim,
                 action_dim=system.sys_dynamics.action_dim,
+                constr_dim=system.sys_constraints.constraint_dim,
                 hidden_features=[config.nn_hidden_dim] * config.nn_hidden_depth,
                 horizon=config.projection_horizon,
                 sys_dynamics=system.sys_dynamics,
@@ -210,6 +212,7 @@ class TrainBundle(nnx.Module):
             return StateToRolloutScan.factory(
                 state_dim=system.sys_dynamics.state_dim,
                 action_dim=system.sys_dynamics.action_dim,
+                constr_dim=system.sys_constraints.constraint_dim,
                 hidden_features=[config.nn_hidden_dim] * config.nn_hidden_depth,
                 horizon=config.projection_horizon,
                 sys_dynamics=system.sys_dynamics,

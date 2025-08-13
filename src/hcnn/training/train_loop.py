@@ -9,7 +9,6 @@ import orbax.checkpoint as ocp
 from flax import nnx
 
 import wandb
-from hcnn.optimization import OptimizationInfo
 from hcnn.projection import ProjectionLayer
 from hcnn.state_to_rollout.state_to_rollout_base import StateToRolloutBase
 from hcnn.system_costs.system_costs_base import SystemCostsBase
@@ -23,36 +22,37 @@ def loss_fn(
     initial_states: jax.Array,
     projection_layer: ProjectionLayer,
     sys_costs: SystemCostsBase,
-    projection_cost=1.0,
+    alignment_weight: float = 1.0,
 ):
     """Compute the loss for the training step."""
     rollout = state_to_rollout(initial_states)
-    rollout_proj, _, info = projection_layer(rollout, initial_states)
+    rollout_proj, info = projection_layer(rollout, initial_states)
     rollout_proj_cost = sys_costs(rollout_proj.states, rollout_proj.actions)
 
     # Compute the cost and difference
     cost = jnp.mean(rollout_proj_cost)
-    state_diff = jnp.mean(
-        jnp.abs(rollout.states - jax.lax.stop_gradient(rollout_proj.states))
+    state_sqr_dst = jnp.sum(
+        (rollout.states - jax.lax.stop_gradient(rollout_proj.states)) ** 2
     )
-    action_diff = jnp.mean(
-        jnp.abs(rollout.actions - jax.lax.stop_gradient(rollout_proj.actions))
+    action_sqr_dst = jnp.sum(
+        (rollout.actions - jax.lax.stop_gradient(rollout_proj.actions)) ** 2
     )
-    diff = state_diff + action_diff
+    relax_sqr_dst = jnp.sum(
+        (
+            rollout.states_relax
+            - jax.lax.stop_gradient(rollout_proj.states_relax)
+        )
+        ** 2
+    )
+    sqr_dst = state_sqr_dst + action_sqr_dst + relax_sqr_dst
 
     # Combine cost and difference into a single loss
-    loss = cost + projection_cost * diff
+    loss = cost + alignment_weight * sqr_dst
 
     # Aggregate the optimization info
-    info = OptimizationInfo(
-        primal_residual=jnp.mean(info.primal_residual),
-        dual_residual=jnp.mean(info.dual_residual),
-        iterations_lin=jnp.mean(info.iterations_lin),
-        iterations_nonlin=jnp.mean(info.iterations_nonlin),
-        converged_flag=jnp.mean(info.converged_flag),
-    )
+    info = jax.tree.map(jnp.mean, info)
 
-    return loss, (loss, cost, diff, info)
+    return loss, (loss, info)
 
 
 @partial(jax.jit, static_argnames=["batches_per_epoch", "train_graphdef"])
@@ -60,7 +60,7 @@ def train_epoch(
     train_graphdef: nnx.GraphDef,
     train_state: nnx.State,
     batches_per_epoch: int = 1,
-    projection_cost: float = 1.0,
+    alignment_weight: float = 1e-3,
 ) -> tuple[nnx.State, dict["str", jax.Array]]:
     """
     Train a single epoch of the model.
@@ -85,30 +85,21 @@ def train_epoch(
         train = nnx.merge(train_graphdef, train_state)
 
         grads, aux = nnx.grad(loss_fn, has_aux=True)(
-            train.state_to_rollout,
-            train.sampler(),
-            train.projection_layer,
-            train.system.sys_costs,
-            projection_cost,
+            state_to_rollout=train.state_to_rollout,
+            initial_states=train.sampler(),
+            projection_layer=train.projection_layer,
+            sys_costs=train.system.sys_costs,
+            alignment_weight=alignment_weight,
         )
 
         # Apply the gradients to the optimizer
         train.optimizer.update(grads)
 
         # Unpack the auxiliary values
-        loss, cost, diff, info = aux
+        loss, info = aux
 
         # Update metrics
-        train.metrics.update(
-            cost=cost,
-            difference=diff,
-            loss=loss,
-            primal_residual=info.primal_residual,
-            dual_residual=info.dual_residual,
-            solver_iter_lin=info.iterations_lin,
-            solver_iter_nonlin=info.iterations_nonlin,
-            solver_converged=info.converged_flag,
-        )
+        train.metrics.update(loss=loss, **vars(info))
 
         return nnx.state(train)
 
@@ -211,6 +202,7 @@ def train(project=None, config=None):
                 train_graphdef=train_graphdef,
                 train_state=train_state,
                 batches_per_epoch=config.batches_per_epoch,
+                alignment_weight=config.alignment_weight,
             )
 
             # Print metrics in a nicely formatted table
@@ -269,13 +261,15 @@ if __name__ == "__main__":
         "solver_rho_inequality": 1,
         "solver_max_iter_nonlin": 1,
         "solver_max_iter_lin": 5e3,
-        "solver_tol": 1e-1,
+        "solver_tol": 1e-2,
         # Projection
         "projection_horizon": 30,
+        "projection_relaxation_penalty": 1e3,
         # Training parameters
         "batch_size": 512,
         "batches_per_epoch": 16,
         "epochs": 50,
+        "alignment_weight": 1e-3,
     }
     sweep_configuration = {
         "method": "bayes",

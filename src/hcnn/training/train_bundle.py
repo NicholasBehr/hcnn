@@ -221,6 +221,7 @@ class TrainBundle(nnx.Module):
             sys_dynamics=system.sys_dynamics,
             sys_constraints=system.sys_constraints,
             horizon=config.projection_horizon,
+            relaxation_penalty=config.projection_relaxation_penalty,
             solver=solver,
         )
 
@@ -279,16 +280,16 @@ class TrainBundle(nnx.Module):
 
         # Build optax metrics
         metrics = nnx.MultiMetric(
-            # rollout metrics
-            cost=nnx.metrics.Average("cost"),
-            difference=nnx.metrics.Average("difference"),
             loss=nnx.metrics.Average("loss"),
-            # solver metrics
             primal_residual=nnx.metrics.Average("primal_residual"),
             dual_residual=nnx.metrics.Average("dual_residual"),
-            solver_iter_lin=nnx.metrics.Average("solver_iter_lin"),
-            solver_iter_nonlin=nnx.metrics.Average("solver_iter_nonlin"),
-            solver_converged=nnx.metrics.Average("solver_converged"),
+            iterations_lin=nnx.metrics.Average("iterations_lin"),
+            iterations_nonlin=nnx.metrics.Average("iterations_nonlin"),
+            converged_flag=nnx.metrics.Average("converged_flag"),
+            state_diff=nnx.metrics.Average("state_diff"),
+            action_diff=nnx.metrics.Average("action_diff"),
+            relax_diff=nnx.metrics.Average("relax_diff"),
+            relax_mean=nnx.metrics.Average("relax_mean"),
         )
 
         return TrainBundle(

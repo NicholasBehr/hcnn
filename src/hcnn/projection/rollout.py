@@ -1,4 +1,5 @@
 import jax
+import jax.numpy as jnp
 from flax import struct
 
 from hcnn.system_dynamics import SystemDynamicsBase
@@ -6,8 +7,9 @@ from hcnn.system_dynamics import SystemDynamicsBase
 
 @struct.dataclass
 class Rollout:
-    states: jax.Array
-    actions: jax.Array
+    states: jax.Array  # shape (..., horizon, state_dim)
+    actions: jax.Array  # shape (..., horizon, action_dim)
+    states_relax: jax.Array  # shape (..., horizon, state_dim)
 
     @property
     def state_dim(self) -> int:
@@ -74,4 +76,8 @@ class Rollout:
                 step, initial_state, actions
             )  # (t, state_dim)
 
-        return Rollout(states=states, actions=actions)
+        return Rollout(
+            states=states,
+            actions=actions,
+            states_relax=jnp.zeros_like(states),
+        )

@@ -11,7 +11,7 @@ from .state_to_rollout_base import StateToRolloutBase
 
 @struct.dataclass
 class StateToRolloutActions(StateToRolloutBase):
-    dropout_mlp: DropoutMLP
+    action_estimator: DropoutMLP
     sys_dynamics: SystemDynamicsBase
 
     @classmethod
@@ -30,34 +30,32 @@ class StateToRolloutActions(StateToRolloutBase):
         action_min: jnp.ndarray | None = None,
         action_max: jnp.ndarray | None = None,
     ) -> "StateToRolloutActions":
-        in_features = state_dim
-        out_features = action_dim * horizon
-
-        # Repeat action bounds for each horizon step
-        out_feature_min = None
-        out_feature_max = None
+        action_in_feat = state_dim
+        action_out_feat = action_dim * horizon
+        action_out_min = None
+        action_out_min = None
         if action_min is not None:
-            out_feature_min = jnp.tile(action_min, horizon)
+            action_out_min = jnp.tile(action_min, horizon)
         if action_max is not None:
-            out_feature_max = jnp.tile(action_max, horizon)
+            action_out_min = jnp.tile(action_max, horizon)
 
         dropout_mlp = DropoutMLP(
-            in_features=in_features,
-            out_features=out_features,
+            in_features=action_in_feat,
+            out_features=action_out_feat,
             hidden_features=hidden_features,
             rngs=rngs,
             activation=activation,
             dropout_rate=dropout_rate,
             periodic_in_features=periodic_states,
-            out_feature_min=out_feature_min,
-            out_feature_max=out_feature_max,
+            out_feature_min=action_out_min,
+            out_feature_max=action_out_min,
         )
 
         return StateToRolloutActions(
             state_dim=state_dim,
             action_dim=action_dim,
             horizon=horizon,
-            dropout_mlp=dropout_mlp,
+            action_estimator=dropout_mlp,
             sys_dynamics=sys_dynamics,
         )
 
@@ -72,7 +70,7 @@ class StateToRolloutActions(StateToRolloutBase):
                 states, shape (..., horizon, state_dim)
                 actions, shape (..., horizon, action_dim)
         """
-        actions_flat = self.dropout_mlp(state)
+        actions_flat = self.action_estimator(state)
         # Reshape actions from (..., horizon * action_dim) to
         # (..., horizon, action_dim)
         actions_shape = actions_flat.shape

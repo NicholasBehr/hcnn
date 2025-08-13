@@ -1,4 +1,4 @@
-from .projection_layer import ProjectionLayer
+from .projection_layer import ProjectionInfo, ProjectionLayer
 from .projection_problem import (
     OptimizationVariable,
     ProjectionPhiD,

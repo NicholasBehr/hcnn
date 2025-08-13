@@ -7,24 +7,35 @@ from hcnn.optimization import OptimizationProblemBase
 from hcnn.system_constraints import SystemConstraintsBase
 from hcnn.system_dynamics import SystemDynamicsBase
 
-from .rollout import Rollout
-
 
 @struct.dataclass
 class OptimizationVariable:
-    rollout: Rollout
-    rollout_diff: Rollout
+    # projected trajecory
+    states: jax.Array  # shape (horizon, state_dim)
+    actions: jax.Array  # shape (horizon, action_dim)
+    # projection distance
+    states_diff: jax.Array  # shape (horizon, state_dim)
+    actions_diff: jax.Array  # shape (horizon, action_dim)
+    # state relaxation for ineq. constraint satisfaction
+    # action constraints are not to be relaxed
+    states_relax_pos: jax.Array  # shape (horizon, state_dim)
+    states_relax_neg: jax.Array  # shape (horizon, state_dim)
 
 
 @struct.dataclass
 class ProjectionPhiD:
-    rollout_ref: Rollout
+    states_ref: jax.Array  # shape (horizon, state_dim)
+    actions_ref: jax.Array  # shape (horizon, action_dim)
 
 
 @struct.dataclass
 class ProjectionPhiND:
+    # for constraints
     sys_dynamics: SystemDynamicsBase
     initial_state: jax.Array
+    # for warm start
+    states_relax_pos: jax.Array  # shape (horizon, state_dim)
+    states_relax_neg: jax.Array  # shape (horizon, state_dim)
 
 
 @struct.dataclass
@@ -43,36 +54,55 @@ class ProjectionProblem(
         cls,
         sys_constraints: SystemConstraintsBase,
         horizon: int,
+        relaxation_penalty: float,
     ):
         state_dim = sys_constraints.state_dim
         action_dim = sys_constraints.action_dim
 
-        two = Rollout(
-            states=2 * jnp.ones((horizon, state_dim)),
-            actions=2 * jnp.ones((horizon, action_dim)),
-        )
-        zeros = Rollout(
-            states=jnp.zeros((horizon, state_dim)),
-            actions=jnp.zeros((horizon, action_dim)),
-        )
+        states_one = jnp.ones((horizon, state_dim))
+        actions_one = jnp.ones((horizon, action_dim))
 
         cost_quad_diag = flatten_util.ravel_pytree(
             OptimizationVariable(
-                rollout=zeros,
-                rollout_diff=two,  # quadratic cost for difference
+                states=0 * states_one,
+                actions=0 * actions_one,
+                states_diff=2 * states_one,
+                actions_diff=2 * actions_one,
+                states_relax_pos=0 * states_one,
+                states_relax_neg=0 * states_one,
             )
         )[0]
         cost_linear = flatten_util.ravel_pytree(
             OptimizationVariable(
-                rollout=zeros,
-                rollout_diff=zeros,
+                states=0 * states_one,
+                actions=0 * actions_one,
+                states_diff=0 * states_one,
+                actions_diff=0 * actions_one,
+                states_relax_pos=relaxation_penalty * states_one,
+                states_relax_neg=relaxation_penalty * states_one,
             )
         )[0]
         bound_tuple_list = [
-            cls.bounds_rollout_diff(horizon, state_dim, action_dim),
-            cls.bounds_sys_dynamics(horizon, state_dim),
-            cls.bounds_sys_constraints(horizon, sys_constraints),
-            cls.bounds_initial_state(state_dim),
+            cls.bounds_rollout_diff(
+                horizon=horizon,
+                state_dim=state_dim,
+                action_dim=action_dim,
+            ),
+            cls.bounds_sys_dynamics(
+                horizon=horizon,
+                state_dim=state_dim,
+            ),
+            cls.bounds_sys_constraints(
+                horizon=horizon,
+                sys_constraints=sys_constraints,
+            ),
+            cls.bounds_initial_state(
+                state_dim=state_dim,
+            ),
+            cls.bounds_relaxation(
+                horizon=horizon,
+                state_dim=state_dim,
+            ),
         ]
         lower_bound_list, upper_bound_list = zip(
             *bound_tuple_list, strict=False
@@ -89,15 +119,14 @@ class ProjectionProblem(
             horizon=horizon,
         )
 
-    ## ROLLOUT DIFFERENCE CONSTRAINTS (linear) ###
+    ## ROLLOUT DIFFERENCE CONSTRAINTS ###
     @staticmethod
     def constraints_rollout_diff(
-        optvar: OptimizationVariable, rollout_ref: Rollout
+        optvar: OptimizationVariable, phi_d: ProjectionPhiD
     ) -> jax.Array:
-        flat_rollout = flatten_util.ravel_pytree(optvar.rollout)[0]
-        flat_rollout_ref = flatten_util.ravel_pytree(rollout_ref)[0]
-        flat_rollout_diff = flatten_util.ravel_pytree(optvar.rollout_diff)[0]
-        return flat_rollout - flat_rollout_ref - flat_rollout_diff
+        state_diff = optvar.states - phi_d.states_ref - optvar.states_diff
+        action_diff = optvar.actions - phi_d.actions_ref - optvar.actions_diff
+        return jnp.concatenate([state_diff.ravel(), action_diff.ravel()])
 
     @staticmethod
     def bounds_rollout_diff(
@@ -108,14 +137,14 @@ class ProjectionProblem(
             jnp.zeros(horizon * (state_dim + action_dim)),
         )
 
-    ## SYSTEM DYNAMICS CONSTRAINTS (linear if system is linear) ###
+    ## SYSTEM DYNAMICS CONSTRAINTS ###
     @staticmethod
     def constraints_sys_dynamics(
         optvar: OptimizationVariable, sys_dynamics: SystemDynamicsBase
     ) -> jax.Array:
-        states_i = optvar.rollout.states[:-1]
-        states_i_plus_1 = optvar.rollout.states[1:]
-        actions_i = optvar.rollout.actions[:-1]
+        states_i = optvar.states[:-1]
+        states_i_plus_1 = optvar.states[1:]
+        actions_i = optvar.actions[:-1]
 
         constraints = states_i_plus_1 - sys_dynamics(states_i, actions_i)
         return constraints.ravel()
@@ -135,7 +164,8 @@ class ProjectionProblem(
         optvar: OptimizationVariable, sys_constraints: SystemConstraintsBase
     ) -> jax.Array:
         constraints = sys_constraints(
-            optvar.rollout.states, optvar.rollout.actions
+            optvar.states + optvar.states_relax_pos - optvar.states_relax_neg,
+            optvar.actions,
         )
         return constraints.ravel()
 
@@ -151,9 +181,9 @@ class ProjectionProblem(
     ## INITIAL STATE CONSTRAINTS ###
     @staticmethod
     def constraints_initial_state(
-        optvar: OptimizationVariable, initial_state: jax.Array
+        optvar: OptimizationVariable, phi_nd: ProjectionPhiND
     ) -> jax.Array:
-        return optvar.rollout.states[0] - initial_state
+        return optvar.states[0] - phi_nd.initial_state
 
     @staticmethod
     def bounds_initial_state(state_dim: int) -> tuple[jax.Array, jax.Array]:
@@ -162,43 +192,72 @@ class ProjectionProblem(
             jnp.zeros(state_dim),
         )
 
+    ## POSITIVE RELAXATION CONSTRAINTS ##
+    @staticmethod
+    def constraints_relaxation(optvar: OptimizationVariable) -> jax.Array:
+        return jnp.concatenate(
+            [optvar.states_relax_pos.ravel(), optvar.states_relax_neg.ravel()]
+        )
+
+    @staticmethod
+    def bounds_relaxation(
+        horizon: int, state_dim: int
+    ) -> tuple[jax.Array, jax.Array]:
+        return (
+            jnp.repeat(0, horizon * 2 * state_dim),
+            jnp.repeat(jnp.inf, horizon * 2 * state_dim),
+        )
+
     def get_x0(
         self, phi_d: ProjectionPhiD, phi_nd: ProjectionPhiND
     ) -> jax.Array:
-        rollout_ref = phi_d.rollout_ref
         optvar = OptimizationVariable(
-            rollout=rollout_ref,
-            rollout_diff=Rollout(
-                states=jnp.zeros_like(rollout_ref.states),
-                actions=jnp.zeros_like(rollout_ref.actions),
-            ),
+            states=phi_d.states_ref,
+            actions=phi_d.actions_ref,
+            states_diff=jnp.zeros_like(phi_d.states_ref),
+            actions_diff=jnp.zeros_like(phi_d.actions_ref),
+            states_relax_pos=phi_nd.states_relax_pos,
+            states_relax_neg=phi_nd.states_relax_neg,
         )
         return flatten_util.ravel_pytree(optvar)[0]
 
     def x_to_optvar(self, x: jax.Array) -> OptimizationVariable:
         state_dim = self.sys_constraints.state_dim
         action_dim = self.sys_constraints.action_dim
-        template = Rollout(
-            states=jnp.empty((self.horizon, state_dim)),
-            actions=jnp.empty((self.horizon, action_dim)),
+        state_template = jnp.empty((self.horizon, state_dim))
+        action_template = jnp.empty((self.horizon, action_dim))
+        optvar_template = OptimizationVariable(
+            states=state_template,
+            actions=action_template,
+            states_diff=state_template,
+            actions_diff=action_template,
+            states_relax_pos=state_template,
+            states_relax_neg=state_template,
         )
-        optvar = OptimizationVariable(
-            rollout=template,
-            rollout_diff=template,
-        )
-        _, unravel_pytree = flatten_util.ravel_pytree(optvar)
+        _, unravel_pytree = flatten_util.ravel_pytree(optvar_template)
         return unravel_pytree(x)
 
     def constraint_fn(self, x, phi_d, phi_nd):
         optvar = self.x_to_optvar(x)
-        rollout_ref = phi_d.rollout_ref
-        sys_dynamics = phi_nd.sys_dynamics
-        initial_state = phi_nd.initial_state
-
         constraints_list = [
-            self.constraints_rollout_diff(optvar, rollout_ref),
-            self.constraints_sys_dynamics(optvar, sys_dynamics),
-            self.constraints_sys_constraints(optvar, self.sys_constraints),
-            self.constraints_initial_state(optvar, initial_state),
+            self.constraints_rollout_diff(
+                optvar=optvar,
+                phi_d=phi_d,
+            ),
+            self.constraints_sys_dynamics(
+                optvar=optvar,
+                sys_dynamics=phi_nd.sys_dynamics,
+            ),
+            self.constraints_sys_constraints(
+                optvar=optvar,
+                sys_constraints=self.sys_constraints,
+            ),
+            self.constraints_initial_state(
+                optvar=optvar,
+                phi_nd=phi_nd,
+            ),
+            self.constraints_relaxation(
+                optvar=optvar,
+            ),
         ]
         return jnp.concatenate(constraints_list)

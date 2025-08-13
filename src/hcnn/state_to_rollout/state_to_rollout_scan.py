@@ -101,7 +101,6 @@ class StateToRolloutScan(StateToRolloutBase):
                 flat_states,
             ),
             length=self.horizon,
-            unroll=True,
         )
 
         nnx.update(self.action_estimator, action_est_split[1])

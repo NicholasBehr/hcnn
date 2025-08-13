@@ -259,7 +259,7 @@ if __name__ == "__main__":
         "solver_alpha": 1.6,
         "solver_sigma": 1e-6,
         "solver_rho_base": 0.1,
-        "solver_rho_eq_mult": 100,
+        "solver_rho_eq_mult": 0.1,
         "solver_max_iter_nonlin": 1,
         "solver_max_iter_lin": 1e3,
         "solver_tol": 1e-1,
@@ -267,10 +267,10 @@ if __name__ == "__main__":
         "projection_horizon": 20,
         "projection_relaxation_penalty": 10,
         # Training parameters
-        "batch_size": 1,
-        "batches_per_epoch": 1,
-        "epochs": 1,
-        "alignment_weight": 1e-2,
+        "batch_size": 512,
+        "batches_per_epoch": 16,
+        "epochs": 500,
+        "alignment_weight": 1,
     }
     sweep_configuration = {
         "method": "bayes",

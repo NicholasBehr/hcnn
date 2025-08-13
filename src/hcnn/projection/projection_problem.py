@@ -68,8 +68,8 @@ class ProjectionProblem(
                 actions=0 * actions_one,
                 states_diff=2 * states_one,
                 actions_diff=2 * actions_one,
-                states_relax_pos=0 * states_one,
-                states_relax_neg=0 * states_one,
+                states_relax_pos=2 * states_one,
+                states_relax_neg=2 * states_one,
             )
         )[0]
         cost_linear = flatten_util.ravel_pytree(

@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
 import plotly.graph_objects as go
+from flax import nnx
 from plotly.subplots import make_subplots
 
 import wandb
@@ -8,10 +9,11 @@ import wandb
 from .train_bundle import TrainBundle
 
 
+@nnx.jit
 def sample_rollout(train_bundle: TrainBundle, initial_states: jax.Array):
     rollout = train_bundle.state_to_rollout(initial_states)
     rollout_proj, _ = train_bundle.projection_layer(rollout, initial_states)
-    return rollout_proj.states, rollout_proj.actions, rollout.states_relax
+    return rollout_proj.states, rollout_proj.actions, rollout_proj.states_relax
 
 
 def visualize_receding_horizon(
@@ -51,6 +53,7 @@ def visualize_receding_horizon(
     # Track the actual trajectory taken
     actual_states = [initial_state]
     actual_actions = []
+    actual_relaxed_states = []  # Track actual relaxed states
     current_state = initial_state
 
     # Colors for visualization
@@ -134,6 +137,9 @@ def visualize_receding_horizon(
         first_action = planned_actions[0]
         next_state = sys_dynamics(current_state, first_action)
 
+        # Calculate the actual relaxed state for the current step
+        current_relaxed_state = current_state + states_relax[0]
+
         # Add the actual state transition (dark color)
         for state_idx in range(state_dim):
             fig.add_trace(
@@ -152,6 +158,23 @@ def visualize_receding_horizon(
                 col=1,
             )
 
+        # Add the actual relaxed state (dark green)
+        for state_idx in range(state_dim):
+            fig.add_trace(
+                go.Scatter(
+                    x=[step],
+                    y=[current_relaxed_state[state_idx]],
+                    mode="markers",
+                    marker=dict(size=6, color="rgba(0, 139, 0, 1.0)"),
+                    name="Actual Relaxed States"
+                    if step == 0 and state_idx == 0
+                    else None,
+                    showlegend=True if step == 0 and state_idx == 0 else False,
+                ),
+                row=state_idx + 1,
+                col=1,
+            )
+
         # Add the actual action taken (dark orange)
         for action_idx in range(action_dim):
             fig.add_trace(
@@ -159,7 +182,7 @@ def visualize_receding_horizon(
                     x=[step],
                     y=[first_action[action_idx]],
                     mode="markers",
-                    marker=dict(size=8, color=action_dark_color),
+                    marker=dict(size=6, color=action_dark_color),
                     name="Actual Actions"
                     if step == 0 and action_idx == 0
                     else None,
@@ -173,6 +196,7 @@ def visualize_receding_horizon(
         current_state = next_state
         actual_states.append(current_state)
         actual_actions.append(first_action)
+        actual_relaxed_states.append(current_relaxed_state)
 
     # Update layout with padding
     fig.update_layout(

@@ -114,7 +114,7 @@ class ProjectionLayer:
                 relax_diff=relax_diff,
                 relax_mean=relax_mean,
             )
-            return rollout, proj_info
+            return rollout_proj, proj_info
 
         # Check if we need to vmap based on the batch dimensions
         # Single rollout: states.shape = (horizon, state_dim)

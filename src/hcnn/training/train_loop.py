@@ -12,6 +12,7 @@ from hcnn.projection import ProjectionLayer
 from hcnn.state_to_rollout.state_to_rollout_base import StateToRolloutBase
 from hcnn.system_costs.system_costs_base import SystemCostsBase
 from hcnn.training.train_bundle import TrainBundle
+from hcnn.training.visualization import visualize_receding_horizon
 
 # from hcnn.training.visualization import visualize_receding_horizon
 
@@ -215,14 +216,14 @@ def train(project=None, config=None):
 
             # Log to WandB
             wandb.log(step=epoch, data=metrics)
-            # if (epoch % 10 == 0 and epoch > 0) or epoch == config.epochs - 1:
-            #     state_dim = train.system.sys_dynamics.state_dim
-            #     visualize_receding_horizon(
-            #         train_bundle=nnx.merge(train_graphdef, train_state),
-            #         steps=50,
-            #         initial_state=4 * jnp.ones(state_dim),
-            #     )
-            #     save_train_state(train_state)
+            if (epoch % 20 == 0 and epoch > 0) or epoch == config.epochs - 1:
+                state_dim = train.system.sys_dynamics.state_dim
+                visualize_receding_horizon(
+                    train_bundle=nnx.merge(train_graphdef, train_state),
+                    steps=50,
+                    initial_state=4 * jnp.ones(state_dim),
+                )
+                save_train_state(train_state)
 
 
 if __name__ == "__main__":
@@ -242,9 +243,9 @@ if __name__ == "__main__":
         "seed": 0,
         # Neural Network
         "nn_name": "scan",
-        "nn_hidden_dim": 3,
-        "nn_hidden_depth": 3,
-        "nn_dropout_rate": 0.1,
+        "nn_hidden_dim": 4,
+        "nn_hidden_depth": 4,
+        "nn_dropout_rate": 0.25,
         "nn_activation": "leaky_relu",
         # Optimizer
         "optimizer_learning_rate": 1e-2,
@@ -253,26 +254,26 @@ if __name__ == "__main__":
         "optimizer_weight_decay": 1e-3,
         # Solver
         "solver_name": "osqp",
-        "solver_alpha": 1.6,
-        "solver_sigma": 1e-6,
-        "solver_rho_base": 1.0,
-        "solver_rho_eq_mult": 0.1,
+        "solver_alpha": 1.3,
+        "solver_sigma": 15,
+        "solver_rho_base": 100,
+        "solver_rho_eq_mult": 0.05,
         "solver_max_iter_nonlin": 1,
-        "solver_max_iter_lin": 1e3,
-        "solver_tol": 1e-1,
+        "solver_max_iter_lin": 5_000,
+        "solver_tol": 0.05,
         # Projection
         "projection_horizon": 30,
-        "projection_relaxation_penalty": 1e3,
+        "projection_relaxation_penalty": 10,
         # Training parameters
-        "batch_size": 128,
-        "batches_per_epoch": 1,
-        "epochs": 1,
+        "batch_size": 512,
+        "batches_per_epoch": 16,
+        "epochs": 100,
         "alignment_weight": 1e-2,
     }
     sweep_configuration = {
         "method": "bayes",
-        "metric": {"goal": "maximize", "name": "converged_flag"},
-        # "early_terminate": {"type": "hyperband", "min_iter": 20, "eta": 1.5},
+        "metric": {"goal": "minimize", "name": "cost"},
+        "early_terminate": {"type": "hyperband", "min_iter": 20, "eta": 1.5},
         "parameters": {
             "system_name": {"value": "double_integrator"},
             "seed": {"value": 0},
@@ -283,49 +284,53 @@ if __name__ == "__main__":
             "nn_dropout_rate": {"value": 0.2},
             "nn_activation": {"value": "leaky_relu"},
             # Optimizer
-            "optimizer_learning_rate": {"value": 1e-2},
-            "optimizer_b1": {"value": 0.9},
-            "optimizer_b2": {"value": 0.999},
-            "optimizer_weight_decay": {"value": 1e-4},
+            "optimizer_learning_rate": {
+                "distribution": "log_uniform_values",
+                "max": 1e-1,
+                "min": 1e-4,
+            },
+            "optimizer_b1": {
+                "distribution": "uniform",
+                "max": 0.99,
+                "min": 0.8,
+            },
+            "optimizer_b2": {
+                "distribution": "uniform",
+                "max": 0.999,
+                "min": 0.9,
+            },
+            "optimizer_weight_decay": {
+                "distribution": "log_uniform_values",
+                "max": 1e-1,
+                "min": 1e-4,
+            },
             # Solver
             "solver_name": {"value": "osqp"},
-            "solver_alpha": {
-                "distribution": "uniform",
-                "max": 1.9,
-                "min": 0.1,
-            },
-            "solver_sigma": {
-                "distribution": "log_uniform_values",
-                "max": 1e2,
-                "min": 1e-2,
-            },
-            "solver_rho_base": {
-                "distribution": "log_uniform_values",
-                "max": 1e2,
-                "min": 1e-2,
-            },
-            "solver_rho_eq_mult": {
-                "distribution": "log_uniform_values",
-                "max": 1e2,
-                "min": 1e-2,
-            },
+            "solver_alpha": {"value": 1.6},
+            "solver_sigma": {"value": 15},
+            "solver_rho_base": {"value": 100},
+            "solver_rho_eq_mult": {"value": 0.05},
             "solver_max_iter_nonlin": {"value": 1},
-            "solver_max_iter_lin": {"value": 1e3},
-            "solver_tol": {"value": 1e-1},
+            "solver_max_iter_lin": {"value": 5e3},
+            "solver_tol": {"value": 0.05},
             # Projection
             "projection_horizon": {"value": 20},
             "projection_relaxation_penalty": {"value": 1e4},
             # Training parameters
-            "batch_size": {"value": 256},
-            "batches_per_epoch": {"value": 1},
-            "epochs": {"value": 1},
-            "alignment_weight": {"value": 1e-2},
+            "batch_size": {"value": 512},
+            "batches_per_epoch": {"value": 16},
+            "epochs": {"value": 100},
+            "alignment_weight": {
+                "distribution": "log_uniform_values",
+                "max": 1e-1,
+                "min": 1e-4,
+            },
         },
     }
 
     # train(project=project, config=config)
 
-    sweep_id = None  # Replace with your sweep ID if you have one
+    sweep_id = "ak65u4jx"  # Replace with your sweep ID if you have one
     if sweep_id is None:
         print("No sweep ID provided, creating sweep.")
         sweep_id = wandb.sweep(sweep=sweep_configuration, project=project)
@@ -334,5 +339,5 @@ if __name__ == "__main__":
         sweep_id=sweep_id,
         function=train,
         project=project,
-        count=50,
+        count=20,
     )

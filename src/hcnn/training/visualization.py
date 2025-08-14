@@ -31,7 +31,7 @@ def visualize_receding_horizon(
     sys_dynamics = train_bundle.system.sys_dynamics
     state_dim = sys_dynamics.state_dim
     action_dim = sys_dynamics.action_dim
-    horizon = train_bundle.projection_layer.horizon
+    horizon = train_bundle.projection_layer.projection_problem.horizon
 
     # If no initial state is provided, use zero state
     if initial_state is None:

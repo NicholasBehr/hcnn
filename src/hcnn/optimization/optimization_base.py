@@ -505,13 +505,14 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
             def schur_lhs(u1: jax.Array) -> jax.Array:
                 return (
                     problem.cost_quad_diag * u1
-                    + h_hvp(u1)
+                    # + h_hvp(u1) # TODO, uncomment for very nonlinear constr
                     + h_vjp(plus_u_minus_l * h_jvp(u1))[0]
-                    + 1e-12 * u1  # make full rank
+                    + self.tol * u1  # make full rank and regularize large grad
                 )
 
             # Solve the Schur complement system
-            u1, _ = jax.scipy.sparse.linalg.bicgstab(A=schur_lhs, b=v1)
+            # use bicstab or gmres for non PSD (with hvp)
+            u1, _ = jax.scipy.sparse.linalg.cg(A=schur_lhs, b=v1)
 
             h_jvp_u1 = h_jvp(u1)
             u2 = plus_u_minus_l * h_jvp_u1

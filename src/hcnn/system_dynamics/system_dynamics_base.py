@@ -6,8 +6,9 @@ from flax import struct
 
 @struct.dataclass
 class SystemDynamicsBase(ABC):
-    state_dim: int
-    action_dim: int
+    # Treat dimension fields as static metadata for JIT shape construction
+    state_dim: int = struct.field(pytree_node=False)
+    action_dim: int = struct.field(pytree_node=False)
 
     @abstractmethod
     def __call__(self, state: jax.Array, action: jax.Array) -> jax.Array:

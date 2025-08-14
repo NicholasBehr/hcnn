@@ -28,8 +28,8 @@ class SystemDynamicsLinear(SystemDynamicsBase):
         assert jnp.ndim(state_matrix) == two_dim
         assert jnp.ndim(action_matrix) == two_dim
 
-        state_dim = state_matrix.shape[1]
-        action_dim = action_matrix.shape[1]
+        state_dim = int(state_matrix.shape[1])
+        action_dim = int(action_matrix.shape[1])
 
         # verify output dimension
         assert state_matrix.shape == (state_dim, state_dim)

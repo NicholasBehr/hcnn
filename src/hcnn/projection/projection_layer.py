@@ -27,8 +27,6 @@ class ProjectionInfo(OptimizationInfo):
 
 @struct.dataclass
 class ProjectionLayer:
-    sys_dynamics: SystemDynamicsBase
-    horizon: int
     projection_problem: ProjectionProblem
     solver: OptimizationSolverBase
 
@@ -42,9 +40,8 @@ class ProjectionLayer:
         solver: OptimizationSolverBase,
     ) -> "ProjectionLayer":
         return cls(
-            sys_dynamics=sys_dynamics,
-            horizon=horizon,
             projection_problem=ProjectionProblem.factory(
+                sys_dynamics=sys_dynamics,
                 sys_constraints=sys_constraints,
                 horizon=horizon,
                 relaxation_penalty=relaxation_penalty,
@@ -79,7 +76,6 @@ class ProjectionLayer:
                 actions_ref=rollout.actions,
             )
             phi_nd = ProjectionPhiND(
-                sys_dynamics=self.sys_dynamics,
                 initial_state=initial_state,
                 relax_pos=relax_pos,
                 relax_neg=relax_neg,
@@ -120,6 +116,9 @@ class ProjectionLayer:
         # Single rollout: states.shape = (horizon, state_dim)
         # Batch rollout: states.shape = (batch_size, horizon, state_dim)
         if rollout.states.ndim > 2:  # batch dimension present?  # noqa: PLR2004
-            return jax.vmap(sample_rollout)(rollout, initial_state)
+            return jax.vmap(
+                sample_rollout,
+                in_axes=(0, 0),
+            )(rollout, initial_state)
         else:
             return sample_rollout(rollout, initial_state)

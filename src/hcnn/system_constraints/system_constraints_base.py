@@ -6,9 +6,10 @@ from flax import struct
 
 @struct.dataclass
 class SystemConstraintsBase(ABC):
-    state_dim: int
-    action_dim: int
-    constraint_dim: int
+    # Treat dimension fields as static metadata (not pytree leaves)
+    state_dim: int = struct.field(pytree_node=False)
+    action_dim: int = struct.field(pytree_node=False)
+    constraint_dim: int = struct.field(pytree_node=False)
     lower_bound: jax.Array  # 1d float array
     upper_bound: jax.Array  # 1d float array
 

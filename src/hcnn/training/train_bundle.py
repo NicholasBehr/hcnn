@@ -38,6 +38,8 @@ class System:
     sys_dynamics: SystemDynamicsBase
     sys_costs: SystemCostsBase
     sys_constraints: SystemConstraintsBase
+    # Arrays must be pytree nodes (not metadata) to avoid JAX metadata
+    # equality issues
     state_min: jnp.ndarray
     state_max: jnp.ndarray
     periodic_states: frozenset[int] | None = None
@@ -68,8 +70,8 @@ class TrainBundle(nnx.Module):
         )
         state_min = jnp.array([-10.0, -10.0])
         state_max = jnp.array([+10.0, +10.0])
-        action_min = jnp.array([-2.0])
-        action_max = jnp.array([+2.0])
+        action_min = jnp.array([-1.0])
+        action_max = jnp.array([+1.0])
         sys_constraints = SystemConstraintsBox.factory(
             state_l=state_min,
             state_u=state_max,

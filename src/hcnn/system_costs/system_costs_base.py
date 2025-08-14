@@ -6,8 +6,8 @@ from flax import struct
 
 @struct.dataclass
 class SystemCostsBase(ABC):
-    state_dim: int
-    action_dim: int
+    state_dim: int = struct.field(pytree_node=False)
+    action_dim: int = struct.field(pytree_node=False)
 
     @abstractmethod
     def __call__(self, state: jax.Array, action: jax.Array) -> jax.Array:

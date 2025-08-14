@@ -30,10 +30,7 @@ class ProjectionPhiD:
 
 @struct.dataclass
 class ProjectionPhiND:
-    # for constraints
-    sys_dynamics: SystemDynamicsBase
-    initial_state: jax.Array
-    # for warm start
+    initial_state: jax.Array  # shape (state_dim,)
     relax_pos: jax.Array  # shape (horizon, constr_dim)
     relax_neg: jax.Array  # shape (horizon, constr_dim)
 
@@ -45,13 +42,14 @@ class ProjectionProblem(
         ProjectionPhiND,
     ]
 ):
-    # system constraints and horizon are FIXED for the duration of the jit
-    sys_constraints: SystemConstraintsBase = struct.field(pytree_node=False)
+    sys_dynamics: SystemDynamicsBase
+    sys_constraints: SystemConstraintsBase
     horizon: int = struct.field(pytree_node=False)
 
     @classmethod
     def factory(
         cls,
+        sys_dynamics: SystemDynamicsBase,
         sys_constraints: SystemConstraintsBase,
         horizon: int,
         relaxation_penalty: float,
@@ -70,8 +68,8 @@ class ProjectionProblem(
                 actions=0 * actions_one,
                 states_diff=2 * states_one,
                 actions_diff=2 * actions_one,
-                relax_pos=2 * constr_one,
-                relax_neg=2 * constr_one,
+                relax_pos=0 * constr_one,
+                relax_neg=0 * constr_one,
             )
         )[0]
         cost_linear = flatten_util.ravel_pytree(
@@ -117,6 +115,7 @@ class ProjectionProblem(
             cost_linear=cost_linear,
             lower_bound=lower_bound,
             upper_bound=upper_bound,
+            sys_dynamics=sys_dynamics,
             sys_constraints=sys_constraints,
             horizon=horizon,
         )
@@ -252,7 +251,7 @@ class ProjectionProblem(
             ),
             self.constraints_sys_dynamics(
                 optvar=optvar,
-                sys_dynamics=phi_nd.sys_dynamics,
+                sys_dynamics=self.sys_dynamics,
             ),
             self.constraints_sys_constraints(
                 optvar=optvar,

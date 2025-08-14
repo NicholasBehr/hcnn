@@ -12,7 +12,6 @@ from hcnn.projection import ProjectionLayer
 from hcnn.state_to_rollout.state_to_rollout_base import StateToRolloutBase
 from hcnn.system_costs.system_costs_base import SystemCostsBase
 from hcnn.training.train_bundle import TrainBundle
-from hcnn.training.visualization import visualize_receding_horizon
 
 # from hcnn.training.visualization import visualize_receding_horizon
 
@@ -46,7 +45,7 @@ def loss_fn(
     loss = cost + alignment_weight * sqr_dst
 
     # Aggregate the optimization info
-    info = jax.tree.map(jnp.mean, info)
+    info = jax.tree.map(lambda x: jnp.mean(x.astype(float)), info)
 
     return loss, (loss, cost, sqr_dst, info)
 
@@ -216,14 +215,14 @@ def train(project=None, config=None):
 
             # Log to WandB
             wandb.log(step=epoch, data=metrics)
-            if (epoch % 10 == 0 and epoch > 0) or epoch == config.epochs - 1:
-                state_dim = train.system.sys_dynamics.state_dim
-                visualize_receding_horizon(
-                    train_bundle=nnx.merge(train_graphdef, train_state),
-                    steps=50,
-                    initial_state=4 * jnp.ones(state_dim),
-                )
-                save_train_state(train_state)
+            # if (epoch % 10 == 0 and epoch > 0) or epoch == config.epochs - 1:
+            #     state_dim = train.system.sys_dynamics.state_dim
+            #     visualize_receding_horizon(
+            #         train_bundle=nnx.merge(train_graphdef, train_state),
+            #         steps=50,
+            #         initial_state=4 * jnp.ones(state_dim),
+            #     )
+            #     save_train_state(train_state)
 
 
 if __name__ == "__main__":
@@ -243,107 +242,97 @@ if __name__ == "__main__":
         "seed": 0,
         # Neural Network
         "nn_name": "scan",
-        "nn_hidden_dim": 8,
-        "nn_hidden_depth": 8,
-        "nn_dropout_rate": 0.5,
-        "nn_activation": "celu",
+        "nn_hidden_dim": 3,
+        "nn_hidden_depth": 3,
+        "nn_dropout_rate": 0.1,
+        "nn_activation": "leaky_relu",
         # Optimizer
         "optimizer_learning_rate": 1e-2,
         "optimizer_b1": 0.9,
         "optimizer_b2": 0.999,
         "optimizer_weight_decay": 1e-3,
         # Solver
-        "solver_name": "shallow",
+        "solver_name": "osqp",
         "solver_alpha": 1.6,
         "solver_sigma": 1e-6,
         "solver_rho_base": 1.0,
         "solver_rho_eq_mult": 0.1,
         "solver_max_iter_nonlin": 1,
-        "solver_max_iter_lin": 1e4,
+        "solver_max_iter_lin": 1e3,
         "solver_tol": 1e-1,
         # Projection
         "projection_horizon": 30,
         "projection_relaxation_penalty": 1e3,
         # Training parameters
-        "batch_size": 512,
-        "batches_per_epoch": 16,
-        "epochs": 500,
+        "batch_size": 128,
+        "batches_per_epoch": 1,
+        "epochs": 1,
         "alignment_weight": 1e-2,
     }
     sweep_configuration = {
         "method": "bayes",
-        "metric": {"goal": "minimize", "name": "residual"},
+        "metric": {"goal": "maximize", "name": "converged_flag"},
         # "early_terminate": {"type": "hyperband", "min_iter": 20, "eta": 1.5},
         "parameters": {
-            "system_name": {"value": project},
+            "system_name": {"value": "double_integrator"},
             "seed": {"value": 0},
-            # Policy
-            "policy_name": {"value": "dropout_mlp"},
-            "policy_hidden_dim": {"value": 5},
-            "policy_hidden_depth": {"value": 5},
-            "policy_dropout_rate": {"value": 0.15},
-            "policy_activation": {"value": "leaky_relu"},
-            "policy_intervention_cost": {"value": 0.5},
-            # Cost-to-go and Relax-to-go
-            "x_to_go_hidden_dim": {"value": 5},
-            "x_to_go_hidden_depth": {"value": 5},
-            "x_to_go_dropout_rate": {"value": 0.15},
-            "x_to_go_activation": {"value": "leaky_relu"},
-            # Projection
-            "projection_name": {"value": "no_substitution_no_terminal"},
-            "projection_horizon": {"value": 20},
-            "projection_relaxation_penalty": {"value": 1e4},
+            # Neural Network
+            "nn_name": {"value": "scan"},
+            "nn_hidden_dim": {"value": 5},
+            "nn_hidden_depth": {"value": 5},
+            "nn_dropout_rate": {"value": 0.2},
+            "nn_activation": {"value": "leaky_relu"},
+            # Optimizer
+            "optimizer_learning_rate": {"value": 1e-2},
+            "optimizer_b1": {"value": 0.9},
+            "optimizer_b2": {"value": 0.999},
+            "optimizer_weight_decay": {"value": 1e-4},
             # Solver
             "solver_name": {"value": "osqp"},
             "solver_alpha": {
                 "distribution": "uniform",
-                "max": 1.8,
-                "min": 0.2,
+                "max": 1.9,
+                "min": 0.1,
             },
             "solver_sigma": {
                 "distribution": "log_uniform_values",
-                "max": 1e3,
-                "min": 1e-3,
+                "max": 1e2,
+                "min": 1e-2,
             },
-            "solver_rho_equality": {
+            "solver_rho_base": {
                 "distribution": "log_uniform_values",
-                "max": 1e3,
-                "min": 1e-3,
+                "max": 1e2,
+                "min": 1e-2,
             },
-            "solver_rho_inequality": {
+            "solver_rho_eq_mult": {
                 "distribution": "log_uniform_values",
-                "max": 1e3,
-                "min": 1e-3,
+                "max": 1e2,
+                "min": 1e-2,
             },
             "solver_max_iter_nonlin": {"value": 1},
             "solver_max_iter_lin": {"value": 1e3},
-            "solver_tol": {"value": 1e-3},
-            # Optimizers
-            "optimizer_policy_name": {"value": "adamw"},
-            "optimizer_policy_learning_rate": {"value": 1e-3},
-            "optimizer_cost_name": {"value": "adamw"},
-            "optimizer_cost_learning_rate": {"value": 1e-1},
-            "optimizer_relax_name": {"value": "adamw"},
-            "optimizer_relax_learning_rate": {"value": 1e-1},
+            "solver_tol": {"value": 1e-1},
+            # Projection
+            "projection_horizon": {"value": 20},
+            "projection_relaxation_penalty": {"value": 1e4},
             # Training parameters
-            "batchsize": {"value": 64},
+            "batch_size": {"value": 256},
             "batches_per_epoch": {"value": 1},
-            "td_gamma": {"value": 0.95},
-            "gae_lambda": {"value": 0.95},
             "epochs": {"value": 1},
+            "alignment_weight": {"value": 1e-2},
         },
     }
 
-    train(project=project, config=config)
+    # train(project=project, config=config)
 
-    # sweep_id = None  # Replace with your sweep ID if you have one
-    # if sweep_id is None:
-    #     print("No sweep ID provided, creating sweep.")
-    #     sweep_id = wandb.sweep(sweep=sweep_configuration, project=project)
-    #     print(f"Sweep ID: {sweep_id}")
-    # wandb.agent(
-    #     sweep_id=sweep_id,
-    #     function=train,
-    #     project=project,
-    #     count=20,
-    # )
+    sweep_id = None  # Replace with your sweep ID if you have one
+    if sweep_id is None:
+        print("No sweep ID provided, creating sweep.")
+        sweep_id = wandb.sweep(sweep=sweep_configuration, project=project)
+        print(f"Sweep ID: {sweep_id}")
+    wandb.agent(
+        sweep_id=sweep_id,
+        function=train,
+        project=project,
+        count=50,
+    )

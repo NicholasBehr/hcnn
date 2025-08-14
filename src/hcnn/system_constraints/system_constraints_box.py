@@ -46,9 +46,9 @@ class SystemConstraintsBox(SystemConstraintsBase):
         filtered_upper = upper_bound[active_indices]
 
         return SystemConstraintsBox(
-            state_dim=state_l.shape[0],
-            action_dim=action_l.shape[0],
-            constraint_dim=active_indices.shape[0],
+            state_dim=int(state_l.shape[0]),
+            action_dim=int(action_l.shape[0]),
+            constraint_dim=int(active_indices.shape[0]),
             lower_bound=filtered_lower,
             upper_bound=filtered_upper,
             active_indices=active_indices,

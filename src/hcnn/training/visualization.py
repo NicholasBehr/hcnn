@@ -202,7 +202,7 @@ def visualize_receding_horizon(
     fig.update_layout(
         title="Receding Horizon State, Action, and Max Relaxation "
         "Visualization",
-        height=500 * total_plots,
+        height=750 * total_plots,
         margin=dict(l=80, r=80, t=100, b=80),
     )
 

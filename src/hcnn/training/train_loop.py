@@ -31,13 +31,13 @@ def loss_fn(
 
     # Compute the cost and difference
     cost = jnp.mean(rollout_proj_cost)
-    state_sqr_dst = jnp.sum(
+    state_sqr_dst = jnp.mean(
         (rollout.states - jax.lax.stop_gradient(rollout_proj.states)) ** 2
     )
-    action_sqr_dst = jnp.sum(
+    action_sqr_dst = jnp.mean(
         (rollout.actions - jax.lax.stop_gradient(rollout_proj.actions)) ** 2
     )
-    relax_sqr_dst = jnp.sum(
+    relax_sqr_dst = jnp.mean(
         (rollout.relax - jax.lax.stop_gradient(rollout_proj.relax)) ** 2
     )
     sqr_dst = state_sqr_dst + action_sqr_dst + relax_sqr_dst
@@ -48,7 +48,7 @@ def loss_fn(
     # Aggregate the optimization info
     info = jax.tree.map(jnp.mean, info)
 
-    return loss, (loss, cost, info)
+    return loss, (loss, cost, sqr_dst, info)
 
 
 @jax.jit
@@ -92,10 +92,12 @@ def train_epoch(
         train.optimizer.update(grads)
 
         # Unpack the auxiliary values
-        loss, cost, info = aux
+        loss, cost, sqr_dst, info = aux
 
         # Update metrics
-        train.metrics.update(loss=loss, cost=cost, **vars(info))
+        train.metrics.update(
+            loss=loss, cost=cost, sqr_dst=sqr_dst, **vars(info)
+        )
 
         return nnx.state(train)
 
@@ -214,12 +216,12 @@ def train(project=None, config=None):
 
             # Log to WandB
             wandb.log(step=epoch, data=metrics)
-            if (epoch % 25 == 0 and epoch > 0) or epoch == config.epochs - 1:
+            if (epoch % 10 == 0 and epoch > 0) or epoch == config.epochs - 1:
                 state_dim = train.system.sys_dynamics.state_dim
                 visualize_receding_horizon(
                     train_bundle=nnx.merge(train_graphdef, train_state),
                     steps=50,
-                    initial_state=3 * jnp.ones(state_dim),
+                    initial_state=4 * jnp.ones(state_dim),
                 )
                 save_train_state(train_state)
 
@@ -241,32 +243,32 @@ if __name__ == "__main__":
         "seed": 0,
         # Neural Network
         "nn_name": "scan",
-        "nn_hidden_dim": 6,
-        "nn_hidden_depth": 6,
+        "nn_hidden_dim": 8,
+        "nn_hidden_depth": 8,
         "nn_dropout_rate": 0.5,
         "nn_activation": "celu",
         # Optimizer
         "optimizer_learning_rate": 1e-2,
         "optimizer_b1": 0.9,
         "optimizer_b2": 0.999,
-        "optimizer_weight_decay": 1e-4,
+        "optimizer_weight_decay": 1e-3,
         # Solver
         "solver_name": "shallow",
         "solver_alpha": 1.6,
         "solver_sigma": 1e-6,
-        "solver_rho_base": 0.1,
+        "solver_rho_base": 1.0,
         "solver_rho_eq_mult": 0.1,
         "solver_max_iter_nonlin": 1,
         "solver_max_iter_lin": 1e4,
         "solver_tol": 1e-1,
         # Projection
         "projection_horizon": 30,
-        "projection_relaxation_penalty": 100,
+        "projection_relaxation_penalty": 1e3,
         # Training parameters
         "batch_size": 512,
         "batches_per_epoch": 16,
         "epochs": 500,
-        "alignment_weight": 1e-3,
+        "alignment_weight": 1e-2,
     }
     sweep_configuration = {
         "method": "bayes",

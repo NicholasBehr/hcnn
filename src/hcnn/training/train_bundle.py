@@ -59,17 +59,17 @@ class TrainBundle(nnx.Module):
         config: WandbConfig,
     ) -> System:
         sys_dynamics = SystemDynamicsLinear.factory(
-            state_matrix=jnp.array([[1, 1], [0, 1]]),
-            action_matrix=jnp.array([[0.5], [1]]),
+            state_matrix=jnp.array([[1.0, 1.0], [0.0, 1.0]]),
+            action_matrix=jnp.array([[0.5], [1.0]]),
         )
         sys_costs = SystemCostsQuadratic.factory(
-            state_cost_matrix=jnp.array([[1, 0], [0, 1]]),
-            action_cost_matrix=jnp.array([[10]]),
+            state_cost_matrix=jnp.array([[1.0, 0.0], [0.0, 1.0]]),
+            action_cost_matrix=jnp.array([[10.0]]),
         )
         state_min = jnp.array([-10.0, -10.0])
         state_max = jnp.array([+10.0, +10.0])
-        action_min = jnp.array([-1.0])
-        action_max = jnp.array([+1.0])
+        action_min = jnp.array([-2.0])
+        action_max = jnp.array([+2.0])
         sys_constraints = SystemConstraintsBox.factory(
             state_l=state_min,
             state_u=state_max,
@@ -318,6 +318,7 @@ class TrainBundle(nnx.Module):
         metrics = nnx.MultiMetric(
             loss=nnx.metrics.Average("loss"),
             cost=nnx.metrics.Average("cost"),
+            sqr_dst=nnx.metrics.Average("sqr_dst"),
             primal_residual=nnx.metrics.Average("primal_residual"),
             dual_residual=nnx.metrics.Average("dual_residual"),
             iterations_lin=nnx.metrics.Average("iterations_lin"),

@@ -55,17 +55,25 @@ class OptimizationSolverShallow(
             + constraint_lin.h_vjp(r_zhjx_y)[0]
         )
 
-        # steepest descent update for x_tilde
+        # preconditioned gradient descent update for x_tilde
         # residual (gradient)
         eps = 1e-12  # small value to avoid division by zero
         r = cg_rhs - cg_lhs(variables.x_tilde)
-        # step size alpha
-        alpha_sd_numerator = jnp.dot(r, r)
-        alpha_sd_denominator = jnp.dot(r, cg_lhs(r))
-        alpha_sd = alpha_sd_numerator / (alpha_sd_denominator + eps)
+
+        # diagonal preconditioner: use absolute value of cost_quad_diag + sigma
+        # to handle zero entries robustly
+        precond_diag = jnp.abs(problem.cost_quad_diag) + self.sigma + eps
+
+        # preconditioned residual
+        p = r / precond_diag
+
+        # step size alpha for preconditioned direction
+        alpha_numerator = jnp.dot(r, p)
+        alpha_denominator = jnp.dot(p, cg_lhs(p))
+        alpha = alpha_numerator / (alpha_denominator + eps)
 
         # update
-        new_x_tilde = variables.x_tilde + alpha_sd * r
+        new_x_tilde = variables.x_tilde + alpha * p
 
         ## z_tilde ##
         new_z_tilde = constraint_lin(new_x_tilde)

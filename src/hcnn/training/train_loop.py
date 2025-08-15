@@ -29,21 +29,41 @@ def loss_fn(
     rollout_proj, info = projection_layer(rollout, initial_states)
     rollout_proj_cost = sys_costs(rollout_proj.states, rollout_proj.actions)
 
-    # Compute the cost and difference
+    # Compute the cost
     cost = jnp.mean(rollout_proj_cost)
-    state_sqr_dst = jnp.mean(
-        (rollout.states - jax.lax.stop_gradient(rollout_proj.states)) ** 2
-    )
-    action_sqr_dst = jnp.mean(
-        (rollout.actions - jax.lax.stop_gradient(rollout_proj.actions)) ** 2
-    )
-    relax_sqr_dst = jnp.mean(
-        (rollout.relax - jax.lax.stop_gradient(rollout_proj.relax)) ** 2
-    )
-    sqr_dst = state_sqr_dst + action_sqr_dst + relax_sqr_dst
 
-    # Combine cost and difference into a single loss
-    loss = cost + alignment_weight * sqr_dst
+    # Compute squared distances per sample, conditioned on convergence
+    # Expand converged_flag to match rollout tensor dimensions
+    converged_flag_expanded = info.converged_flag[..., None, None]
+
+    state_sqr_dst = jnp.where(
+        converged_flag_expanded,
+        (rollout.states - jax.lax.stop_gradient(rollout_proj.states)) ** 2,
+        jax.lax.stop_gradient(rollout.states - rollout_proj.states) ** 2,
+    )
+    action_sqr_dst = jnp.where(
+        converged_flag_expanded,
+        (rollout.actions - jax.lax.stop_gradient(rollout_proj.actions)) ** 2,
+        jax.lax.stop_gradient(rollout.actions - rollout_proj.actions) ** 2,
+    )
+    relax_sqr_dst = jnp.where(
+        converged_flag_expanded,
+        (rollout.relax - jax.lax.stop_gradient(rollout_proj.relax)) ** 2,
+        jax.lax.stop_gradient(rollout.relax - rollout_proj.relax) ** 2,
+    )
+
+    # Take mean of the conditionally-selected squared distances
+    sqr_dst = (
+        jnp.mean(state_sqr_dst)
+        + jnp.mean(action_sqr_dst)
+        + jnp.mean(relax_sqr_dst)
+    )
+
+    # Apply alignment weight
+    alignment_term = alignment_weight * sqr_dst
+
+    # Combine cost and alignment term into a single loss
+    loss = cost + alignment_term
 
     # Aggregate the optimization info
     info = jax.tree.map(lambda x: jnp.mean(x.astype(float)), info)
@@ -216,13 +236,14 @@ def train(project=None, config=None):
 
             # Log to WandB
             wandb.log(step=epoch, data=metrics)
-            if (epoch % 20 == 0 and epoch > 0) or epoch == config.epochs - 1:
+            if (epoch % 20 == 0) or epoch == config.epochs - 1:
                 state_dim = train.system.sys_dynamics.state_dim
                 visualize_receding_horizon(
                     train_bundle=nnx.merge(train_graphdef, train_state),
                     steps=50,
-                    initial_state=4 * jnp.ones(state_dim),
+                    initial_state=3 * jnp.ones(state_dim),
                 )
+            if epoch == config.epochs - 1:
                 save_train_state(train_state)
 
 
@@ -243,13 +264,13 @@ if __name__ == "__main__":
         "seed": 0,
         # Neural Network
         "nn_name": "scan",
-        "nn_hidden_dim": 4,
+        "nn_hidden_dim": 30,
         "nn_hidden_depth": 4,
         "nn_dropout_rate": 0.25,
         "nn_activation": "leaky_relu",
         # Optimizer
-        "optimizer_learning_rate": 1e-2,
-        "optimizer_b1": 0.9,
+        "optimizer_learning_rate": 1e-3,
+        "optimizer_b1": 0.95,
         "optimizer_b2": 0.999,
         "optimizer_weight_decay": 1e-3,
         # Solver
@@ -257,18 +278,18 @@ if __name__ == "__main__":
         "solver_alpha": 1.3,
         "solver_sigma": 15,
         "solver_rho_base": 100,
-        "solver_rho_eq_mult": 0.05,
+        "solver_rho_eq_mult": 0.1,
         "solver_max_iter_nonlin": 1,
-        "solver_max_iter_lin": 5_000,
-        "solver_tol": 0.05,
+        "solver_max_iter_lin": 5e3,
+        "solver_tol": 1e-1,
         # Projection
         "projection_horizon": 30,
-        "projection_relaxation_penalty": 10,
+        "projection_relaxation_penalty": 1e3,
         # Training parameters
-        "batch_size": 512,
-        "batches_per_epoch": 16,
+        "batch_size": 256,
+        "batches_per_epoch": 4,
         "epochs": 100,
-        "alignment_weight": 1e-2,
+        "alignment_weight": 1e-3,
     }
     sweep_configuration = {
         "method": "bayes",
@@ -328,16 +349,16 @@ if __name__ == "__main__":
         },
     }
 
-    # train(project=project, config=config)
+    train(project=project, config=config)
 
-    sweep_id = "ak65u4jx"  # Replace with your sweep ID if you have one
-    if sweep_id is None:
-        print("No sweep ID provided, creating sweep.")
-        sweep_id = wandb.sweep(sweep=sweep_configuration, project=project)
-        print(f"Sweep ID: {sweep_id}")
-    wandb.agent(
-        sweep_id=sweep_id,
-        function=train,
-        project=project,
-        count=20,
-    )
+    # sweep_id = "ak65u4jx"  # Replace with your sweep ID if you have one
+    # if sweep_id is None:
+    #     print("No sweep ID provided, creating sweep.")
+    #     sweep_id = wandb.sweep(sweep=sweep_configuration, project=project)
+    #     print(f"Sweep ID: {sweep_id}")
+    # wandb.agent(
+    #     sweep_id=sweep_id,
+    #     function=train,
+    #     project=project,
+    #     count=20,
+    # )

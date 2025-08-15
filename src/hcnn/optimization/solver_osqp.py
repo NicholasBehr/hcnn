@@ -43,6 +43,13 @@ class OptimizationSolverOSQP(
             c = constraint_lin.h_vjp(c)[0]
             return a + b + c
 
+        # Preconditioner: Use diagonal part (Q + σI) which is always positive
+        # definite since σ > 0 and cost_quad_diag >= 0
+        precond_diag = problem.cost_quad_diag + self.sigma
+
+        def cg_precond(v: jax.Array) -> jax.Array:
+            return v / precond_diag
+
         zhjx = (
             variables.z
             - constraint_lin.h
@@ -59,6 +66,7 @@ class OptimizationSolverOSQP(
             A=cg_lhs,
             b=cg_rhs,
             x0=variables.x_tilde,
+            M=cg_precond,
         )
 
         ## z_tilde ##

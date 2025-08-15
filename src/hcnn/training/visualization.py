@@ -40,18 +40,7 @@ def visualize_receding_horizon(
     # Create subplots - one for each state dimension, action dimension,
     # and max relaxation
     total_plots = state_dim + action_dim + 1  # +1 for max relaxation
-    subplot_titles = (
-        [f"State {i + 1}" for i in range(state_dim)]
-        + [f"Action {i + 1}" for i in range(action_dim)]
-        + ["Max Relaxation"]
-    )
-
-    fig = make_subplots(
-        rows=total_plots,
-        cols=1,
-        subplot_titles=subplot_titles,
-        vertical_spacing=0.15,
-    )
+    fig = make_subplots(rows=total_plots, cols=1, vertical_spacing=0.1)
 
     # Track the actual trajectory taken
     actual_states = [initial_state]
@@ -110,7 +99,7 @@ def visualize_receding_horizon(
                 y=max_relaxation,
                 mode="lines",
                 line=dict(color="rgba(138, 43, 226, 0.3)", width=1),
-                name="Planned Max Relaxation" if step == 0 else None,
+                name="Max Planned Relaxation" if step == 0 else None,
                 showlegend=True if step == 0 else False,
             ),
             row=total_plots,  # Last subplot for max relaxation
@@ -168,7 +157,7 @@ def visualize_receding_horizon(
                 y=[current_max_relaxation],
                 mode="markers",
                 marker=dict(size=6, color="rgba(75, 0, 130, 1.0)"),
-                name="Actual Max Relaxation" if step == 0 else None,
+                name="Max Actual Relaxation" if step == 0 else None,
                 showlegend=True if step == 0 else False,
             ),
             row=total_plots,  # Last subplot for max relaxation
@@ -200,10 +189,8 @@ def visualize_receding_horizon(
 
     # Update layout with padding
     fig.update_layout(
-        title="Receding Horizon State, Action, and Max Relaxation "
-        "Visualization",
-        height=750 * total_plots,
-        margin=dict(l=80, r=80, t=100, b=80),
+        height=300 * total_plots,
+        margin=dict(l=60, r=60, t=120, b=60),
     )
 
     # Update x-axis labels for all subplots with padding

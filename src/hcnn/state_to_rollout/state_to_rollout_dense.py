@@ -11,9 +11,7 @@ from .state_to_rollout_base import StateToRolloutBase
 
 @struct.dataclass
 class StateToRolloutDense(StateToRolloutBase):
-    state_estimator: DropoutMLP
-    action_estimator: DropoutMLP
-    relax_estimator: DropoutMLP
+    rollout_estimator: DropoutMLP
     sys_dynamics: SystemDynamicsBase
 
     @classmethod
@@ -33,62 +31,51 @@ class StateToRolloutDense(StateToRolloutBase):
         action_min: jnp.ndarray | None = None,
         action_max: jnp.ndarray | None = None,
     ) -> "StateToRolloutDense":
-        ## STATE ESTIMATOR ##
-        state_in_feat = state_dim
+        ## UNIFIED ROLLOUT ESTIMATOR ##
+        # Input: state
+        rollout_in_feat = state_dim
+
+        # Output: states, actions, and relaxation variables over horizon
         state_out_feat = state_dim * horizon
-        state_out_min = None
-        state_out_max = None
-
-        state_mlp = DropoutMLP(
-            in_features=state_in_feat,
-            out_features=state_out_feat,
-            hidden_features=hidden_features,
-            rngs=rngs,
-            activation=activation,
-            dropout_rate=dropout_rate,
-            periodic_in_features=periodic_states,
-            out_feature_min=state_out_min,
-            out_feature_max=state_out_max,
-        )
-
-        ## ACTION ESTIMATOR ##
-        action_in_feat = state_dim
         action_out_feat = action_dim * horizon
-        action_out_min = None
-        action_out_max = None
-        if action_min is not None:
-            action_out_min = jnp.tile(action_min, horizon)
-        if action_max is not None:
-            action_out_max = jnp.tile(action_max, horizon)
+        relax_out_feat = constr_dim * horizon
+        rollout_out_feat = state_out_feat + action_out_feat + relax_out_feat
 
-        action_mlp = DropoutMLP(
-            in_features=action_in_feat,
-            out_features=action_out_feat,
+        # Set up output bounds
+        rollout_out_min = None
+        rollout_out_max = None
+
+        # Apply action bounds if provided
+        if action_min is not None or action_max is not None:
+            rollout_out_min = jnp.full(rollout_out_feat, -jnp.inf)
+            rollout_out_max = jnp.full(rollout_out_feat, jnp.inf)
+
+            # Action bounds apply to the action portion of the output
+            action_start_idx = state_out_feat
+            action_end_idx = state_out_feat + action_out_feat
+
+            if action_min is not None:
+                action_bounds_min = jnp.tile(action_min, horizon)
+                rollout_out_min = rollout_out_min.at[
+                    action_start_idx:action_end_idx
+                ].set(action_bounds_min)
+
+            if action_max is not None:
+                action_bounds_max = jnp.tile(action_max, horizon)
+                rollout_out_max = rollout_out_max.at[
+                    action_start_idx:action_end_idx
+                ].set(action_bounds_max)
+
+        rollout_mlp = DropoutMLP(
+            in_features=rollout_in_feat,
+            out_features=rollout_out_feat,
             hidden_features=hidden_features,
             rngs=rngs,
             activation=activation,
             dropout_rate=dropout_rate,
             periodic_in_features=periodic_states,
-            out_feature_min=action_out_min,
-            out_feature_max=action_out_max,
-        )
-
-        ## RELAXATION ESTIMATOR ##
-        relax_in_feat = state_dim
-        relax_out_feat = state_dim * horizon
-        relax_out_min = None
-        relax_out_max = None
-
-        relax_mlp = DropoutMLP(
-            in_features=relax_in_feat,
-            out_features=relax_out_feat,
-            hidden_features=hidden_features,
-            rngs=rngs,
-            activation=activation,
-            dropout_rate=dropout_rate,
-            periodic_in_features=periodic_states,
-            out_feature_min=relax_out_min,
-            out_feature_max=relax_out_max,
+            out_feature_min=rollout_out_min,
+            out_feature_max=rollout_out_max,
         )
 
         return StateToRolloutDense(
@@ -96,9 +83,7 @@ class StateToRolloutDense(StateToRolloutBase):
             action_dim=action_dim,
             constr_dim=constr_dim,
             horizon=horizon,
-            state_estimator=state_mlp,
-            action_estimator=action_mlp,
-            relax_estimator=relax_mlp,
+            rollout_estimator=rollout_mlp,
             sys_dynamics=sys_dynamics,
         )
 
@@ -119,22 +104,24 @@ class StateToRolloutDense(StateToRolloutBase):
             :-1
         ]  # All dimensions except the last (state_dim)
 
-        # Estimate states over horizon
-        states_flat = self.state_estimator(state)
-        states = states_flat.reshape(*batch_shape, self.horizon, self.state_dim)
+        # Get unified rollout prediction
+        rollout_flat = self.rollout_estimator(state)
 
-        # Estimate actions over horizon
-        actions_flat = self.action_estimator(state)
+        # Calculate output dimensions
+        state_out_feat = self.state_dim * self.horizon
+        action_out_feat = self.action_dim * self.horizon
+
+        # Split the output into states, actions, and relaxation variables
+        states_flat = rollout_flat[..., :state_out_feat]
+        action_end_idx = state_out_feat + action_out_feat
+        actions_flat = rollout_flat[..., state_out_feat:action_end_idx]
+        relax_flat = rollout_flat[..., action_end_idx:]
+
+        # Reshape to proper dimensions
+        states = states_flat.reshape(*batch_shape, self.horizon, self.state_dim)
         actions = actions_flat.reshape(
             *batch_shape, self.horizon, self.action_dim
         )
+        relax = relax_flat.reshape(*batch_shape, self.horizon, self.constr_dim)
 
-        # Estimate relaxed states over horizon
-        states_relax_flat = self.relax_estimator(state)
-        states_relax = states_relax_flat.reshape(
-            *batch_shape, self.horizon, self.state_dim
-        )
-
-        return Rollout(
-            states=states, actions=actions, states_relax=states_relax
-        )
+        return Rollout(states=states, actions=actions, relax=relax)

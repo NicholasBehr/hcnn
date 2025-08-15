@@ -412,9 +412,7 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
                 variables.iter_lin_total / variables.iter_nonlin,
             ),
             iterations_nonlin=variables.iter_nonlin,
-            converged_flag=jnp.logical_not(
-                self.convergence_check(variables)
-            ).astype(float),
+            converged_flag=jnp.logical_not(self.convergence_check(variables)),
         )
 
         return variables, info
@@ -505,7 +503,7 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
             def schur_lhs(u1: jax.Array) -> jax.Array:
                 return (
                     problem.cost_quad_diag * u1
-                    # + h_hvp(u1) # TODO, uncomment for very nonlinear constr
+                    # + h_hvp(u1)
                     + h_vjp(plus_u_minus_l * h_jvp(u1))[0]
                     + self.tol * u1  # make full rank and regularize large grad
                 )

@@ -1,5 +1,4 @@
 import jax
-import jax.numpy as jnp
 from flax import struct
 
 from hcnn.system_dynamics import SystemDynamicsBase
@@ -9,7 +8,6 @@ from hcnn.system_dynamics import SystemDynamicsBase
 class Rollout:
     states: jax.Array  # shape (..., horizon, state_dim)
     actions: jax.Array  # shape (..., horizon, action_dim)
-    relax: jax.Array  # shape (..., horizon, constr_dim)
 
     @property
     def state_dim(self) -> int:
@@ -20,11 +18,6 @@ class Rollout:
     def action_dim(self) -> int:
         """Get the action dimension from the actions array."""
         return self.actions.shape[-1]
-
-    @property
-    def relax_dim(self) -> int:
-        """Get the relaxation dimension from the relax array."""
-        return self.relax.shape[-1]
 
     @staticmethod
     def from_actions(
@@ -81,9 +74,7 @@ class Rollout:
                 step, initial_state, actions
             )  # (t, state_dim)
 
-        # TODO
         return Rollout(
             states=states,
             actions=actions,
-            relax=jnp.zeros_like(states),
         )

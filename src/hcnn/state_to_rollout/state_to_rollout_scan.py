@@ -113,4 +113,4 @@ class StateToRolloutScan(StateToRolloutBase):
         actions = out[1].reshape(*batch_dims, self.horizon, self.action_dim)
         relax = out[2].reshape(*batch_dims, self.horizon, self.constr_dim)
 
-        return Rollout(states=states, actions=actions, relax=relax)
+        return Rollout(states=states, actions=actions)

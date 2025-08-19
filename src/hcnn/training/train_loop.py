@@ -9,10 +9,17 @@ from flax import nnx
 
 import wandb
 from hcnn.projection import ProjectionLayer
+from hcnn.projection.mpc_layer import MPCLayer
 from hcnn.state_to_rollout.state_to_rollout_base import StateToRolloutBase
+from hcnn.system_constraints.system_constraints_box import SystemConstraintsBox
 from hcnn.system_costs.system_costs_base import SystemCostsBase
+from hcnn.system_costs.system_costs_quadratic import SystemCostsQuadratic
+from hcnn.system_dynamics.system_dynamics_linear import SystemDynamicsLinear
 from hcnn.training.train_bundle import TrainBundle
-from hcnn.training.visualization import visualize_receding_horizon
+from hcnn.training.visualization import (
+    visualize_receding_horizon,
+    visualize_receding_horizon_mpc,
+)
 
 # from hcnn.training.visualization import visualize_receding_horizon
 
@@ -46,18 +53,9 @@ def loss_fn(
         (rollout.actions - jax.lax.stop_gradient(rollout_proj.actions)) ** 2,
         jax.lax.stop_gradient(rollout.actions - rollout_proj.actions) ** 2,
     )
-    relax_sqr_dst = jnp.where(
-        converged_flag_expanded,
-        (rollout.relax - jax.lax.stop_gradient(rollout_proj.relax)) ** 2,
-        jax.lax.stop_gradient(rollout.relax - rollout_proj.relax) ** 2,
-    )
 
     # Take mean of the conditionally-selected squared distances
-    sqr_dst = (
-        jnp.mean(state_sqr_dst)
-        + jnp.mean(action_sqr_dst)
-        + jnp.mean(relax_sqr_dst)
-    )
+    sqr_dst = jnp.mean(state_sqr_dst) + jnp.mean(action_sqr_dst)
 
     # Apply alignment weight
     alignment_term = alignment_weight * sqr_dst
@@ -116,7 +114,11 @@ def train_epoch(
 
         # Update metrics
         train.metrics.update(
-            loss=loss, cost=cost, sqr_dst=sqr_dst, **vars(info)
+            loss=loss,
+            cost=cost,
+            sqr_dst=sqr_dst,
+            gm_residual=jnp.sqrt(info.primal_residual * info.dual_residual),
+            **vars(info),
         )
 
         return nnx.state(train)
@@ -214,6 +216,33 @@ def train(project=None, config=None):
         train = TrainBundle.factory_from_config(config)
         train_graphdef, train_state = nnx.split(train)
 
+        # Add MPC visualization if system dynamics are linear
+        if (
+            isinstance(train.system.sys_dynamics, SystemDynamicsLinear)
+            and isinstance(train.system.sys_costs, SystemCostsQuadratic)
+            and isinstance(
+                train.system.sys_constraints,
+                SystemConstraintsBox,
+            )
+        ):
+            # Create MPC layer for comparison
+            mpc_layer = MPCLayer.factory(
+                sys_dynamics=train.system.sys_dynamics,
+                sys_constraints=train.system.sys_constraints,
+                sys_costs=train.system.sys_costs,
+                horizon=train.projection_layer.projection_problem.horizon,
+                solver=train.projection_layer.solver,
+            )
+
+            # Visualize MPC for comparison
+            visualize_receding_horizon_mpc(
+                mpc_layer=mpc_layer,
+                sys_dynamics=train.system.sys_dynamics,
+                steps=50,
+                initial_state=3 * jnp.ones(train.system.sys_dynamics.state_dim),
+                wandb_step=0,
+            )
+
         for epoch in range(config.epochs):
             # Advance the training by one epoch
             train_state, metrics = train_epoch(
@@ -236,13 +265,18 @@ def train(project=None, config=None):
 
             # Log to WandB
             wandb.log(step=epoch, data=metrics)
-            if (epoch % 20 == 0) or epoch == config.epochs - 1:
+            if (epoch % 5 == 0 and epoch > 0) or epoch == config.epochs - 1:
                 state_dim = train.system.sys_dynamics.state_dim
+                train_bundle = nnx.merge(train_graphdef, train_state)
+
+                # Always visualize the projection layer
                 visualize_receding_horizon(
-                    train_bundle=nnx.merge(train_graphdef, train_state),
+                    train_bundle=train_bundle,
                     steps=50,
                     initial_state=3 * jnp.ones(state_dim),
+                    wandb_step=epoch,
                 )
+
             if epoch == config.epochs - 1:
                 save_train_state(train_state)
 
@@ -251,44 +285,42 @@ if __name__ == "__main__":
     print("This is a training loop with Weights & Biases integration.")
 
     # restrict access to one GPU (check availability nvidia-smi)
-    os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "2"
     jax.config.update("jax_debug_nans", False)
     # jax.config.update("jax_platform_name", "cpu")  # Uncomment to run on CPU
 
     # Specify the project name and configuration
     # This can be overridden by wandb.agent when running a sweep
-    project = "double_integrator_mpc"
+    project = "double_integrator_ncvx"
 
     config = {
-        "system_name": "double_integrator",
+        "system_name": project,
         "seed": 0,
         # Neural Network
         "nn_name": "scan",
-        "nn_hidden_dim": 30,
-        "nn_hidden_depth": 4,
-        "nn_dropout_rate": 0.25,
-        "nn_activation": "leaky_relu",
+        "nn_hidden_dim": 64,
+        "nn_hidden_depth": 2,
+        "nn_dropout_rate": 0,
+        "nn_activation": "relu",
         # Optimizer
         "optimizer_learning_rate": 1e-3,
         "optimizer_b1": 0.95,
         "optimizer_b2": 0.999,
-        "optimizer_weight_decay": 1e-3,
+        "optimizer_weight_decay": 1e-4,
         # Solver
         "solver_name": "osqp",
-        "solver_alpha": 1.3,
-        "solver_sigma": 15,
+        "solver_sigma": 0.1,
         "solver_rho_base": 100,
         "solver_rho_eq_mult": 0.1,
-        "solver_max_iter_nonlin": 1,
-        "solver_max_iter_lin": 5e3,
-        "solver_tol": 1e-1,
+        "solver_max_iter_nonlin": 5,
+        "solver_max_iter_lin": 1e4,
+        "solver_tol": 1e-3,
         # Projection
-        "projection_horizon": 30,
-        "projection_relaxation_penalty": 1e3,
+        "projection_horizon": 20,
         # Training parameters
         "batch_size": 256,
-        "batches_per_epoch": 4,
-        "epochs": 100,
+        "batches_per_epoch": 8,
+        "epochs": 200,
         "alignment_weight": 1e-3,
     }
     sweep_configuration = {

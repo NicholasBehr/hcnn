@@ -16,8 +16,10 @@ from hcnn.state_to_rollout import (
     StateToRolloutScan,
 )
 from hcnn.system_constraints import (
+    SystemConstraintsBall,
     SystemConstraintsBase,
     SystemConstraintsBox,
+    SystemConstraintsMulti,
 )
 from hcnn.system_costs import (
     SystemCostsBase,
@@ -77,6 +79,50 @@ class TrainBundle(nnx.Module):
             state_u=state_max,
             action_l=action_min,
             action_u=action_max,
+        )
+
+        return System(
+            sys_dynamics=sys_dynamics,
+            sys_costs=sys_costs,
+            sys_constraints=sys_constraints,
+            state_min=state_min,
+            state_max=state_max,
+            action_min=action_min,
+            action_max=action_max,
+        )
+
+    @staticmethod
+    def build_double_integrator_ncvx(
+        config: WandbConfig,
+    ) -> System:
+        sys_dynamics = SystemDynamicsLinear.factory(
+            state_matrix=jnp.array([[1.0, 1.0], [0.0, 1.0]]),
+            action_matrix=jnp.array([[0.5], [1.0]]),
+        )
+        sys_costs = SystemCostsQuadratic.factory(
+            state_cost_matrix=jnp.array([[1.0, 0.0], [0.0, 1.0]]),
+            action_cost_matrix=jnp.array([[10.0]]),
+        )
+        state_min = jnp.array([-10.0, -10.0])
+        state_max = jnp.array([+10.0, +10.0])
+        action_min = jnp.array([-1.0])
+        action_max = jnp.array([+1.0])
+        box_constraint = SystemConstraintsBox.factory(
+            state_l=state_min,
+            state_u=state_max,
+            action_l=action_min,
+            action_u=action_max,
+        )
+        ball_constraint = SystemConstraintsBall.factory(
+            center=jnp.array([2, 0]),
+            radius=1.0,
+            action_dim=1,
+        )
+        sys_constraints = SystemConstraintsMulti.factory(
+            constraints=[
+                box_constraint,
+                ball_constraint,
+            ]
         )
 
         return System(
@@ -171,8 +217,8 @@ class TrainBundle(nnx.Module):
 
         return SamplerUniform.factory(
             batch_size=config.batch_size,
-            lower_bound=lower_bound * 1.15,  # 15% margin
-            upper_bound=upper_bound * 1.15,  # 15% margin
+            lower_bound=lower_bound * 0.99,
+            upper_bound=upper_bound * 0.99,
             rngs=nnx.Rngs(config.seed),
         )
 
@@ -180,7 +226,7 @@ class TrainBundle(nnx.Module):
     def build_state_to_rollout(
         config: WandbConfig, system: System
     ) -> StateToRolloutBase:
-        if config.nn_name == "action":
+        if config.nn_name == "actions":
             return StateToRolloutActions.factory(
                 state_dim=system.sys_dynamics.state_dim,
                 action_dim=system.sys_dynamics.action_dim,
@@ -237,10 +283,9 @@ class TrainBundle(nnx.Module):
         elif config.solver_name == "shallow":
             solver = OptimizationSolverShallow
         else:
-            raise ValueError(f"Unknown system: {config.system_name}")
+            raise ValueError(f"Unknown solver: {config.solver_name}")
 
         return solver(
-            alpha=config.solver_alpha,
             sigma=config.solver_sigma,
             rho=config.solver_rho_base,
             rho_equality_multiplier=config.solver_rho_eq_mult,
@@ -259,7 +304,6 @@ class TrainBundle(nnx.Module):
             sys_dynamics=system.sys_dynamics,
             sys_constraints=system.sys_constraints,
             horizon=config.projection_horizon,
-            relaxation_penalty=config.projection_relaxation_penalty,
             solver=solver,
         )
 
@@ -269,11 +313,11 @@ class TrainBundle(nnx.Module):
     ) -> nnx.Optimizer:
         return nnx.Optimizer(
             state_to_rollout,
-            optax.nadamw(
+            optax.adam(
                 learning_rate=config.optimizer_learning_rate,
-                b1=config.optimizer_b1,
-                b2=config.optimizer_b2,
-                weight_decay=config.optimizer_weight_decay,
+                # b1=config.optimizer_b1,
+                # b2=config.optimizer_b2,
+                # weight_decay=config.optimizer_weight_decay,
             ),
         )
 
@@ -284,6 +328,8 @@ class TrainBundle(nnx.Module):
         # Build the system components
         if config.system_name == "double_integrator":
             system = TrainBundle.build_double_integrator(config)
+        elif config.system_name == "double_integrator_ncvx":
+            system = TrainBundle.build_double_integrator_ncvx(config)
         elif config.system_name == "double_pendulum":
             system = TrainBundle.build_double_pendulum(config)
         elif config.system_name == "bike":
@@ -323,13 +369,12 @@ class TrainBundle(nnx.Module):
             sqr_dst=nnx.metrics.Average("sqr_dst"),
             primal_residual=nnx.metrics.Average("primal_residual"),
             dual_residual=nnx.metrics.Average("dual_residual"),
+            gm_residual=nnx.metrics.Average("gm_residual"),
             iterations_lin=nnx.metrics.Average("iterations_lin"),
             iterations_nonlin=nnx.metrics.Average("iterations_nonlin"),
             converged_flag=nnx.metrics.Average("converged_flag"),
             state_diff=nnx.metrics.Average("state_diff"),
             action_diff=nnx.metrics.Average("action_diff"),
-            relax_diff=nnx.metrics.Average("relax_diff"),
-            relax_mean=nnx.metrics.Average("relax_mean"),
         )
 
         return TrainBundle(

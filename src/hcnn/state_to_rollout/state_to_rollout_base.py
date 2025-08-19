@@ -24,6 +24,5 @@ class StateToRolloutBase(nnx.Module, ABC):
             Estimated rollout with states and actions
                 states, shape (..., horizon, state_dim)
                 actions, shape (..., horizon, action_dim)
-                relax, shape (..., horizon, constr_dim)
         """
         pass

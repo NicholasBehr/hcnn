@@ -31,8 +31,8 @@ class OptimizationSolverShallow(
             rho_inequality,
         )
 
-        ## x_tilde ##
-        def cg_lhs(v: jax.Array) -> jax.Array:
+        ## x ##
+        def steepest_descent_lhs(v: jax.Array) -> jax.Array:
             # Q v
             a = problem.cost_quad_diag * v
             # sigma I v
@@ -43,60 +43,50 @@ class OptimizationSolverShallow(
             c = constraint_lin.h_vjp(c)[0]
             return a + b + c
 
+        # Preconditioner: Use diagonal part (Q + σI) which is always positive
+        # definite since σ > 0 and cost_quad_diag >= 0
+        precond_diag = problem.cost_quad_diag + self.sigma
+
+        def steepest_descent_precond(v: jax.Array) -> jax.Array:
+            return v / precond_diag
+
         zhjx = (
             variables.z
             - constraint_lin.h
             + constraint_lin.h_jvp(constraint_lin.x_lin)
         )
         r_zhjx_y = rho_vec * zhjx - variables.y
-        cg_rhs = (
+        steepest_descent_rhs = (
             self.sigma * variables.x
             - problem.cost_linear
             + constraint_lin.h_vjp(r_zhjx_y)[0]
         )
 
-        # preconditioned gradient descent update for x_tilde
+        # steepest descent update for x
         # residual (gradient)
-        eps = 1e-12  # small value to avoid division by zero
-        r = cg_rhs - cg_lhs(variables.x_tilde)
-
-        # diagonal preconditioner: use absolute value of cost_quad_diag + sigma
-        # to handle zero entries robustly
-        precond_diag = jnp.abs(problem.cost_quad_diag) + self.sigma + eps
+        r = steepest_descent_rhs - steepest_descent_lhs(variables.x)
 
         # preconditioned residual
-        p = r / precond_diag
+        p = steepest_descent_precond(r)
 
         # step size alpha for preconditioned direction
+        eps = 1e-12  # small value to avoid division by zero
         alpha_numerator = jnp.dot(r, p)
-        alpha_denominator = jnp.dot(p, cg_lhs(p))
+        alpha_denominator = jnp.dot(p, steepest_descent_lhs(p))
         alpha = alpha_numerator / (alpha_denominator + eps)
 
         # update
-        new_x_tilde = variables.x_tilde + alpha * p
-
-        ## z_tilde ##
-        new_z_tilde = constraint_lin(new_x_tilde)
-
-        ## x ##
-        new_x = self.alpha * new_x_tilde + (1 - self.alpha) * variables.x
+        new_x = variables.x + alpha * p
 
         ## z ##
-        inner = (
-            self.alpha * new_z_tilde
-            + (1 - self.alpha) * variables.z
-            + variables.y / rho_vec
-        )
+        constraint = constraint_lin(new_x)
+        inner = constraint + variables.y / rho_vec
         new_z = jnp.clip(inner, problem.lower_bound, problem.upper_bound)
 
         ## y ##
-        new_y = variables.y + rho_vec * (
-            self.alpha * new_z_tilde + (1 - self.alpha) * variables.z - new_z
-        )
+        new_y = variables.y + rho_vec * (constraint - new_z)
 
         return variables.replace(
-            x_tilde=new_x_tilde,
-            z_tilde=new_z_tilde,
             x=new_x,
             z=new_z,
             y=new_y,

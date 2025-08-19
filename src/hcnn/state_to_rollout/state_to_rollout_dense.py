@@ -124,4 +124,4 @@ class StateToRolloutDense(StateToRolloutBase):
         )
         relax = relax_flat.reshape(*batch_shape, self.horizon, self.constr_dim)
 
-        return Rollout(states=states, actions=actions, relax=relax)
+        return Rollout(states=states, actions=actions)

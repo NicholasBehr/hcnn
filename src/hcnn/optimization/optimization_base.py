@@ -48,9 +48,7 @@ class OptimizationVariables(struct.PyTreeNode):
 
     # primal
     x: jax.Array
-    x_tilde: jax.Array
     z: jax.Array
-    z_tilde: jax.Array
     primal_residuals: jax.Array
     # dual
     y: jax.Array
@@ -70,17 +68,17 @@ class OptimizationVariables(struct.PyTreeNode):
     ) -> "OptimizationVariables":
         x = problem.get_x0(phi_d, phi_nd)
         z_raw = problem.constraint_fn(x, phi_d, phi_nd)
-        z_clip = jnp.clip(z_raw, problem.lower_bound, problem.upper_bound)
+        z = jnp.clip(z_raw, problem.lower_bound, problem.upper_bound)
         return OptimizationVariables(
             # primal
             x=x,
-            x_tilde=x,
-            z=z_clip,
-            z_tilde=z_clip,
-            primal_residuals=z_raw - z_clip,
+            z=z,
+            primal_residuals=jnp.abs(z_raw - z),
             # dual
-            y=jnp.zeros_like(z_clip),
-            dual_residuals=problem.cost_quad_diag * x + problem.cost_linear,
+            y=jnp.zeros_like(z),
+            dual_residuals=jnp.abs(
+                problem.cost_quad_diag * x + problem.cost_linear
+            ),
             # counter
             iter_nonlin=jnp.array(0, dtype=int),
             iter_lin=jnp.array(0, dtype=int),
@@ -136,11 +134,8 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
     Quadratic Cost with Nonlinear Constraints Problem Solver
     """
 
-    # relaxation parameter in range (0, 2)
-    alpha: float = 1.6
-
     # dual step-size to align x and x_tilde
-    sigma: float = 1e-4
+    sigma: float = 1e-6
 
     # dual step-size to align z and z_tilde
     rho: float = 1
@@ -151,7 +146,7 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
     max_iter_lin: int = int(1e3)
 
     # convergence tolerance for primal and dual residuals
-    tol: float = 1e-3
+    tol: float = 1e-4
 
     @partial(jax.jit, static_argnames="self")
     def solve(
@@ -195,8 +190,8 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
         )
 
         return variables.replace(
-            primal_residuals=primal_residuals,
-            dual_residuals=dual_residuals,
+            primal_residuals=jnp.abs(primal_residuals),
+            dual_residuals=jnp.abs(dual_residuals),
         )
 
     def update_multiplier(
@@ -244,21 +239,10 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
             (i.e., optimization should continue).
         """
         # Check if primal and dual residuals are below the tolerance
-        primal_check = jnp.max(jnp.abs(variables.primal_residuals)) >= self.tol
-        dual_check = jnp.max(jnp.abs(variables.dual_residuals)) >= self.tol
-        # Check if x is close to x_tilde
-        x_tilde_check = (
-            jnp.max(jnp.abs(variables.x - variables.x_tilde)) >= self.tol
-        )
-        # Check if z is close to z_tilde
-        z_tilde_check = (
-            jnp.max(jnp.abs(variables.z - variables.z_tilde)) >= self.tol
-        )
+        primal_check = jnp.max(variables.primal_residuals) >= self.tol
+        dual_check = jnp.max(variables.dual_residuals) >= self.tol
 
-        return jnp.logical_or(
-            jnp.logical_or(primal_check, dual_check),
-            jnp.logical_or(x_tilde_check, z_tilde_check),
-        )
+        return jnp.logical_or(primal_check, dual_check)
 
     def cond_linear(self, variables: OptimizationVariables):
         """
@@ -305,10 +289,10 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
                 constraint_lin=constraint_lin,
             ),
             init_val=variables,
-            unroll=True,
+            unroll=10,
         )
 
-        # Update residuals
+        # Update residuals (linear)
         variables = self.update_residuals(
             variables=variables,
             problem=problem,
@@ -331,14 +315,11 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
         problem: OptimizationProblemBase[PhiTypeDiff, PhiTypeNoDiff],
         constraint_fn: Callable[[jax.Array], jax.Array],
     ) -> OptimizationVariables:
-        # Update constraint linearization
+        # Create fresh constraint linearization for this iteration
         constraint_lin = ConstraintLinearization.factory(
             constraint_fn=constraint_fn,
-            x_lin=variables.x_tilde,
+            x_lin=variables.x,
         )
-
-        # reset rho_multiplier after re-linearization
-        variables = variables.replace(rho_balance_multiplier=1.0)
 
         # Solve linear QP subproblem
         variables = jax.lax.while_loop(
@@ -357,13 +338,12 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
             iter_lin_total=variables.iter_lin_total + variables.iter_lin,
         )
 
-        # Update constraint linearization
+        # Update residuals (nonlinear)
         constraint_lin = ConstraintLinearization.factory(
             constraint_fn=constraint_fn,
             x_lin=variables.x,
         )
 
-        # Update residuals
         variables = self.update_residuals(
             variables=variables,
             problem=problem,
@@ -505,12 +485,19 @@ class OptimizationSolverBase(ABC, Generic[PhiTypeDiff, PhiTypeNoDiff]):
                     problem.cost_quad_diag * u1
                     # + h_hvp(u1)
                     + h_vjp(plus_u_minus_l * h_jvp(u1))[0]
-                    + self.tol * u1  # make full rank and regularize large grad
+                    + self.tol * u1
                 )
+
+            # Simple diagonal preconditioner
+            def preconditioner(u1: jax.Array) -> jax.Array:
+                diag_approx = problem.cost_quad_diag + self.tol
+                return u1 / diag_approx
 
             # Solve the Schur complement system
             # use bicstab or gmres for non PSD (with hvp)
-            u1, _ = jax.scipy.sparse.linalg.cg(A=schur_lhs, b=v1)
+            u1, _ = jax.scipy.sparse.linalg.cg(
+                A=schur_lhs, b=v1, M=preconditioner
+            )
 
             h_jvp_u1 = h_jvp(u1)
             u2 = plus_u_minus_l * h_jvp_u1

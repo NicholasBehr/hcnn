@@ -21,8 +21,6 @@ from .rollout import Rollout
 class ProjectionInfo(OptimizationInfo):
     state_diff: jax.Array
     action_diff: jax.Array
-    relax_diff: jax.Array
-    relax_mean: jax.Array
 
 
 @struct.dataclass
@@ -36,7 +34,6 @@ class ProjectionLayer:
         sys_dynamics: SystemDynamicsBase,
         sys_constraints: SystemConstraintsBase,
         horizon: int,
-        relaxation_penalty: float,
         solver: OptimizationSolverBase,
     ) -> "ProjectionLayer":
         return cls(
@@ -44,7 +41,6 @@ class ProjectionLayer:
                 sys_dynamics=sys_dynamics,
                 sys_constraints=sys_constraints,
                 horizon=horizon,
-                relaxation_penalty=relaxation_penalty,
             ),
             solver=solver,
         )
@@ -69,16 +65,12 @@ class ProjectionLayer:
             rollout: Rollout,
             initial_state: jax.Array,
         ):
-            relax_pos = +jnp.clip(rollout.relax, 0, None)
-            relax_neg = -jnp.clip(rollout.relax, None, 0)
             phi_d = ProjectionPhiD(
                 states_ref=rollout.states,
                 actions_ref=rollout.actions,
             )
             phi_nd = ProjectionPhiND(
                 initial_state=initial_state,
-                relax_pos=relax_pos,
-                relax_neg=relax_neg,
             )
             x_star, solver_info = self.solver.solve(
                 self.projection_problem, phi_d, phi_nd
@@ -87,7 +79,6 @@ class ProjectionLayer:
             rollout_proj = Rollout(
                 states=optvar.states,
                 actions=optvar.actions,
-                relax=optvar.relax_pos - optvar.relax_neg,
             )
             state_diff = jnp.mean(
                 jnp.abs(rollout.states - rollout_proj.states),
@@ -95,10 +86,6 @@ class ProjectionLayer:
             action_diff = jnp.mean(
                 jnp.abs(rollout.actions - rollout_proj.actions),
             )
-            relax_diff = jnp.mean(
-                jnp.abs(rollout.relax - rollout_proj.relax),
-            )
-            relax_mean = jnp.mean(jnp.abs(rollout_proj.relax))
             proj_info = ProjectionInfo(
                 primal_residual=solver_info.primal_residual,
                 dual_residual=solver_info.dual_residual,
@@ -107,8 +94,6 @@ class ProjectionLayer:
                 converged_flag=solver_info.converged_flag,
                 state_diff=state_diff,
                 action_diff=action_diff,
-                relax_diff=relax_diff,
-                relax_mean=relax_mean,
             )
             return rollout_proj, proj_info
 

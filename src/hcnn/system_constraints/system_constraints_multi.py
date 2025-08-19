@@ -23,9 +23,7 @@ class SystemConstraintsMulti(SystemConstraintsBase):
     """
 
     # Keep the list of child constraints as static metadata (non-pytree field)
-    constraints: tuple[SystemConstraintsBase, ...] = struct.field(
-        pytree_node=False
-    )
+    constraints: tuple[SystemConstraintsBase, ...]
 
     @classmethod
     def factory(

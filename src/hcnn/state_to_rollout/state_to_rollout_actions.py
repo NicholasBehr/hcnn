@@ -1,15 +1,16 @@
+from dataclasses import dataclass
+
 import jax
 import jax.numpy as jnp
-from flax import nnx, struct
+from flax import nnx
 
-from hcnn.projection import Rollout
+from hcnn.optimization_layer import Rollout
+from hcnn.state_to_rollout.state_to_rollout_base import StateToRolloutBase
 from hcnn.system_dynamics import SystemDynamicsBase
 from hcnn.training import DropoutMLP
 
-from .state_to_rollout_base import StateToRolloutBase
 
-
-@struct.dataclass
+@dataclass(frozen=True)
 class StateToRolloutActions(StateToRolloutBase):
     action_estimator: DropoutMLP
     sys_dynamics: SystemDynamicsBase

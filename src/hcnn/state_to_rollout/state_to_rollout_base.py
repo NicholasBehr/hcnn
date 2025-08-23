@@ -1,13 +1,14 @@
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 
 import jax
-from flax import nnx, struct
+from flax import nnx
 
-from hcnn.projection import Rollout
+from hcnn.optimization_layer.rollout import Rollout
 
 
-@struct.dataclass
-class StateToRolloutBase(nnx.Module, ABC):
+@dataclass(frozen=True)
+class StateToRolloutBase(ABC, nnx.Module):
     state_dim: int
     action_dim: int
     constr_dim: int

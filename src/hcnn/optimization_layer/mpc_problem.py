@@ -3,7 +3,7 @@ import jax.numpy as jnp
 from flax import struct
 from jax import flatten_util
 
-from hcnn.optimization import OptimizationProblemBase
+from hcnn.solver import SQPProblemBase
 from hcnn.system_constraints import SystemConstraintsBox
 from hcnn.system_costs import SystemCostsQuadratic
 from hcnn.system_dynamics import SystemDynamicsLinear
@@ -16,24 +16,12 @@ class OptimizationVariable:
 
 
 @struct.dataclass
-class MPCPhiD:
-    # Empty - reference comes from SystemCostsQuadratic
-    pass
-
-
-@struct.dataclass
-class MPCPhiND:
-    # Non-differentiable parameters
+class MPCPhi:
     initial_state: jax.Array  # shape (state_dim,)
 
 
 @struct.dataclass
-class MPCProblem(
-    OptimizationProblemBase[
-        MPCPhiD,
-        MPCPhiND,
-    ]
-):
+class MPCProblem(SQPProblemBase[MPCPhi]):
     sys_dynamics: SystemDynamicsLinear
     sys_constraints: SystemConstraintsBox
     sys_costs: SystemCostsQuadratic
@@ -85,6 +73,10 @@ class MPCProblem(
             )
         )[0]
 
+        phi = MPCPhi(
+            initial_state=jnp.zeros((state_dim,)),
+        )
+
         bound_tuple_list = [
             cls.bounds_sys_dynamics(
                 horizon=horizon,
@@ -107,6 +99,7 @@ class MPCProblem(
         return cls(
             cost_quad_diag=cost_quad_diag,
             cost_linear=cost_linear,
+            phi=phi,
             lower_bound=lower_bound,
             upper_bound=upper_bound,
             sys_dynamics=sys_dynamics,
@@ -155,9 +148,9 @@ class MPCProblem(
     ## INITIAL STATE CONSTRAINTS ###
     @staticmethod
     def constraints_initial_state(
-        optvar: OptimizationVariable, phi_nd: MPCPhiND
+        optvar: OptimizationVariable, phi: MPCPhi
     ) -> jax.Array:
-        return optvar.states[0] - phi_nd.initial_state
+        return optvar.states[0] - phi.initial_state
 
     @staticmethod
     def bounds_initial_state(state_dim: int) -> tuple[jax.Array, jax.Array]:
@@ -166,7 +159,7 @@ class MPCProblem(
             jnp.zeros(state_dim),
         )
 
-    def get_x0(self, phi_d: MPCPhiD, phi_nd: MPCPhiND) -> jax.Array:
+    def get_x0(self, phi: MPCPhi) -> jax.Array:
         # Create reference trajectory from constant references
         states_ref = jnp.tile(
             self.sys_costs.reference_state[None, :], (self.horizon, 1)
@@ -194,7 +187,7 @@ class MPCProblem(
         _, unravel_pytree = flatten_util.ravel_pytree(optvar_template)
         return unravel_pytree(x)
 
-    def constraint_fn(self, x, phi_d, phi_nd):
+    def constraint_fn_phi(self, x, phi):
         optvar = self.x_to_optvar(x)
         constraints_list = [
             self.constraints_sys_dynamics(
@@ -207,7 +200,7 @@ class MPCProblem(
             ),
             self.constraints_initial_state(
                 optvar=optvar,
-                phi_nd=phi_nd,
+                phi=phi,
             ),
         ]
         return jnp.concatenate(constraints_list)

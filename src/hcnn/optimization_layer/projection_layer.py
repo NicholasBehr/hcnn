@@ -2,23 +2,18 @@ import jax
 import jax.numpy as jnp
 from flax import struct
 
-from hcnn.optimization.optimization_base import (
-    OptimizationInfo,
-    OptimizationSolverBase,
+from hcnn.optimization_layer.projection_problem import (
+    ProjectionPhi,
+    ProjectionProblem,
 )
+from hcnn.optimization_layer.rollout import Rollout
+from hcnn.solver import SQPInfo, SQPParameters, sqp_solve
 from hcnn.system_constraints import SystemConstraintsBase
 from hcnn.system_dynamics import SystemDynamicsBase
 
-from .projection_problem import (
-    ProjectionPhiD,
-    ProjectionPhiND,
-    ProjectionProblem,
-)
-from .rollout import Rollout
-
 
 @struct.dataclass
-class ProjectionInfo(OptimizationInfo):
+class ProjectionInfo(SQPInfo):
     state_diff: jax.Array
     action_diff: jax.Array
 
@@ -26,7 +21,7 @@ class ProjectionInfo(OptimizationInfo):
 @struct.dataclass
 class ProjectionLayer:
     projection_problem: ProjectionProblem
-    solver: OptimizationSolverBase
+    sqp_parameters: SQPParameters
 
     @classmethod
     def factory(
@@ -34,7 +29,7 @@ class ProjectionLayer:
         sys_dynamics: SystemDynamicsBase,
         sys_constraints: SystemConstraintsBase,
         horizon: int,
-        solver: OptimizationSolverBase,
+        sqp_parameters: SQPParameters,
     ) -> "ProjectionLayer":
         return cls(
             projection_problem=ProjectionProblem.factory(
@@ -42,7 +37,7 @@ class ProjectionLayer:
                 sys_constraints=sys_constraints,
                 horizon=horizon,
             ),
-            solver=solver,
+            sqp_parameters=sqp_parameters,
         )
 
     def __call__(
@@ -65,33 +60,39 @@ class ProjectionLayer:
             rollout: Rollout,
             initial_state: jax.Array,
         ):
-            phi_d = ProjectionPhiD(
+            # Construct and solve SQP Problem
+            phi = ProjectionPhi(
                 states_ref=rollout.states,
                 actions_ref=rollout.actions,
-            )
-            phi_nd = ProjectionPhiND(
                 initial_state=initial_state,
             )
-            x_star, solver_info = self.solver.solve(
-                self.projection_problem, phi_d, phi_nd
-            )
+            sqp_problem = self.projection_problem.replace(phi=phi)
+            x_star, sqp_info = sqp_solve(sqp_problem, self.sqp_parameters)
+
+            # Extract optimal variables
             optvar = self.projection_problem.x_to_optvar(x_star)
             rollout_proj = Rollout(
                 states=optvar.states,
                 actions=optvar.actions,
             )
             state_diff = jnp.mean(
-                jnp.abs(rollout.states - rollout_proj.states),
+                jnp.abs(
+                    rollout.states - jax.lax.stop_gradient(rollout_proj.states)
+                ),
             )
             action_diff = jnp.mean(
-                jnp.abs(rollout.actions - rollout_proj.actions),
+                jnp.abs(
+                    rollout.actions
+                    - jax.lax.stop_gradient(rollout_proj.actions)
+                ),
             )
             proj_info = ProjectionInfo(
-                primal_residual=solver_info.primal_residual,
-                dual_residual=solver_info.dual_residual,
-                iterations_lin=solver_info.iterations_lin,
-                iterations_nonlin=solver_info.iterations_nonlin,
-                converged_flag=solver_info.converged_flag,
+                primal_residual=sqp_info.primal_residual,
+                dual_residual=sqp_info.dual_residual,
+                iterations_lin=sqp_info.iterations_lin,
+                iterations_nonlin=sqp_info.iterations_nonlin,
+                rho_base_mult=sqp_info.rho_base_mult,
+                converged_flag=sqp_info.converged_flag,
                 state_diff=state_diff,
                 action_diff=action_diff,
             )

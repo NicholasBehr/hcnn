@@ -4,7 +4,7 @@ from flax import nnx, struct
 
 
 @struct.dataclass
-class SamplerUniform(nnx.Module):
+class SamplerUniform:
     """NNX module for sampling random initial states with specified bounds.
 
     This module generates batches of random initial states using uniform

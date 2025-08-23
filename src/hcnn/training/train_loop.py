@@ -8,20 +8,16 @@ import orbax.checkpoint as ocp
 from flax import nnx
 
 import wandb
-from hcnn.projection import ProjectionLayer
-from hcnn.projection.mpc_layer import MPCLayer
-from hcnn.state_to_rollout.state_to_rollout_base import StateToRolloutBase
-from hcnn.system_constraints.system_constraints_box import SystemConstraintsBox
-from hcnn.system_costs.system_costs_base import SystemCostsBase
-from hcnn.system_costs.system_costs_quadratic import SystemCostsQuadratic
-from hcnn.system_dynamics.system_dynamics_linear import SystemDynamicsLinear
+from hcnn.optimization_layer import MPCLayer, ProjectionLayer
+from hcnn.state_to_rollout import StateToRolloutBase
+from hcnn.system_constraints import SystemConstraintsBox
+from hcnn.system_costs import SystemCostsBase, SystemCostsQuadratic
+from hcnn.system_dynamics import SystemDynamicsLinear
 from hcnn.training.train_bundle import TrainBundle
 from hcnn.training.visualization import (
     visualize_receding_horizon,
     visualize_receding_horizon_mpc,
 )
-
-# from hcnn.training.visualization import visualize_receding_horizon
 
 
 def loss_fn(
@@ -41,7 +37,9 @@ def loss_fn(
 
     # Compute squared distances per sample, conditioned on convergence
     # Expand converged_flag to match rollout tensor dimensions
-    converged_flag_expanded = info.converged_flag[..., None, None]
+    converged_flag_expanded = jnp.ones_like(
+        info.converged_flag[..., None, None]
+    )
 
     state_sqr_dst = jnp.where(
         converged_flag_expanded,
@@ -107,7 +105,7 @@ def train_epoch(
         )
 
         # Apply the gradients to the optimizer
-        train.optimizer.update(grads)
+        train.optimizer.update(train.state_to_rollout, grads)
 
         # Unpack the auxiliary values
         loss, cost, sqr_dst, info = aux
@@ -231,7 +229,7 @@ def train(project=None, config=None):
                 sys_constraints=train.system.sys_constraints,
                 sys_costs=train.system.sys_costs,
                 horizon=train.projection_layer.projection_problem.horizon,
-                solver=train.projection_layer.solver,
+                sqp_parameters=train.projection_layer.sqp_parameters,
             )
 
             # Visualize MPC for comparison
@@ -265,7 +263,7 @@ def train(project=None, config=None):
 
             # Log to WandB
             wandb.log(step=epoch, data=metrics)
-            if (epoch % 5 == 0 and epoch > 0) or epoch == config.epochs - 1:
+            if (epoch % 10 == 0 and epoch > 0) or epoch == config.epochs - 1:
                 state_dim = train.system.sys_dynamics.state_dim
                 train_bundle = nnx.merge(train_graphdef, train_state)
 
@@ -285,41 +283,40 @@ if __name__ == "__main__":
     print("This is a training loop with Weights & Biases integration.")
 
     # restrict access to one GPU (check availability nvidia-smi)
-    os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "3"
     jax.config.update("jax_debug_nans", False)
     # jax.config.update("jax_platform_name", "cpu")  # Uncomment to run on CPU
 
     # Specify the project name and configuration
     # This can be overridden by wandb.agent when running a sweep
-    project = "double_integrator_ncvx"
+    project = "bike"
 
     config = {
         "system_name": project,
         "seed": 0,
         # Neural Network
         "nn_name": "scan",
-        "nn_hidden_dim": 64,
-        "nn_hidden_depth": 2,
+        "nn_hidden_dim": 128,
+        "nn_hidden_depth": 3,
         "nn_dropout_rate": 0,
-        "nn_activation": "relu",
+        "nn_activation": "leaky_relu",
         # Optimizer
         "optimizer_learning_rate": 1e-3,
-        "optimizer_b1": 0.95,
-        "optimizer_b2": 0.999,
-        "optimizer_weight_decay": 1e-4,
         # Solver
-        "solver_name": "osqp",
-        "solver_sigma": 0.1,
-        "solver_rho_base": 100,
-        "solver_rho_eq_mult": 0.1,
-        "solver_max_iter_nonlin": 5,
-        "solver_max_iter_lin": 1e4,
-        "solver_tol": 1e-3,
+        "solver_alpha": 1.6,
+        "solver_sigma": 1e-6,
+        "solver_rho_base": 50,
+        "rho_equality_mult": 0.1,
+        "solver_tol": 1e-1,
+        "solver_tau": 2e-1,
+        "solver_epsilon": 0.1,
+        "solver_max_iter_lin": 500,
+        "solver_max_iter_nonlin": 25,
         # Projection
-        "projection_horizon": 20,
+        "projection_horizon": 50,
         # Training parameters
-        "batch_size": 256,
-        "batches_per_epoch": 8,
+        "batch_size": 512,
+        "batches_per_epoch": 1,
         "epochs": 200,
         "alignment_weight": 1e-3,
     }

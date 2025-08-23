@@ -1,14 +1,12 @@
+from dataclasses import dataclass
+
 import jax.numpy as jnp
 import optax
 from flax import nnx, struct
 
-from hcnn.optimization import (
-    OptimizationSolverBase,
-    OptimizationSolverOSQP,
-    OptimizationSolverShallow,
-)
-from hcnn.projection import ProjectionLayer
+from hcnn.optimization_layer import ProjectionLayer
 from hcnn.sampler import SamplerUniform
+from hcnn.solver import SQPParameters
 from hcnn.state_to_rollout import (
     StateToRolloutActions,
     StateToRolloutBase,
@@ -49,7 +47,7 @@ class System:
     action_max: jnp.ndarray | None = None
 
 
-@struct.dataclass
+@dataclass
 class TrainBundle(nnx.Module):
     system: System
     sampler: SamplerUniform
@@ -226,100 +224,66 @@ class TrainBundle(nnx.Module):
     def build_state_to_rollout(
         config: WandbConfig, system: System
     ) -> StateToRolloutBase:
-        if config.nn_name == "actions":
-            return StateToRolloutActions.factory(
-                state_dim=system.sys_dynamics.state_dim,
-                action_dim=system.sys_dynamics.action_dim,
-                constr_dim=system.sys_constraints.constraint_dim,
-                hidden_features=[config.nn_hidden_dim] * config.nn_hidden_depth,
-                horizon=config.projection_horizon,
-                sys_dynamics=system.sys_dynamics,
-                rngs=nnx.Rngs(config.seed),
-                activation=config.nn_activation,
-                dropout_rate=config.nn_dropout_rate,
-                periodic_states=system.periodic_states,
-                action_min=system.action_min,
-                action_max=system.action_max,
-            )
-        elif config.nn_name == "dense":
-            return StateToRolloutDense.factory(
-                state_dim=system.sys_dynamics.state_dim,
-                action_dim=system.sys_dynamics.action_dim,
-                constr_dim=system.sys_constraints.constraint_dim,
-                hidden_features=[config.nn_hidden_dim] * config.nn_hidden_depth,
-                horizon=config.projection_horizon,
-                sys_dynamics=system.sys_dynamics,
-                rngs=nnx.Rngs(config.seed),
-                activation=config.nn_activation,
-                dropout_rate=config.nn_dropout_rate,
-                periodic_states=system.periodic_states,
-                action_min=system.action_min,
-                action_max=system.action_max,
-            )
-        elif config.nn_name == "scan":
-            return StateToRolloutScan.factory(
-                state_dim=system.sys_dynamics.state_dim,
-                action_dim=system.sys_dynamics.action_dim,
-                constr_dim=system.sys_constraints.constraint_dim,
-                hidden_features=[config.nn_hidden_dim] * config.nn_hidden_depth,
-                horizon=config.projection_horizon,
-                sys_dynamics=system.sys_dynamics,
-                rngs=nnx.Rngs(config.seed),
-                activation=config.nn_activation,
-                dropout_rate=config.nn_dropout_rate,
-                periodic_states=system.periodic_states,
-                action_min=system.action_min,
-                action_max=system.action_max,
-            )
-        else:
-            raise ValueError(
-                f"Unknown state to rollout type: {config.state_to_rollout_name}"
-            )
+        # Common parameters for all neural network types
+        common_params = {
+            "state_dim": system.sys_dynamics.state_dim,
+            "action_dim": system.sys_dynamics.action_dim,
+            "constr_dim": system.sys_constraints.constraint_dim,
+            "hidden_features": [config.nn_hidden_dim] * config.nn_hidden_depth,
+            "horizon": config.projection_horizon,
+            "sys_dynamics": system.sys_dynamics,
+            "rngs": nnx.Rngs(config.seed),
+            "activation": config.nn_activation,
+            "dropout_rate": config.nn_dropout_rate,
+            "periodic_states": system.periodic_states,
+            "action_min": system.action_min,
+            "action_max": system.action_max,
+        }
+
+        nn_classes = {
+            "actions": StateToRolloutActions,
+            "dense": StateToRolloutDense,
+            "scan": StateToRolloutScan,
+        }
+
+        if config.nn_name not in nn_classes:
+            raise ValueError(f"Unknown state to rollout type: {config.nn_name}")
+
+        return nn_classes[config.nn_name].factory(**common_params)
 
     @staticmethod
-    def build_solver(config: WandbConfig) -> OptimizationSolverBase:
-        if config.solver_name == "osqp":
-            solver = OptimizationSolverOSQP
-        elif config.solver_name == "shallow":
-            solver = OptimizationSolverShallow
-        else:
-            raise ValueError(f"Unknown solver: {config.solver_name}")
-
-        return solver(
+    def build_sqp_parameters(config: WandbConfig) -> SQPParameters:
+        return SQPParameters(
+            alpha=config.solver_alpha,
             sigma=config.solver_sigma,
             rho=config.solver_rho_base,
-            rho_equality_multiplier=config.solver_rho_eq_mult,
-            max_iter_nonlin=config.solver_max_iter_nonlin,
-            max_iter_lin=config.solver_max_iter_lin,
+            rho_equality_mult=config.rho_equality_mult,
             tol=config.solver_tol,
+            tau=config.solver_tau,
+            epsilon=config.solver_epsilon,
+            max_iter_lin=config.solver_max_iter_lin,
+            max_iter_nonlin=config.solver_max_iter_nonlin,
         )
 
     @staticmethod
     def build_projection_layer(
         config: WandbConfig,
         system: System,
-        solver: OptimizationSolverBase,
+        sqp_parameters: SQPParameters,
     ) -> ProjectionLayer:
         return ProjectionLayer.factory(
             sys_dynamics=system.sys_dynamics,
             sys_constraints=system.sys_constraints,
             horizon=config.projection_horizon,
-            solver=solver,
+            sqp_parameters=sqp_parameters,
         )
 
     @staticmethod
     def build_optimizer(
         config: WandbConfig, state_to_rollout: StateToRolloutBase
     ) -> nnx.Optimizer:
-        return nnx.Optimizer(
-            state_to_rollout,
-            optax.adam(
-                learning_rate=config.optimizer_learning_rate,
-                # b1=config.optimizer_b1,
-                # b2=config.optimizer_b2,
-                # weight_decay=config.optimizer_weight_decay,
-            ),
-        )
+        tx = optax.adam(learning_rate=config.optimizer_learning_rate)
+        return nnx.Optimizer(model=state_to_rollout, tx=tx, wrt=nnx.Param)
 
     @staticmethod
     def factory_from_config(
@@ -352,14 +316,14 @@ class TrainBundle(nnx.Module):
             state_to_rollout=state_to_rollout,
         )
 
-        # Build the solver
-        solver = TrainBundle.build_solver(config)
+        # Build SQP parameters
+        sqp_parameters = TrainBundle.build_sqp_parameters(config)
 
         # Build the projection layer
         projection_layer = TrainBundle.build_projection_layer(
             config=config,
             system=system,
-            solver=solver,
+            sqp_parameters=sqp_parameters,
         )
 
         # Build optax metrics
@@ -372,6 +336,7 @@ class TrainBundle(nnx.Module):
             gm_residual=nnx.metrics.Average("gm_residual"),
             iterations_lin=nnx.metrics.Average("iterations_lin"),
             iterations_nonlin=nnx.metrics.Average("iterations_nonlin"),
+            rho_base_mult=nnx.metrics.Average("rho_base_mult"),
             converged_flag=nnx.metrics.Average("converged_flag"),
             state_diff=nnx.metrics.Average("state_diff"),
             action_diff=nnx.metrics.Average("action_diff"),

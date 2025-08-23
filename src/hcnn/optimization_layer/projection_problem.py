@@ -3,7 +3,7 @@ import jax.numpy as jnp
 from flax import struct
 from jax import flatten_util
 
-from hcnn.optimization import OptimizationProblemBase
+from hcnn.solver import SQPProblemBase
 from hcnn.system_constraints import SystemConstraintsBase
 from hcnn.system_dynamics import SystemDynamicsBase
 
@@ -19,23 +19,14 @@ class OptimizationVariable:
 
 
 @struct.dataclass
-class ProjectionPhiD:
+class ProjectionPhi:
     states_ref: jax.Array  # shape (horizon, state_dim)
     actions_ref: jax.Array  # shape (horizon, action_dim)
-
-
-@struct.dataclass
-class ProjectionPhiND:
     initial_state: jax.Array  # shape (state_dim,)
 
 
 @struct.dataclass
-class ProjectionProblem(
-    OptimizationProblemBase[
-        ProjectionPhiD,
-        ProjectionPhiND,
-    ]
-):
+class ProjectionProblem(SQPProblemBase[ProjectionPhi]):
     sys_dynamics: SystemDynamicsBase
     sys_constraints: SystemConstraintsBase
     horizon: int = struct.field(pytree_node=False)
@@ -69,6 +60,11 @@ class ProjectionProblem(
                 actions_diff=0 * actions_one,
             )
         )[0]
+        phi = ProjectionPhi(
+            states_ref=0 * states_one,
+            actions_ref=0 * actions_one,
+            initial_state=0 * states_one[0],
+        )
         bound_tuple_list = [
             cls.bounds_rollout_diff(
                 horizon=horizon,
@@ -96,6 +92,7 @@ class ProjectionProblem(
         return cls(
             cost_quad_diag=cost_quad_diag,
             cost_linear=cost_linear,
+            phi=phi,
             lower_bound=lower_bound,
             upper_bound=upper_bound,
             sys_dynamics=sys_dynamics,
@@ -106,10 +103,10 @@ class ProjectionProblem(
     ## ROLLOUT DIFFERENCE CONSTRAINTS ###
     @staticmethod
     def constraints_rollout_diff(
-        optvar: OptimizationVariable, phi_d: ProjectionPhiD
+        optvar: OptimizationVariable, phi: ProjectionPhi
     ) -> jax.Array:
-        state_diff = optvar.states - phi_d.states_ref - optvar.states_diff
-        action_diff = optvar.actions - phi_d.actions_ref - optvar.actions_diff
+        state_diff = optvar.states - phi.states_ref - optvar.states_diff
+        action_diff = optvar.actions - phi.actions_ref - optvar.actions_diff
         return jnp.concatenate([state_diff.ravel(), action_diff.ravel()])
 
     @staticmethod
@@ -161,9 +158,9 @@ class ProjectionProblem(
     ## INITIAL STATE CONSTRAINTS ###
     @staticmethod
     def constraints_initial_state(
-        optvar: OptimizationVariable, phi_nd: ProjectionPhiND
+        optvar: OptimizationVariable, phi: ProjectionPhi
     ) -> jax.Array:
-        return optvar.states[0] - phi_nd.initial_state
+        return optvar.states[0] - phi.initial_state
 
     @staticmethod
     def bounds_initial_state(state_dim: int) -> tuple[jax.Array, jax.Array]:
@@ -172,14 +169,12 @@ class ProjectionProblem(
             jnp.zeros(state_dim),
         )
 
-    def get_x0(
-        self, phi_d: ProjectionPhiD, phi_nd: ProjectionPhiND
-    ) -> jax.Array:
+    def get_x0(self, phi: ProjectionPhi) -> jax.Array:
         optvar = OptimizationVariable(
-            states=phi_d.states_ref,
-            actions=phi_d.actions_ref,
-            states_diff=jnp.zeros_like(phi_d.states_ref),
-            actions_diff=jnp.zeros_like(phi_d.actions_ref),
+            states=phi.states_ref,
+            actions=phi.actions_ref,
+            states_diff=jnp.zeros_like(phi.states_ref),
+            actions_diff=jnp.zeros_like(phi.actions_ref),
         )
         return flatten_util.ravel_pytree(optvar)[0]
 
@@ -198,12 +193,12 @@ class ProjectionProblem(
         _, unravel_pytree = flatten_util.ravel_pytree(optvar_template)
         return unravel_pytree(x)
 
-    def constraint_fn(self, x, phi_d, phi_nd):
+    def constraint_fn_phi(self, x, phi):
         optvar = self.x_to_optvar(x)
         constraints_list = [
             self.constraints_rollout_diff(
                 optvar=optvar,
-                phi_d=phi_d,
+                phi=phi,
             ),
             self.constraints_sys_dynamics(
                 optvar=optvar,
@@ -215,7 +210,7 @@ class ProjectionProblem(
             ),
             self.constraints_initial_state(
                 optvar=optvar,
-                phi_nd=phi_nd,
+                phi=phi,
             ),
         ]
         return jnp.concatenate(constraints_list)

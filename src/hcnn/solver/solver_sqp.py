@@ -58,8 +58,8 @@ class SQPParameters:
     sigma: float = struct.field(default_factory=lambda: 1e-6)
     rho: float = struct.field(default_factory=lambda: 0.1)
     rho_equality_mult: float = struct.field(default_factory=lambda: 1e3)
-    tol: float = struct.field(default_factory=lambda: 1e-4)
-    tau: float = struct.field(default_factory=lambda: 1e-12)
+    tol_prim: float = struct.field(default_factory=lambda: 1e-4)
+    tol_dual: float = struct.field(default_factory=lambda: 1e-4)
     epsilon: float = struct.field(default_factory=lambda: 1e-12)
     max_iter_lin: int = struct.field(default_factory=lambda: 5_000)
     max_iter_nonlin: int = struct.field(default_factory=lambda: 500)
@@ -174,7 +174,8 @@ def sqp_step(
         sigma=parameters.sigma,
         rho=parameters.rho,
         rho_equality_mult=parameters.rho_equality_mult,
-        tol=parameters.tol,
+        tol_prim=parameters.tol_prim,
+        tol_dual=parameters.tol_dual,
         max_iter=parameters.max_iter_lin,
     )
     osqp_variables = osqp_solve(osqp_problem, osqp_parameters)
@@ -220,8 +221,8 @@ def sqp_not_converged(
     parameters: SQPParameters,
 ) -> jax.Array:
     # check if primal or dual residuals are above the tolerance
-    res_x = jnp.max(jnp.abs(variables.r_x)) >= parameters.tol
-    res_y = jnp.max(jnp.abs(variables.r_y)) >= parameters.tol
+    res_x = jnp.max(jnp.abs(variables.r_x)) >= parameters.tol_dual
+    res_y = jnp.max(jnp.abs(variables.r_y)) >= parameters.tol_prim
     residual = jnp.logical_or(res_x, res_y)
 
     # check if maximum number of iterations has not been reached
@@ -248,16 +249,17 @@ def sqp_solve_variables(
         init_val=SQPVariables.factory(problem=problem),
     )
     sqp_info = SQPInfo(
-        primal_residual=jnp.abs(variables.r_y),
-        dual_residual=jnp.abs(variables.r_x),
+        primal_residual=jnp.max(jnp.abs(variables.r_y)),
+        dual_residual=jnp.max(jnp.abs(variables.r_x)),
         iterations_lin=variables.sumlin_iter / variables.nonlin_iter,
         iterations_nonlin=variables.nonlin_iter,
         rho_base_mult=variables.sum_rho_base_mult / variables.nonlin_iter,
         converged_flag=jnp.logical_and(
-            jnp.max(jnp.abs(variables.r_x)) < parameters.tol,
-            jnp.max(jnp.abs(variables.r_y)) < parameters.tol,
+            jnp.max(jnp.abs(variables.r_x)) < parameters.tol_dual,
+            jnp.max(jnp.abs(variables.r_y)) < parameters.tol_prim,
         ),
     )
+
     return variables, sqp_info
 
 
@@ -319,8 +321,8 @@ def sqp_solve_bwd(
         y_plus = jnp.maximum(y_star, 0.0)
         y_minus = jnp.maximum(-y_star, 0.0)
 
-        frac_upper = y_plus / (parameters.tau + problem.upper_bound - h)
-        frac_lower = y_minus / (parameters.tau + h - problem.lower_bound)
+        frac_upper = y_plus / (parameters.tol_prim + problem.upper_bound - h)
+        frac_lower = y_minus / (parameters.tol_prim + h - problem.lower_bound)
         frac_sum = frac_upper + frac_lower
 
         def schur_lhs(u1: jax.Array) -> jax.Array:
@@ -329,8 +331,8 @@ def sqp_solve_bwd(
         u1, _ = jax.scipy.sparse.linalg.cg(A=schur_lhs, b=v1)
 
         jvp_u1 = h_jvp(u1)
-        u2 = jvp_u1 / (parameters.tau + problem.upper_bound - h)
-        u3 = jvp_u1 / (problem.lower_bound - parameters.tau - h)
+        u2 = jvp_u1 / (parameters.tol_prim + problem.upper_bound - h)
+        u3 = jvp_u1 / (problem.lower_bound - parameters.tol_prim - h)
 
         ## Explicit VJP (step 2)`
         grad_problem = jax.tree.map(jnp.zeros_like, problem)  # empty copy

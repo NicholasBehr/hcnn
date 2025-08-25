@@ -30,9 +30,10 @@ class OSQPParameters(struct.PyTreeNode):
     sigma: float = struct.field(default_factory=lambda: 1e-6)
     rho: float = struct.field(default_factory=lambda: 0.1)
     rho_equality_mult: float = struct.field(default_factory=lambda: 1e3)
-    tol: float = struct.field(default_factory=lambda: 1e-4)
+    tol_prim: float = struct.field(default_factory=lambda: 1e-4)
+    tol_dual: float = struct.field(default_factory=lambda: 1e-4)
     max_iter: int = struct.field(default_factory=lambda: 5_000)
-    inner_iterations: int = struct.field(default_factory=lambda: 50)
+    inner_iterations: int = struct.field(default_factory=lambda: 25)
 
 
 @struct.dataclass
@@ -160,7 +161,11 @@ def osqp_step(
         return osqp_inner_step(carry, problem, parameters, rho_vec), None
 
     variables_after_inner, _ = jax.lax.scan(
-        scan_fn, variables, None, length=parameters.inner_iterations
+        scan_fn,
+        variables,
+        None,
+        length=parameters.inner_iterations,
+        unroll=True,
     )
 
     ## primal_residuals ##
@@ -216,8 +221,8 @@ def osqp_not_converged(
     parameters: OSQPParameters,
 ) -> jax.Array:
     # check if primal or dual residuals are above the tolerance
-    primal = jnp.max(jnp.abs(variables.primal_residuals)) >= parameters.tol
-    dual = jnp.max(jnp.abs(variables.dual_residuals)) >= parameters.tol
+    primal = jnp.max(jnp.abs(variables.primal_residuals)) >= parameters.tol_prim
+    dual = jnp.max(jnp.abs(variables.dual_residuals)) >= parameters.tol_dual
     residual = jnp.logical_or(primal, dual)
 
     # check if maximum number of iterations has not been reached

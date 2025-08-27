@@ -93,6 +93,7 @@ class ProjectionLayer:
                 iterations_nonlin=sqp_info.iterations_nonlin,
                 rho_base_mult=sqp_info.rho_base_mult,
                 converged_flag=sqp_info.converged_flag,
+                avg_step_size=sqp_info.avg_step_size,
                 state_diff=state_diff,
                 action_diff=action_diff,
             )

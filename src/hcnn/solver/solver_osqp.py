@@ -32,8 +32,8 @@ class OSQPParameters(struct.PyTreeNode):
     rho_equality_mult: float = struct.field(default_factory=lambda: 1e3)
     tol_prim: float = struct.field(default_factory=lambda: 1e-4)
     tol_dual: float = struct.field(default_factory=lambda: 1e-4)
-    max_iter: int = struct.field(default_factory=lambda: 5_000)
-    inner_iterations: int = struct.field(default_factory=lambda: 25)
+    max_iter: int = struct.field(default_factory=lambda: 1e3)
+    inner_iterations: int = struct.field(default_factory=lambda: 10)
 
 
 @struct.dataclass
@@ -43,8 +43,8 @@ class OSQPVariables(struct.PyTreeNode):
     x: jax.Array
     z: jax.Array
     y: jax.Array
-    primal_residuals: jax.Array
-    dual_residuals: jax.Array
+    max_primal_residual: jax.Array
+    max_dual_residual: jax.Array
     rho_base_mult: jax.Array
     iteration: jax.Array
 
@@ -61,7 +61,7 @@ class OSQPVariables(struct.PyTreeNode):
         primal_residuals = z_tilde - z
         # Qx + c + A.Ty
         dual_residuals = problem.cost_quad_diag * x + problem.cost_linear
-        rho_residual_mult = jnp.array(1)
+        rho_base_mult = jnp.array(1.0)
         iteration = jnp.array(0)
 
         return OSQPVariables(
@@ -70,9 +70,9 @@ class OSQPVariables(struct.PyTreeNode):
             x=x,
             z=z,
             y=y,
-            primal_residuals=primal_residuals,
-            dual_residuals=dual_residuals,
-            rho_base_mult=rho_residual_mult,
+            max_primal_residual=jnp.max(jnp.abs(primal_residuals)),
+            max_dual_residual=jnp.max(jnp.abs(dual_residuals)),
+            rho_base_mult=rho_base_mult,
             iteration=iteration,
         )
 
@@ -97,9 +97,6 @@ def osqp_inner_step(
         c = problem.vector_matrix_product(c)
         return a + b + c
 
-    def cg_lhs_approx_inv(v: jax.Array) -> jax.Array:
-        return v / (problem.cost_quad_diag + parameters.sigma)
-
     cg_rhs = (
         parameters.sigma * variables.x
         - problem.cost_linear
@@ -107,7 +104,7 @@ def osqp_inner_step(
     )
 
     new_x_tilde, _ = jax.scipy.sparse.linalg.cg(
-        A=cg_lhs, b=cg_rhs, x0=variables.x_tilde, M=cg_lhs_approx_inv
+        A=cg_lhs, b=cg_rhs, x0=variables.x_tilde
     )
 
     ## z_tilde ##
@@ -161,11 +158,7 @@ def osqp_step(
         return osqp_inner_step(carry, problem, parameters, rho_vec), None
 
     variables_after_inner, _ = jax.lax.scan(
-        scan_fn,
-        variables,
-        None,
-        length=parameters.inner_iterations,
-        unroll=True,
+        scan_fn, variables, None, length=parameters.inner_iterations
     )
 
     ## primal_residuals ##
@@ -209,8 +202,8 @@ def osqp_step(
         x=variables_after_inner.x,
         z=variables_after_inner.z,
         y=variables_after_inner.y,
-        primal_residuals=new_primal_residuals,
-        dual_residuals=new_dual_residuals,
+        max_primal_residual=jnp.max(jnp.abs(new_primal_residuals)),
+        max_dual_residual=jnp.max(jnp.abs(new_dual_residuals)),
         rho_base_mult=new_base_mult,
         iteration=new_iteration,
     )
@@ -221,8 +214,8 @@ def osqp_not_converged(
     parameters: OSQPParameters,
 ) -> jax.Array:
     # check if primal or dual residuals are above the tolerance
-    primal = jnp.max(jnp.abs(variables.primal_residuals)) >= parameters.tol_prim
-    dual = jnp.max(jnp.abs(variables.dual_residuals)) >= parameters.tol_dual
+    primal = variables.max_primal_residual >= parameters.tol_prim
+    dual = variables.max_dual_residual >= parameters.tol_dual
     residual = jnp.logical_or(primal, dual)
 
     # check if maximum number of iterations has not been reached

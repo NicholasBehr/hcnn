@@ -19,6 +19,7 @@ class SQPInfo:
     iterations_nonlin: jax.Array
     rho_base_mult: jax.Array
     converged_flag: jax.Array
+    avg_step_size: jax.Array  # Average line search step size
 
 
 @struct.dataclass
@@ -55,14 +56,21 @@ class SQPProblemBase(Generic[PhiType], struct.PyTreeNode, ABC):
 @struct.dataclass
 class SQPParameters:
     alpha: float = struct.field(default_factory=lambda: 1.6)
-    sigma: float = struct.field(default_factory=lambda: 1e-6)
+    sigma: float = struct.field(default_factory=lambda: 0.1)
     rho: float = struct.field(default_factory=lambda: 0.1)
     rho_equality_mult: float = struct.field(default_factory=lambda: 1e3)
     tol_prim: float = struct.field(default_factory=lambda: 1e-4)
     tol_dual: float = struct.field(default_factory=lambda: 1e-4)
     epsilon: float = struct.field(default_factory=lambda: 1e-12)
-    max_iter_lin: int = struct.field(default_factory=lambda: 5_000)
-    max_iter_nonlin: int = struct.field(default_factory=lambda: 500)
+    max_iter_lin: int = struct.field(default_factory=lambda: 2e3)
+    max_iter_nonlin: int = struct.field(default_factory=lambda: 5)
+    # Line search parameters
+    ls_c1: float = struct.field(default_factory=lambda: 1e-4)  # Armijo param
+    ls_rho: float = struct.field(default_factory=lambda: 0.5)  # Step reduction
+    ls_max_iter: int = struct.field(default_factory=lambda: 20)  # Max iter
+    ls_penalty_weight: float = struct.field(
+        default_factory=lambda: 10.0
+    )  # Merit penalty
 
 
 @struct.dataclass
@@ -70,36 +78,39 @@ class SQPVariables(struct.PyTreeNode):
     x: jax.Array
     z: jax.Array
     y: jax.Array
-    r_x: jax.Array
-    r_y: jax.Array
+    max_primal_residual: jax.Array
+    max_dual_residual: jax.Array
     q_plus_s: jax.Array
     nonlin_iter: jax.Array
     sumlin_iter: jax.Array
     sum_rho_base_mult: jax.Array
+    sum_step_size: jax.Array  # Sum of line search step sizes
 
     @staticmethod
-    def factory(problem: SQPProblemBase):
+    def factory(problem: SQPProblemBase, parameters: SQPParameters):
         x = problem.x0
         h = problem.constraint_fn(x)
         z = jnp.clip(h, problem.lower_bound, problem.upper_bound)
         y = jnp.zeros_like(z)
 
-        # Qx + c + A.T y
-        r_x = problem.cost_quad_diag * x + problem.cost_linear
+        q_plus_s = jnp.maximum(problem.cost_quad_diag, parameters.epsilon)
+
         # h(x) - z
-        r_y = h - z
-        q_plus_s = jnp.zeros_like(problem.cost_quad_diag)
+        primal_residuals = h - z
+        # Qx + c + A.T y
+        dual_residuals = q_plus_s * x + problem.cost_linear
 
         return SQPVariables(
             x=x,
             z=z,
             y=y,
-            r_x=r_x,
-            r_y=r_y,
+            max_primal_residual=jnp.max(jnp.abs(primal_residuals)),
+            max_dual_residual=jnp.max(jnp.abs(dual_residuals)),
             q_plus_s=q_plus_s,
             nonlin_iter=jnp.array(0),
             sumlin_iter=jnp.array(0),
             sum_rho_base_mult=jnp.array(0),
+            sum_step_size=jnp.array(0.0),
         )
 
 
@@ -134,6 +145,106 @@ def compute_hessian_diag(
     n = x.shape[0]
     eye = jnp.eye(n, dtype=x.dtype)
     return get_diag_element(eye)
+
+
+def compute_merit_function(
+    x: jax.Array,
+    problem: SQPProblemBase,
+    penalty_weight: float,
+) -> jax.Array:
+    """
+    Computes L1 merit function: f(x) + penalty_weight * ||h(x) - proj(h(x))||_1
+    where proj(h(x)) projects h(x) onto the feasible set [l, u].
+    """
+    # Quadratic cost: 1/2 x.T @ diag(q) @ x + c.T @ x
+    cost = 0.5 * jnp.sum(problem.cost_quad_diag * x * x) + jnp.dot(
+        problem.cost_linear, x
+    )
+
+    # Constraint violations
+    h = problem.constraint_fn(x)
+    projected_h = jnp.clip(h, problem.lower_bound, problem.upper_bound)
+    violation = jnp.sum(jnp.abs(h - projected_h))
+
+    return cost + penalty_weight * violation
+
+
+def compute_merit_gradient_dot_dx(
+    x: jax.Array,
+    dx: jax.Array,
+    problem: SQPProblemBase,
+    penalty_weight: float,
+) -> jax.Array:
+    """
+    Computes the directional derivative of the merit function:
+    grad_merit(x).T @ dx
+    """
+    # Gradient of quadratic cost: q * x + c
+    cost_grad = problem.cost_quad_diag * x + problem.cost_linear
+    cost_grad_dot_dx = jnp.dot(cost_grad, dx)
+
+    # Constraint violations
+    h = problem.constraint_fn(x)
+    projected_h = jnp.clip(h, problem.lower_bound, problem.upper_bound)
+    violation = jnp.sum(jnp.abs(h - projected_h))
+
+    return cost_grad_dot_dx - penalty_weight * violation
+
+
+def line_search_step(
+    x_current: jax.Array,
+    dx: jax.Array,
+    problem: SQPProblemBase,
+    parameters: SQPParameters,
+    merit_current: jax.Array,
+    merit_grad_dot_dx: jax.Array,
+) -> jax.Array:
+    """
+    Performs backtracking line search to find step size alpha.
+    Returns the step size that satisfies Armijo condition.
+    """
+    min_alpha = 1e-12  # Minimum step size to avoid numerical issues
+
+    def line_search_cond(state):
+        alpha, iteration, armijo_satisfied = state
+        # Continue if: not satisfied AND within limits AND alpha not too small
+        return jnp.logical_and(
+            jnp.logical_not(armijo_satisfied),
+            jnp.logical_and(
+                iteration < parameters.ls_max_iter,
+                alpha > min_alpha,
+            ),
+        )
+
+    def line_search_body(state):
+        alpha, iteration, _ = state
+
+        # Trial point
+        x_trial = x_current + alpha * dx
+        merit_trial = compute_merit_function(
+            x_trial, problem, parameters.ls_penalty_weight
+        )
+
+        # Armijo condition
+        armijo_rhs = (
+            merit_current + parameters.ls_c1 * alpha * merit_grad_dot_dx
+        )
+        armijo_satisfied = merit_trial <= armijo_rhs
+
+        # Update step size if Armijo condition not satisfied
+        new_alpha = jnp.where(
+            armijo_satisfied, alpha, alpha * parameters.ls_rho
+        )
+
+        return new_alpha, iteration + 1, armijo_satisfied
+
+    # Initialize with full step
+    init_state = (jnp.array(1.0), jnp.array(0), jnp.array(False))
+    final_alpha, _, _ = jax.lax.while_loop(
+        line_search_cond, line_search_body, init_state
+    )
+
+    return final_alpha
 
 
 def sqp_step(
@@ -180,19 +291,43 @@ def sqp_step(
     )
     osqp_variables = osqp_solve(osqp_problem, osqp_parameters)
 
-    # update variables
-    new_x = variables.x + osqp_variables.x
-    new_z = offset + osqp_variables.z
-    new_y = osqp_variables.y
+    ## Line search for step size ##
+    dx = osqp_variables.x
+    dy = osqp_variables.y - variables.y
+
+    # Current merit function value
+    merit_current = compute_merit_function(
+        variables.x, problem, parameters.ls_penalty_weight
+    )
+
+    # Directional derivative of merit function
+    merit_grad_dot_dx = compute_merit_gradient_dot_dx(
+        variables.x, dx, problem, parameters.ls_penalty_weight
+    )
+
+    # Find optimal step size
+    alpha = line_search_step(
+        variables.x,
+        dx,
+        problem,
+        parameters,
+        merit_current,
+        merit_grad_dot_dx,
+    )
+
+    # Update variables with line search step size
+    new_x = variables.x + alpha * dx
+    new_z = problem.constraint_fn(new_x)
+    new_y = variables.y + alpha * dy
 
     ## residuals ##
     new_h, new_h_vjp = jax.vjp(problem.constraint_fn, new_x)
-    new_r_x = (
+    primal_residuals = new_h - new_z
+    dual_residuals = (
         jnp.maximum(problem.cost_quad_diag, parameters.epsilon) * new_x
         + problem.cost_linear
         + new_h_vjp(new_y)[0]
     )
-    new_r_y = new_h - new_z
 
     ## iteration ##
     new_nonlin_iter = variables.nonlin_iter + 1
@@ -203,16 +338,20 @@ def sqp_step(
         variables.sum_rho_base_mult + osqp_variables.rho_base_mult
     )
 
+    ## log step size ##
+    new_sum_step_size = variables.sum_step_size + alpha
+
     return SQPVariables(
         x=new_x,
         z=new_z,
         y=new_y,
-        r_x=new_r_x,
-        r_y=new_r_y,
+        max_primal_residual=jnp.max(jnp.abs(primal_residuals)),
+        max_dual_residual=jnp.max(jnp.abs(dual_residuals)),
         q_plus_s=new_q_plus_s,
         nonlin_iter=new_nonlin_iter,
         sumlin_iter=new_sumlin_iter,
         sum_rho_base_mult=new_sum_rho_base_mult,
+        sum_step_size=new_sum_step_size,
     )
 
 
@@ -221,9 +360,9 @@ def sqp_not_converged(
     parameters: SQPParameters,
 ) -> jax.Array:
     # check if primal or dual residuals are above the tolerance
-    res_x = jnp.max(jnp.abs(variables.r_x)) >= parameters.tol_dual
-    res_y = jnp.max(jnp.abs(variables.r_y)) >= parameters.tol_prim
-    residual = jnp.logical_or(res_x, res_y)
+    primal = variables.max_primal_residual >= parameters.tol_prim
+    dual = variables.max_dual_residual >= parameters.tol_dual
+    residual = jnp.logical_or(primal, dual)
 
     # check if maximum number of iterations has not been reached
     iteration = variables.nonlin_iter < parameters.max_iter_nonlin
@@ -246,18 +385,25 @@ def sqp_solve_variables(
             problem=problem,
             parameters=parameters,
         ),
-        init_val=SQPVariables.factory(problem=problem),
+        init_val=SQPVariables.factory(
+            problem=problem,
+            parameters=parameters,
+        ),
     )
     sqp_info = SQPInfo(
-        primal_residual=jnp.max(jnp.abs(variables.r_y)),
-        dual_residual=jnp.max(jnp.abs(variables.r_x)),
-        iterations_lin=variables.sumlin_iter / variables.nonlin_iter,
+        primal_residual=variables.max_primal_residual,
+        dual_residual=variables.max_dual_residual,
+        iterations_lin=variables.sumlin_iter
+        / jnp.maximum(variables.nonlin_iter, 1),
         iterations_nonlin=variables.nonlin_iter,
-        rho_base_mult=variables.sum_rho_base_mult / variables.nonlin_iter,
+        rho_base_mult=variables.sum_rho_base_mult
+        / jnp.maximum(variables.nonlin_iter, 1),
         converged_flag=jnp.logical_and(
-            jnp.max(jnp.abs(variables.r_x)) < parameters.tol_dual,
-            jnp.max(jnp.abs(variables.r_y)) < parameters.tol_prim,
+            variables.max_primal_residual < parameters.tol_prim,
+            variables.max_dual_residual < parameters.tol_dual,
         ),
+        avg_step_size=variables.sum_step_size
+        / jnp.maximum(variables.nonlin_iter, 1),
     )
 
     return variables, sqp_info
@@ -328,19 +474,19 @@ def sqp_solve_bwd(
         def schur_lhs(u1: jax.Array) -> jax.Array:
             return q_plus_s * u1 + h_vjp(frac_sum * h_jvp(u1))[0]
 
-        u1, _ = jax.scipy.sparse.linalg.cg(A=schur_lhs, b=v1)
+        u1, _ = jax.scipy.sparse.linalg.cg(A=schur_lhs, b=-v1)
 
         jvp_u1 = h_jvp(u1)
         u2 = jvp_u1 / (parameters.tol_prim + problem.upper_bound - h)
         u3 = jvp_u1 / (problem.lower_bound - parameters.tol_prim - h)
 
-        ## Explicit VJP (step 2)`
+        ## Explicit VJP (step 2)
         grad_problem = jax.tree.map(jnp.zeros_like, problem)  # empty copy
 
-        g_q = -x_star * u1
-        g_c = -u1
-        g_u = y_plus * u2
-        g_l = -y_minus * u3
+        g_q = u1 * x_star
+        g_c = u1
+        g_u = u2 * (-y_plus)
+        g_l = u3 * (+y_minus)
 
         ## phi grad
         g_phi_d_1 = jax.grad(
@@ -348,7 +494,7 @@ def sqp_solve_bwd(
                 jax.jvp(
                     lambda x_inner: problem.constraint_fn_phi(x_inner, phi_arg),
                     (x_star,),
-                    (-u1,),
+                    (u1,),
                 )[1],
                 y_star,
             ),
@@ -357,7 +503,7 @@ def sqp_solve_bwd(
         g_phi_d_2 = jax.vjp(
             lambda phi_arg: problem.constraint_fn_phi(x_star, phi_arg),
             problem.phi,
-        )[1](-(u2 * y_plus - u3 * y_minus))[0]
+        )[1](u2 * y_plus - u3 * y_minus)[0]
         g_phi_d = jax.tree_util.tree_map(jnp.add, g_phi_d_1, g_phi_d_2)
 
         # populate struct

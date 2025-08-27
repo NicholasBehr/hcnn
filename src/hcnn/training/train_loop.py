@@ -30,27 +30,17 @@ def loss_fn(
     """Compute the loss for the training step."""
     rollout = state_to_rollout(initial_states)
     rollout_proj, info = projection_layer(rollout, initial_states)
-    rollout_proj_cost = sys_costs(rollout_proj.states, rollout_proj.actions)
 
     # Compute the cost
-    cost = jnp.mean(rollout_proj_cost)
+    cost = jnp.mean(sys_costs(rollout_proj.states, rollout_proj.actions))
 
-    # Compute squared distances per sample, conditioned on convergence
-    # Expand converged_flag to match rollout tensor dimensions
-    converged_flag_expanded = jnp.ones_like(
-        info.converged_flag[..., None, None]
-    )
-
-    state_sqr_dst = jnp.where(
-        converged_flag_expanded,
-        (rollout.states - jax.lax.stop_gradient(rollout_proj.states)) ** 2,
-        jax.lax.stop_gradient(rollout.states - rollout_proj.states) ** 2,
-    )
-    action_sqr_dst = jnp.where(
-        converged_flag_expanded,
-        (rollout.actions - jax.lax.stop_gradient(rollout_proj.actions)) ** 2,
-        jax.lax.stop_gradient(rollout.actions - rollout_proj.actions) ** 2,
-    )
+    # Compute squared distances per sample
+    state_sqr_dst = (
+        rollout.states - jax.lax.stop_gradient(rollout_proj.states)
+    ) ** 2
+    action_sqr_dst = (
+        rollout.actions - jax.lax.stop_gradient(rollout_proj.actions)
+    ) ** 2
 
     # Take mean of the conditionally-selected squared distances
     sqr_dst = jnp.mean(state_sqr_dst) + jnp.mean(action_sqr_dst)
@@ -214,33 +204,6 @@ def train(project=None, config=None):
         train = TrainBundle.factory_from_config(config)
         train_graphdef, train_state = nnx.split(train)
 
-        # Add MPC visualization if system dynamics are linear
-        if (
-            isinstance(train.system.sys_dynamics, SystemDynamicsLinear)
-            and isinstance(train.system.sys_costs, SystemCostsQuadratic)
-            and isinstance(
-                train.system.sys_constraints,
-                SystemConstraintsBox,
-            )
-        ):
-            # Create MPC layer for comparison
-            mpc_layer = MPCLayer.factory(
-                sys_dynamics=train.system.sys_dynamics,
-                sys_constraints=train.system.sys_constraints,
-                sys_costs=train.system.sys_costs,
-                horizon=train.projection_layer.projection_problem.horizon,
-                sqp_parameters=train.projection_layer.sqp_parameters,
-            )
-
-            # Visualize MPC for comparison
-            visualize_receding_horizon_mpc(
-                mpc_layer=mpc_layer,
-                sys_dynamics=train.system.sys_dynamics,
-                steps=50,
-                initial_state=3 * jnp.ones(train.system.sys_dynamics.state_dim),
-                wandb_step=0,
-            )
-
         for epoch in range(config.epochs):
             # Advance the training by one epoch
             train_state, metrics = train_epoch(
@@ -278,6 +241,33 @@ def train(project=None, config=None):
             if epoch == config.epochs - 1:
                 save_train_state(train_state)
 
+        # Add MPC visualization if system dynamics are linear
+        if (
+            isinstance(train.system.sys_dynamics, SystemDynamicsLinear)
+            and isinstance(train.system.sys_costs, SystemCostsQuadratic)
+            and isinstance(
+                train.system.sys_constraints,
+                SystemConstraintsBox,
+            )
+        ):
+            # Create MPC layer for comparison
+            mpc_layer = MPCLayer.factory(
+                sys_dynamics=train.system.sys_dynamics,
+                sys_constraints=train.system.sys_constraints,
+                sys_costs=train.system.sys_costs,
+                horizon=train.projection_layer.projection_problem.horizon,
+                sqp_parameters=train.projection_layer.sqp_parameters,
+            )
+
+            # Visualize MPC for comparison
+            visualize_receding_horizon_mpc(
+                mpc_layer=mpc_layer,
+                sys_dynamics=train.system.sys_dynamics,
+                steps=50,
+                initial_state=3 * jnp.ones(train.system.sys_dynamics.state_dim),
+                wandb_step=config.epochs - 1,
+            )
+
 
 if __name__ == "__main__":
     print("This is a training loop with Weights & Biases integration.")
@@ -295,8 +285,8 @@ if __name__ == "__main__":
         "system_name": project,
         "seed": 0,
         # Neural Network
-        "nn_name": "actions",
-        "nn_hidden_dim": 128,
+        "nn_name": "scan",
+        "nn_hidden_dim": 256,
         "nn_hidden_depth": 2,
         "nn_dropout_rate": 0,
         "nn_activation": "relu",
@@ -305,20 +295,20 @@ if __name__ == "__main__":
         # Solver
         "solver_alpha": 1.6,
         "solver_sigma": 1e-6,
-        "solver_rho_base": 1,
+        "solver_rho_base": 10,
         "rho_equality_mult": 1e3,
         "solver_tol_prim": 1e-2,
         "solver_tol_dual": 1e-2,
-        "solver_epsilon": 0.1,
-        "solver_max_iter_lin": 300,
-        "solver_max_iter_nonlin": 20,
+        "solver_epsilon": 1e-4,
+        "solver_max_iter_lin": 1e3,
+        "solver_max_iter_nonlin": 10,
         # Projection
         "projection_horizon": 20,
         # Training parameters
-        "batch_size": 8,
+        "batch_size": 128,
         "batches_per_epoch": 1,
-        "epochs": 200,
-        "alignment_weight": 1e-3,
+        "epochs": 300,
+        "alignment_weight": 0.1,
     }
     sweep_configuration = {
         "method": "bayes",

@@ -338,6 +338,7 @@ class TrainBundle(nnx.Module):
             iterations_nonlin=nnx.metrics.Average("iterations_nonlin"),
             rho_base_mult=nnx.metrics.Average("rho_base_mult"),
             converged_flag=nnx.metrics.Average("converged_flag"),
+            avg_step_size=nnx.metrics.Average("avg_step_size"),
             state_diff=nnx.metrics.Average("state_diff"),
             action_diff=nnx.metrics.Average("action_diff"),
         )

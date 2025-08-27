@@ -13,7 +13,6 @@ from hcnn.training import DropoutMLP
 @dataclass(frozen=True)
 class StateToRolloutScan(StateToRolloutBase):
     action_estimator: DropoutMLP
-    relax_estimator: DropoutMLP
     sys_dynamics: SystemDynamicsBase
 
     @classmethod
@@ -46,24 +45,12 @@ class StateToRolloutScan(StateToRolloutBase):
             out_feature_max=action_max,
         )
 
-        ## RELAXATION ESTIMATOR ##
-        relax_mlp = DropoutMLP(
-            in_features=state_dim,
-            out_features=constr_dim,
-            hidden_features=hidden_features,
-            rngs=rngs,
-            activation=activation,
-            dropout_rate=dropout_rate,
-            periodic_in_features=periodic_states,
-        )
-
         return StateToRolloutScan(
             state_dim=state_dim,
             action_dim=action_dim,
             constr_dim=constr_dim,
             horizon=horizon,
             action_estimator=action_mlp,
-            relax_estimator=relax_mlp,
             sys_dynamics=sys_dynamics,
         )
 
@@ -77,7 +64,6 @@ class StateToRolloutScan(StateToRolloutBase):
             Estimated rollout with states and actions
                 states, shape (..., horizon, state_dim)
                 actions, shape (..., horizon, action_dim)
-                states_relax, shape (..., horizon, state_dim)
         """
         # Current states shape is (..., state_dim)
         original_shape = state.shape
@@ -87,31 +73,27 @@ class StateToRolloutScan(StateToRolloutBase):
         flat_states = state.reshape(-1, self.state_dim)
 
         def scan_fn(carry, _):
-            action_est_split, relax_est_split, system_state = carry
+            action_est_split, system_state = carry
             action, action_est_split = nnx.call(action_est_split)(system_state)
-            relax, relax_est_split = nnx.call(relax_est_split)(system_state)
             next_state = self.sys_dynamics(system_state, action)
 
-            carry = (action_est_split, relax_est_split, next_state)
-            out = (system_state, action, relax)
+            carry = (action_est_split, next_state)
+            out = (system_state, action)
             return carry, out
 
-        (action_est_split, relax_est_split, _), out = jax.lax.scan(
+        (action_est_split, _), out = jax.lax.scan(
             scan_fn,
             init=(
                 nnx.split(self.action_estimator),
-                nnx.split(self.relax_estimator),
                 flat_states,
             ),
             length=self.horizon,
         )
 
         nnx.update(self.action_estimator, action_est_split[1])
-        nnx.update(self.relax_estimator, relax_est_split[1])
 
         # Reshape back
         states = out[0].reshape(*batch_dims, self.horizon, self.state_dim)
         actions = out[1].reshape(*batch_dims, self.horizon, self.action_dim)
-        relax = out[2].reshape(*batch_dims, self.horizon, self.constr_dim)
 
         return Rollout(states=states, actions=actions)

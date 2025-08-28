@@ -38,8 +38,6 @@ class System:
     sys_dynamics: SystemDynamicsBase
     sys_costs: SystemCostsBase
     sys_constraints: SystemConstraintsBase
-    # Arrays must be pytree nodes (not metadata) to avoid JAX metadata
-    # equality issues
     state_min: jnp.ndarray
     state_max: jnp.ndarray
     periodic_states: frozenset[int] | None = None
@@ -57,9 +55,7 @@ class TrainBundle(nnx.Module):
     metrics: nnx.MultiMetric
 
     @staticmethod
-    def build_double_integrator(
-        config: WandbConfig,
-    ) -> System:
+    def build_double_integrator() -> System:
         sys_dynamics = SystemDynamicsLinear.factory(
             state_matrix=jnp.array([[1.0, 1.0], [0.0, 1.0]]),
             action_matrix=jnp.array([[0.5], [1.0]]),
@@ -90,9 +86,7 @@ class TrainBundle(nnx.Module):
         )
 
     @staticmethod
-    def build_double_integrator_ncvx(
-        config: WandbConfig,
-    ) -> System:
+    def build_double_integrator_ncvx() -> System:
         sys_dynamics = SystemDynamicsLinear.factory(
             state_matrix=jnp.array([[1.0, 1.0], [0.0, 1.0]]),
             action_matrix=jnp.array([[0.5], [1.0]]),
@@ -134,7 +128,7 @@ class TrainBundle(nnx.Module):
         )
 
     @staticmethod
-    def build_double_pendulum(config: WandbConfig) -> System:
+    def build_double_pendulum() -> System:
         # State: [theta1, theta2, dtheta1, dtheta2]
         # Action: [torque1]
         sys_dynamics = SystemDynamicsDoublePendulum.factory(dt=0.05)  # 50 ms
@@ -168,7 +162,7 @@ class TrainBundle(nnx.Module):
         )
 
     @staticmethod
-    def build_bike(config: WandbConfig) -> System:
+    def build_bike() -> System:
         # State: [x, y, heading, velocity]
         # Action: [acceleration, steering]
         sys_dynamics = SystemDynamicsBike.factory(
@@ -291,13 +285,13 @@ class TrainBundle(nnx.Module):
     ) -> "TrainBundle":
         # Build the system components
         if config.system_name == "double_integrator":
-            system = TrainBundle.build_double_integrator(config)
+            system = TrainBundle.build_double_integrator()
         elif config.system_name == "double_integrator_ncvx":
-            system = TrainBundle.build_double_integrator_ncvx(config)
+            system = TrainBundle.build_double_integrator_ncvx()
         elif config.system_name == "double_pendulum":
-            system = TrainBundle.build_double_pendulum(config)
+            system = TrainBundle.build_double_pendulum()
         elif config.system_name == "bike":
-            system = TrainBundle.build_bike(config)
+            system = TrainBundle.build_bike()
         else:
             raise ValueError(f"Unknown system: {config.system_name}")
 

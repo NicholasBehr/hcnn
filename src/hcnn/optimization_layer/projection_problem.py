@@ -40,7 +40,6 @@ class ProjectionProblem(SQPProblemBase[ProjectionPhi]):
     ):
         state_dim = sys_constraints.state_dim
         action_dim = sys_constraints.action_dim
-
         states_one = jnp.ones((horizon, state_dim))
         actions_one = jnp.ones((horizon, action_dim))
 
@@ -151,8 +150,8 @@ class ProjectionProblem(SQPProblemBase[ProjectionPhi]):
         horizon: int, sys_constraints: SystemConstraintsBase
     ) -> tuple[jax.Array, jax.Array]:
         return (
-            jnp.repeat(sys_constraints.lower_bound, horizon),
-            jnp.repeat(sys_constraints.upper_bound, horizon),
+            jnp.tile(sys_constraints.lower_bound, horizon),
+            jnp.tile(sys_constraints.upper_bound, horizon),
         )
 
     ## INITIAL STATE CONSTRAINTS ###
@@ -170,11 +169,15 @@ class ProjectionProblem(SQPProblemBase[ProjectionPhi]):
         )
 
     def get_x0(self, phi: ProjectionPhi) -> jax.Array:
+        state_dim = self.sys_constraints.state_dim
+        action_dim = self.sys_constraints.action_dim
+        states = jnp.empty((self.horizon, state_dim))
+        actions = jnp.empty((self.horizon, action_dim))
         optvar = OptimizationVariable(
             states=phi.states_ref,
             actions=phi.actions_ref,
-            states_diff=jnp.zeros_like(phi.states_ref),
-            actions_diff=jnp.zeros_like(phi.actions_ref),
+            states_diff=jnp.zeros_like(states),
+            actions_diff=jnp.zeros_like(actions),
         )
         return flatten_util.ravel_pytree(optvar)[0]
 
@@ -185,10 +188,10 @@ class ProjectionProblem(SQPProblemBase[ProjectionPhi]):
         action_template = jnp.empty((self.horizon, action_dim))
 
         optvar_template = OptimizationVariable(
-            states=state_template,
-            actions=action_template,
-            states_diff=state_template,
-            actions_diff=action_template,
+            states=jnp.empty_like(state_template),
+            actions=jnp.empty_like(action_template),
+            states_diff=jnp.empty_like(state_template),
+            actions_diff=jnp.empty_like(action_template),
         )
         _, unravel_pytree = flatten_util.ravel_pytree(optvar_template)
         return unravel_pytree(x)

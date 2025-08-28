@@ -285,30 +285,30 @@ if __name__ == "__main__":
         "system_name": project,
         "seed": 0,
         # Neural Network
-        "nn_name": "scan",
-        "nn_hidden_dim": 256,
-        "nn_hidden_depth": 2,
-        "nn_dropout_rate": 0,
-        "nn_activation": "relu",
+        "nn_name": "actions",
+        "nn_hidden_dim": 64,
+        "nn_hidden_depth": 3,
+        "nn_dropout_rate": 0.2,
+        "nn_activation": "leaky_relu",
         # Optimizer
-        "optimizer_learning_rate": 1e-3,
+        "optimizer_learning_rate": 1e-2,
         # Solver
         "solver_alpha": 1.6,
         "solver_sigma": 1e-6,
         "solver_rho_base": 10,
         "rho_equality_mult": 1e3,
-        "solver_tol_prim": 1e-2,
+        "solver_tol_prim": 1e-4,
         "solver_tol_dual": 1e-2,
         "solver_epsilon": 1e-4,
         "solver_max_iter_lin": 1e3,
-        "solver_max_iter_nonlin": 10,
+        "solver_max_iter_nonlin": 5,
         # Projection
-        "projection_horizon": 20,
+        "projection_horizon": 10,
         # Training parameters
-        "batch_size": 128,
+        "batch_size": 64,
         "batches_per_epoch": 1,
         "epochs": 300,
-        "alignment_weight": 0.1,
+        "alignment_weight": 1e-3,
     }
     sweep_configuration = {
         "method": "bayes",

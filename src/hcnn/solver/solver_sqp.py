@@ -65,12 +65,10 @@ class SQPParameters:
     max_iter_lin: int = struct.field(default_factory=lambda: 2e3)
     max_iter_nonlin: int = struct.field(default_factory=lambda: 5)
     # Line search parameters
-    ls_c1: float = struct.field(default_factory=lambda: 1e-4)  # Armijo param
-    ls_rho: float = struct.field(default_factory=lambda: 0.5)  # Step reduction
-    ls_max_iter: int = struct.field(default_factory=lambda: 20)  # Max iter
-    ls_penalty_weight: float = struct.field(
-        default_factory=lambda: 10.0
-    )  # Merit penalty
+    ls_c1: float = struct.field(default_factory=lambda: 1e-4)
+    ls_rho: float = struct.field(default_factory=lambda: 0.5)
+    ls_max_iter: int = struct.field(default_factory=lambda: 20)
+    ls_penalty_weight: float = struct.field(default_factory=lambda: 10.0)
 
 
 @struct.dataclass
@@ -317,7 +315,9 @@ def sqp_step(
 
     # Update variables with line search step size
     new_x = variables.x + alpha * dx
-    new_z = problem.constraint_fn(new_x)
+    new_z = jnp.clip(
+        problem.constraint_fn(new_x), problem.lower_bound, problem.upper_bound
+    )
     new_y = variables.y + alpha * dy
 
     ## residuals ##

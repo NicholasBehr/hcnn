@@ -279,7 +279,7 @@ if __name__ == "__main__":
 
     # Specify the project name and configuration
     # This can be overridden by wandb.agent when running a sweep
-    project = "bike"
+    project = "double_integrator_ncvx"
 
     config = {
         "system_name": project,
@@ -291,24 +291,24 @@ if __name__ == "__main__":
         "nn_dropout_rate": 0.2,
         "nn_activation": "leaky_relu",
         # Optimizer
-        "optimizer_learning_rate": 1e-2,
+        "optimizer_learning_rate": 1e-3,
         # Solver
         "solver_alpha": 1.6,
         "solver_sigma": 1e-6,
-        "solver_rho_base": 10,
+        "solver_rho_base": 0.1,
         "rho_equality_mult": 1e3,
-        "solver_tol_prim": 1e-4,
+        "solver_tol_prim": 1e-2,
         "solver_tol_dual": 1e-2,
         "solver_epsilon": 1e-4,
-        "solver_max_iter_lin": 1e3,
-        "solver_max_iter_nonlin": 5,
+        "solver_max_iter_lin": 200,
+        "solver_max_iter_nonlin": 20,
         # Projection
-        "projection_horizon": 10,
+        "projection_horizon": 20,
         # Training parameters
         "batch_size": 64,
         "batches_per_epoch": 1,
         "epochs": 300,
-        "alignment_weight": 1e-3,
+        "alignment_weight": 0.1,
     }
     sweep_configuration = {
         "method": "bayes",

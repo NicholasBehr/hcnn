@@ -66,8 +66,8 @@ class TrainBundle(nnx.Module):
         )
         state_min = jnp.array([-10.0, -10.0])
         state_max = jnp.array([+10.0, +10.0])
-        action_min = jnp.array([-1.0])
-        action_max = jnp.array([+1.0])
+        action_min = jnp.array([-2.0])
+        action_max = jnp.array([+2.0])
         sys_constraints = SystemConstraintsBox.factory(
             state_l=state_min,
             state_u=state_max,
@@ -97,8 +97,8 @@ class TrainBundle(nnx.Module):
         )
         state_min = jnp.array([-10.0, -10.0])
         state_max = jnp.array([+10.0, +10.0])
-        action_min = jnp.array([-1.0])
-        action_max = jnp.array([+1.0])
+        action_min = jnp.array([-2.0])
+        action_max = jnp.array([+2.0])
         box_constraint = SystemConstraintsBox.factory(
             state_l=state_min,
             state_u=state_max,

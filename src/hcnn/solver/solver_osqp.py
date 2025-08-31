@@ -30,10 +30,12 @@ class OSQPParameters(struct.PyTreeNode):
     sigma: float = struct.field(default_factory=lambda: 1e-6)
     rho: float = struct.field(default_factory=lambda: 0.1)
     rho_equality_mult: float = struct.field(default_factory=lambda: 1e3)
-    tol_prim: float = struct.field(default_factory=lambda: 1e-4)
-    tol_dual: float = struct.field(default_factory=lambda: 1e-4)
+    tol_prim: float = struct.field(default_factory=lambda: 1e-2)
+    tol_dual: float = struct.field(default_factory=lambda: 1e-2)
     max_iter: int = struct.field(default_factory=lambda: 1e3)
-    inner_iterations: int = struct.field(default_factory=lambda: 10)
+    inner_iterations: int = struct.field(default_factory=lambda: 20)
+    tol_infeas_dual: float = struct.field(default_factory=lambda: 1e-6)
+    tol_infeas_prim: float = struct.field(default_factory=lambda: 1e-4)
 
 
 @struct.dataclass
@@ -47,6 +49,7 @@ class OSQPVariables(struct.PyTreeNode):
     max_dual_residual: jax.Array
     rho_base_mult: jax.Array
     iteration: jax.Array
+    is_infeasible: jax.Array
 
     @staticmethod
     def factory(
@@ -74,6 +77,7 @@ class OSQPVariables(struct.PyTreeNode):
             max_dual_residual=jnp.max(jnp.abs(dual_residuals)),
             rho_base_mult=rho_base_mult,
             iteration=iteration,
+            is_infeasible=jnp.array(False),
         )
 
 
@@ -97,6 +101,11 @@ def osqp_inner_step(
         c = problem.vector_matrix_product(c)
         return a + b + c
 
+    def approx_inv(v: jax.Array) -> jax.Array:
+        return v / (
+            problem.cost_quad_diag + parameters.sigma + jnp.mean(rho_vec)
+        )
+
     cg_rhs = (
         parameters.sigma * variables.x
         - problem.cost_linear
@@ -104,7 +113,7 @@ def osqp_inner_step(
     )
 
     new_x_tilde, _ = jax.scipy.sparse.linalg.cg(
-        A=cg_lhs, b=cg_rhs, x0=variables.x_tilde
+        A=cg_lhs, b=cg_rhs, x0=variables.x_tilde, M=approx_inv
     )
 
     ## z_tilde ##
@@ -179,8 +188,16 @@ def osqp_step(
     tau_incr = 2
     tau_decr = 2
 
-    prim_norm_sqr = jnp.dot(new_primal_residuals, new_primal_residuals)
-    dual_norm_sqr = jnp.dot(new_dual_residuals, new_dual_residuals)
+    # Normalize residuals by convergence tolerances
+    normalized_primal_residuals = new_primal_residuals / parameters.tol_prim
+    normalized_dual_residuals = new_dual_residuals / parameters.tol_dual
+
+    prim_norm_sqr = jnp.dot(
+        normalized_primal_residuals, normalized_primal_residuals
+    )
+    dual_norm_sqr = jnp.dot(
+        normalized_dual_residuals, normalized_dual_residuals
+    )
 
     cond_increase = prim_norm_sqr > mu_sqr * dual_norm_sqr
     cond_decrease = dual_norm_sqr > mu_sqr * prim_norm_sqr
@@ -196,6 +213,89 @@ def osqp_step(
     ## iteration ##
     new_iteration = variables.iteration + parameters.inner_iterations
 
+    ## Infeasibility detection (following OSQP spec) ##
+    # For primal infeasibility detection:
+    # Check if ||A^T δy||_∞ <= ε_pinf ||δy||_∞ and u^T (δy)+ + l^T (δy)- <= ε_pinf ||δy||_∞
+    # where δy = y / ||y||_∞ (normalized y)
+
+    y_norm_inf = jnp.max(jnp.abs(variables_after_inner.y))
+
+    # Avoid division by zero
+    y_normalized = jnp.where(
+        y_norm_inf > 1e-12,
+        variables_after_inner.y / y_norm_inf,
+        variables_after_inner.y,
+    )
+
+    # ||A^T δy||_∞
+    aty_norm_inf = jnp.max(jnp.abs(problem.vector_matrix_product(y_normalized)))
+
+    # u^T (δy)+ + l^T (δy)-
+    y_pos = jnp.maximum(y_normalized, 0)
+    y_neg = jnp.minimum(y_normalized, 0)
+    primal_infeas_obj = jnp.dot(problem.upper_bound, y_pos) + jnp.dot(
+        problem.lower_bound, y_neg
+    )
+
+    primal_infeasible = jnp.logical_and(
+        aty_norm_inf <= parameters.tol_infeas_dual,
+        primal_infeas_obj <= -parameters.tol_infeas_prim,
+    )
+
+    # For dual infeasibility detection:
+    # Check if ||P δx||_∞ <= ε_dinf ||δx||_∞ and q^T δx <= -ε_dinf ||δx||_∞
+    # where δx = x / ||x||_∞ (normalized x) and constraints are satisfied appropriately
+    x_norm_inf = jnp.max(jnp.abs(variables_after_inner.x))
+
+    # Avoid division by zero
+    x_normalized = jnp.where(
+        x_norm_inf > 1e-12,
+        variables_after_inner.x / x_norm_inf,
+        variables_after_inner.x,
+    )
+
+    # ||P δx||_∞ where P = diag(cost_quad_diag)
+    px_norm_inf = jnp.max(jnp.abs(problem.cost_quad_diag * x_normalized))
+
+    # q^T δx
+    qtx = jnp.dot(problem.cost_linear, x_normalized)
+
+    # Check constraint satisfaction for dual infeasibility
+    # For each constraint i: if l_i = -∞, then (Aδx)_i >= 0
+    #                       if u_i = +∞, then (Aδx)_i <= 0
+    #                       if l_i = u_i, then (Aδx)_i = 0
+    ax_normalized = problem.matrix_vector_product(x_normalized)
+
+    # Create masks for different constraint types
+    lower_inf = jnp.isinf(problem.lower_bound) & (problem.lower_bound < 0)
+    upper_inf = jnp.isinf(problem.upper_bound) & (problem.upper_bound > 0)
+    equality = jnp.abs(problem.upper_bound - problem.lower_bound) < 1e-12
+
+    # Check constraint satisfaction
+    lower_satisfied = jnp.logical_or(
+        ~lower_inf, ax_normalized >= -parameters.tol_infeas_prim
+    )
+    upper_satisfied = jnp.logical_or(
+        ~upper_inf, ax_normalized <= parameters.tol_infeas_prim
+    )
+    equality_satisfied = jnp.logical_or(
+        ~equality, jnp.abs(ax_normalized) <= parameters.tol_infeas_prim
+    )
+
+    constraints_satisfied = jnp.all(
+        lower_satisfied & upper_satisfied & equality_satisfied
+    )
+
+    dual_infeasible = jnp.logical_and(
+        jnp.logical_and(
+            px_norm_inf <= parameters.tol_infeas_dual,
+            qtx <= -parameters.tol_infeas_prim,
+        ),
+        constraints_satisfied,
+    )
+
+    is_infeasible = jnp.logical_or(primal_infeasible, dual_infeasible)
+
     return OSQPVariables(
         x_tilde=variables_after_inner.x_tilde,
         z_tilde=variables_after_inner.z_tilde,
@@ -206,6 +306,7 @@ def osqp_step(
         max_dual_residual=jnp.max(jnp.abs(new_dual_residuals)),
         rho_base_mult=new_base_mult,
         iteration=new_iteration,
+        is_infeasible=is_infeasible,
     )
 
 
@@ -213,6 +314,9 @@ def osqp_not_converged(
     variables: OSQPVariables,
     parameters: OSQPParameters,
 ) -> jax.Array:
+    # Return early if problem is detected as infeasible
+    infeasible = variables.is_infeasible
+
     # check if primal or dual residuals are above the tolerance
     primal = variables.max_primal_residual >= parameters.tol_prim
     dual = variables.max_dual_residual >= parameters.tol_dual
@@ -221,15 +325,21 @@ def osqp_not_converged(
     # check if maximum number of iterations has not been reached
     iteration = variables.iteration < parameters.max_iter
 
-    # declare not converged if both conditions are true
-    return jnp.logical_and(residual, iteration)
+    # declare not converged if residuals are high AND iterations remain
+    # BUT return converged (False) if infeasible is detected
+    not_converged_by_residual = jnp.logical_and(residual, iteration)
+
+    # Return True (not converged) only if not infeasible and residuals/iter
+    return jnp.logical_and(
+        jnp.logical_not(infeasible), not_converged_by_residual
+    )
 
 
 def osqp_solve(
     problem: OSQPProblem,
     parameters: OSQPParameters,
 ) -> OSQPVariables:
-    return jax.lax.while_loop(
+    osqp_variables = jax.lax.while_loop(
         cond_fun=partial(
             osqp_not_converged,
             parameters=parameters,
@@ -243,3 +353,14 @@ def osqp_solve(
             problem=problem,
         ),
     )
+
+    jax.debug.print(
+        "osqp prim {}, dual {}, iter {}, mult {}, infeas {}",
+        osqp_variables.max_primal_residual,
+        osqp_variables.max_dual_residual,
+        osqp_variables.iteration,
+        osqp_variables.rho_base_mult,
+        osqp_variables.is_infeasible,
+    )
+
+    return osqp_variables

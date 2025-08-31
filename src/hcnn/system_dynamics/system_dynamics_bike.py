@@ -122,11 +122,9 @@ class SystemDynamicsBike(SystemDynamicsContinuous):
         theta = state[..., 2]  # Heading angle
         v = state[..., 3]  # Velocity
 
-        # Extract control inputs with saturation
+        # Extract control inputs
         a = action[..., 0]  # Acceleration
-        delta = jnp.clip(
-            action[..., 1], -self.max_steering, self.max_steering
-        )  # Steering angle
+        delta = action[..., 1]  # Steering angle
 
         # Kinematic bike model equations
         x_dot = v * jnp.cos(theta)

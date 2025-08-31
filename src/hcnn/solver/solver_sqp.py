@@ -56,19 +56,19 @@ class SQPProblemBase(Generic[PhiType], struct.PyTreeNode, ABC):
 @struct.dataclass
 class SQPParameters:
     alpha: float = struct.field(default_factory=lambda: 1.6)
-    sigma: float = struct.field(default_factory=lambda: 0.1)
+    sigma: float = struct.field(default_factory=lambda: 1e-6)
     rho: float = struct.field(default_factory=lambda: 0.1)
     rho_equality_mult: float = struct.field(default_factory=lambda: 1e3)
     tol_prim: float = struct.field(default_factory=lambda: 1e-4)
     tol_dual: float = struct.field(default_factory=lambda: 1e-4)
     epsilon: float = struct.field(default_factory=lambda: 1e-12)
     max_iter_lin: int = struct.field(default_factory=lambda: 2e3)
-    max_iter_nonlin: int = struct.field(default_factory=lambda: 5)
+    max_iter_nonlin: int = struct.field(default_factory=lambda: 10)
     # Line search parameters
     ls_c1: float = struct.field(default_factory=lambda: 1e-4)
     ls_rho: float = struct.field(default_factory=lambda: 0.5)
     ls_max_iter: int = struct.field(default_factory=lambda: 20)
-    ls_penalty_weight: float = struct.field(default_factory=lambda: 10.0)
+    ls_penalty_weight: float = struct.field(default_factory=lambda: 100.0)
 
 
 @struct.dataclass
@@ -83,6 +83,7 @@ class SQPVariables(struct.PyTreeNode):
     sumlin_iter: jax.Array
     sum_rho_base_mult: jax.Array
     sum_step_size: jax.Array  # Sum of line search step sizes
+    is_infeasible: jax.Array
 
     @staticmethod
     def factory(problem: SQPProblemBase, parameters: SQPParameters):
@@ -109,6 +110,7 @@ class SQPVariables(struct.PyTreeNode):
             sumlin_iter=jnp.array(0),
             sum_rho_base_mult=jnp.array(0),
             sum_step_size=jnp.array(0.0),
+            is_infeasible=jnp.array(False),
         )
 
 
@@ -198,51 +200,47 @@ def line_search_step(
     merit_grad_dot_dx: jax.Array,
 ) -> jax.Array:
     """
-    Performs backtracking line search to find step size alpha.
+    Performs backtracking line search to find step size beta.
     Returns the step size that satisfies Armijo condition.
     """
-    min_alpha = 1e-12  # Minimum step size to avoid numerical issues
+    min_beta = 1e-12  # Minimum step size to avoid numerical issues
 
     def line_search_cond(state):
-        alpha, iteration, armijo_satisfied = state
-        # Continue if: not satisfied AND within limits AND alpha not too small
+        beta, iteration, armijo_satisfied = state
+        # Continue if: not satisfied AND within limits AND beta not too small
         return jnp.logical_and(
             jnp.logical_not(armijo_satisfied),
             jnp.logical_and(
                 iteration < parameters.ls_max_iter,
-                alpha > min_alpha,
+                beta > min_beta,
             ),
         )
 
     def line_search_body(state):
-        alpha, iteration, _ = state
+        beta, iteration, _ = state
 
         # Trial point
-        x_trial = x_current + alpha * dx
+        x_trial = x_current + beta * dx
         merit_trial = compute_merit_function(
             x_trial, problem, parameters.ls_penalty_weight
         )
 
         # Armijo condition
-        armijo_rhs = (
-            merit_current + parameters.ls_c1 * alpha * merit_grad_dot_dx
-        )
+        armijo_rhs = merit_current + parameters.ls_c1 * beta * merit_grad_dot_dx
         armijo_satisfied = merit_trial <= armijo_rhs
 
         # Update step size if Armijo condition not satisfied
-        new_alpha = jnp.where(
-            armijo_satisfied, alpha, alpha * parameters.ls_rho
-        )
+        new_beta = jnp.where(armijo_satisfied, beta, beta * parameters.ls_rho)
 
-        return new_alpha, iteration + 1, armijo_satisfied
+        return new_beta, iteration + 1, armijo_satisfied
 
     # Initialize with full step
     init_state = (jnp.array(1.0), jnp.array(0), jnp.array(False))
-    final_alpha, _, _ = jax.lax.while_loop(
+    final_beta, _, _ = jax.lax.while_loop(
         line_search_cond, line_search_body, init_state
     )
 
-    return final_alpha
+    return final_beta
 
 
 def sqp_step(
@@ -304,7 +302,7 @@ def sqp_step(
     )
 
     # Find optimal step size
-    alpha = line_search_step(
+    beta = line_search_step(
         variables.x,
         dx,
         problem,
@@ -313,18 +311,26 @@ def sqp_step(
         merit_grad_dot_dx,
     )
 
+    jax.debug.print(
+        "SQP iter {}/{} | beta: {:.3e} | lin iters: {}",
+        variables.nonlin_iter + 1,
+        parameters.max_iter_nonlin,
+        beta,
+        osqp_variables.iteration,
+    )
+
     # Update variables with line search step size
-    new_x = variables.x + alpha * dx
+    new_x = variables.x + beta * dx
     new_z = jnp.clip(
         problem.constraint_fn(new_x), problem.lower_bound, problem.upper_bound
     )
-    new_y = variables.y + alpha * dy
+    new_y = variables.y + beta * dy
 
     ## residuals ##
     new_h, new_h_vjp = jax.vjp(problem.constraint_fn, new_x)
     primal_residuals = new_h - new_z
     dual_residuals = (
-        jnp.maximum(problem.cost_quad_diag, parameters.epsilon) * new_x
+        problem.cost_quad_diag * new_x
         + problem.cost_linear
         + new_h_vjp(new_y)[0]
     )
@@ -339,7 +345,7 @@ def sqp_step(
     )
 
     ## log step size ##
-    new_sum_step_size = variables.sum_step_size + alpha
+    new_sum_step_size = variables.sum_step_size + beta
 
     return SQPVariables(
         x=new_x,
@@ -352,6 +358,7 @@ def sqp_step(
         sumlin_iter=new_sumlin_iter,
         sum_rho_base_mult=new_sum_rho_base_mult,
         sum_step_size=new_sum_step_size,
+        is_infeasible=variables.is_infeasible,
     )
 
 
@@ -359,6 +366,9 @@ def sqp_not_converged(
     variables: SQPVariables,
     parameters: SQPParameters,
 ) -> jax.Array:
+    # Return early if problem is detected as infeasible
+    infeasible = variables.is_infeasible
+
     # check if primal or dual residuals are above the tolerance
     primal = variables.max_primal_residual >= parameters.tol_prim
     dual = variables.max_dual_residual >= parameters.tol_dual
@@ -367,8 +377,14 @@ def sqp_not_converged(
     # check if maximum number of iterations has not been reached
     iteration = variables.nonlin_iter < parameters.max_iter_nonlin
 
-    # declare not converged if residuals high AND iterations not exceeded
-    return jnp.logical_and(residual, iteration)
+    # declare not converged if residuals are high AND iterations remain
+    # BUT return converged (False) if infeasible is detected
+    not_converged_by_residual = jnp.logical_and(residual, iteration)
+
+    # Return True (not converged) only if not infeasible and residuals/iter
+    return jnp.logical_and(
+        jnp.logical_not(infeasible), not_converged_by_residual
+    )
 
 
 def sqp_solve_variables(
@@ -414,8 +430,11 @@ def sqp_solve(
     problem: SQPProblemBase,
     parameters: SQPParameters,
 ) -> tuple[jax.Array, SQPInfo]:
+    problem_reg = problem.replace(
+        cost_quad_diag=jnp.maximum(problem.cost_quad_diag, parameters.epsilon)
+    )
     variables, sqp_info = sqp_solve_variables(
-        problem=problem,
+        problem=problem_reg,
         parameters=parameters,
     )
     return variables.x, sqp_info
@@ -428,8 +447,11 @@ def sqp_solve_fwd(
     tuple[jax.Array, SQPInfo],
     tuple[jax.Array, jax.Array, jax.Array, jax.Array, SQPProblemBase],
 ]:
+    problem_reg = problem.replace(
+        cost_quad_diag=jnp.maximum(problem.cost_quad_diag, parameters.epsilon)
+    )
     variables, sqp_info = sqp_solve_variables(
-        problem=problem,
+        problem=problem_reg,
         parameters=parameters,
     )
 
@@ -440,7 +462,7 @@ def sqp_solve_fwd(
             variables.y,  # dual variables
             variables.q_plus_s,  # diagonal Hessian approx
             sqp_info.converged_flag,  # converged flag
-            problem,  # problem data (differentiable arg structure)
+            problem_reg,  # problem data (differentiable arg structure)
         ),
     )
 

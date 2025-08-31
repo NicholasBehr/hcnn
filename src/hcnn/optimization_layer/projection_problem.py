@@ -9,7 +9,7 @@ from hcnn.system_dynamics import SystemDynamicsBase
 
 
 @struct.dataclass
-class OptimizationVariable:
+class ProjectionOptimizationVariable(struct.PyTreeNode):
     # projected trajecory
     states: jax.Array  # shape (horizon, state_dim)
     actions: jax.Array  # shape (horizon, action_dim)
@@ -44,7 +44,7 @@ class ProjectionProblem(SQPProblemBase[ProjectionPhi]):
         actions_one = jnp.ones((horizon, action_dim))
 
         cost_quad_diag = flatten_util.ravel_pytree(
-            OptimizationVariable(
+            ProjectionOptimizationVariable(
                 states=0 * states_one,
                 actions=0 * actions_one,
                 states_diff=2 * states_one,
@@ -52,7 +52,7 @@ class ProjectionProblem(SQPProblemBase[ProjectionPhi]):
             )
         )[0]
         cost_linear = flatten_util.ravel_pytree(
-            OptimizationVariable(
+            ProjectionOptimizationVariable(
                 states=0 * states_one,
                 actions=0 * actions_one,
                 states_diff=0 * states_one,
@@ -102,7 +102,7 @@ class ProjectionProblem(SQPProblemBase[ProjectionPhi]):
     ## ROLLOUT DIFFERENCE CONSTRAINTS ###
     @staticmethod
     def constraints_rollout_diff(
-        optvar: OptimizationVariable, phi: ProjectionPhi
+        optvar: ProjectionOptimizationVariable, phi: ProjectionPhi
     ) -> jax.Array:
         state_diff = optvar.states - phi.states_ref - optvar.states_diff
         action_diff = optvar.actions - phi.actions_ref - optvar.actions_diff
@@ -120,7 +120,7 @@ class ProjectionProblem(SQPProblemBase[ProjectionPhi]):
     ## SYSTEM DYNAMICS CONSTRAINTS ###
     @staticmethod
     def constraints_sys_dynamics(
-        optvar: OptimizationVariable, sys_dynamics: SystemDynamicsBase
+        optvar: ProjectionOptimizationVariable, sys_dynamics: SystemDynamicsBase
     ) -> jax.Array:
         states_i = optvar.states[:-1]
         states_i_plus_1 = optvar.states[1:]
@@ -141,7 +141,8 @@ class ProjectionProblem(SQPProblemBase[ProjectionPhi]):
     ## SYSTEM CONSTRAINTS ###
     @staticmethod
     def constraints_sys_constraints(
-        optvar: OptimizationVariable, sys_constraints: SystemConstraintsBase
+        optvar: ProjectionOptimizationVariable,
+        sys_constraints: SystemConstraintsBase,
     ) -> jax.Array:
         return sys_constraints(optvar.states, optvar.actions).ravel()
 
@@ -157,7 +158,7 @@ class ProjectionProblem(SQPProblemBase[ProjectionPhi]):
     ## INITIAL STATE CONSTRAINTS ###
     @staticmethod
     def constraints_initial_state(
-        optvar: OptimizationVariable, phi: ProjectionPhi
+        optvar: ProjectionOptimizationVariable, phi: ProjectionPhi
     ) -> jax.Array:
         return optvar.states[0] - phi.initial_state
 
@@ -173,7 +174,7 @@ class ProjectionProblem(SQPProblemBase[ProjectionPhi]):
         action_dim = self.sys_constraints.action_dim
         states = jnp.empty((self.horizon, state_dim))
         actions = jnp.empty((self.horizon, action_dim))
-        optvar = OptimizationVariable(
+        optvar = ProjectionOptimizationVariable(
             states=phi.states_ref,
             actions=phi.actions_ref,
             states_diff=jnp.zeros_like(states),
@@ -181,13 +182,13 @@ class ProjectionProblem(SQPProblemBase[ProjectionPhi]):
         )
         return flatten_util.ravel_pytree(optvar)[0]
 
-    def x_to_optvar(self, x: jax.Array) -> OptimizationVariable:
+    def x_to_optvar(self, x: jax.Array) -> ProjectionOptimizationVariable:
         state_dim = self.sys_constraints.state_dim
         action_dim = self.sys_constraints.action_dim
         state_template = jnp.empty((self.horizon, state_dim))
         action_template = jnp.empty((self.horizon, action_dim))
 
-        optvar_template = OptimizationVariable(
+        optvar_template = ProjectionOptimizationVariable(
             states=jnp.empty_like(state_template),
             actions=jnp.empty_like(action_template),
             states_diff=jnp.empty_like(state_template),

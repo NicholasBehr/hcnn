@@ -29,32 +29,21 @@ def loss_fn(
 ):
     """Compute the loss for the training step."""
     rollout = state_to_rollout(initial_states)
-    rollout_proj, info = projection_layer(rollout, initial_states)
+    proj_optvar, info = projection_layer(rollout, initial_states)
 
-    # Compute the cost
-    cost = jnp.mean(sys_costs(rollout_proj.states, rollout_proj.actions))
+    trajectory_cost = jnp.mean(
+        sys_costs(proj_optvar.states, proj_optvar.actions)
+    )
+    projection_cost = alignment_weight * (
+        jnp.mean(proj_optvar.states_diff**2)
+        + jnp.mean(proj_optvar.actions_diff**2)
+    )
+    loss = trajectory_cost + projection_cost
 
-    # Compute squared distances per sample
-    state_sqr_dst = (
-        rollout.states - jax.lax.stop_gradient(rollout_proj.states)
-    ) ** 2
-    action_sqr_dst = (
-        rollout.actions - jax.lax.stop_gradient(rollout_proj.actions)
-    ) ** 2
-
-    # Take mean of the conditionally-selected squared distances
-    sqr_dst = jnp.mean(state_sqr_dst) + jnp.mean(action_sqr_dst)
-
-    # Apply alignment weight
-    alignment_term = alignment_weight * sqr_dst
-
-    # Combine cost and alignment term into a single loss
-    loss = cost + alignment_term
-
-    # Aggregate the optimization info
+    # Aggregate SQP info
     info = jax.tree.map(lambda x: jnp.mean(x.astype(float)), info)
 
-    return loss, (loss, cost, sqr_dst, info)
+    return loss, (loss, trajectory_cost, projection_cost, info)
 
 
 @jax.jit
@@ -98,13 +87,13 @@ def train_epoch(
         train.optimizer.update(train.state_to_rollout, grads)
 
         # Unpack the auxiliary values
-        loss, cost, sqr_dst, info = aux
+        loss, trajectory_cost, projection_cost, info = aux
 
         # Update metrics
         train.metrics.update(
             loss=loss,
-            cost=cost,
-            sqr_dst=sqr_dst,
+            trajectory_cost=trajectory_cost,
+            projection_cost=projection_cost,
             gm_residual=jnp.sqrt(info.primal_residual * info.dual_residual),
             **vars(info),
         )
@@ -226,7 +215,7 @@ def train(project=None, config=None):
 
             # Log to WandB
             wandb.log(step=epoch, data=metrics)
-            if (epoch % 10 == 0 and epoch > 0) or epoch == config.epochs - 1:
+            if (epoch % 25 == 0 and epoch > 0) or epoch == config.epochs - 1:
                 state_dim = train.system.sys_dynamics.state_dim
                 train_bundle = nnx.merge(train_graphdef, train_state)
 
@@ -279,36 +268,36 @@ if __name__ == "__main__":
 
     # Specify the project name and configuration
     # This can be overridden by wandb.agent when running a sweep
-    project = "double_integrator_ncvx"
+    project = "bike"
 
     config = {
         "system_name": project,
         "seed": 0,
         # Neural Network
         "nn_name": "actions",
-        "nn_hidden_dim": 64,
-        "nn_hidden_depth": 3,
-        "nn_dropout_rate": 0.2,
-        "nn_activation": "leaky_relu",
+        "nn_hidden_dim": 2048,
+        "nn_hidden_depth": 2,
+        "nn_dropout_rate": 0.0,
+        "nn_activation": "relu",
         # Optimizer
         "optimizer_learning_rate": 1e-3,
         # Solver
         "solver_alpha": 1.6,
-        "solver_sigma": 1e-6,
+        "solver_sigma": 0.1,
         "solver_rho_base": 0.1,
         "rho_equality_mult": 1e3,
         "solver_tol_prim": 1e-2,
         "solver_tol_dual": 1e-2,
-        "solver_epsilon": 1e-4,
-        "solver_max_iter_lin": 200,
-        "solver_max_iter_nonlin": 20,
+        "solver_epsilon": 1e-12,
+        "solver_max_iter_lin": 2e3,
+        "solver_max_iter_nonlin": 5,
         # Projection
-        "projection_horizon": 20,
+        "projection_horizon": 10,
         # Training parameters
-        "batch_size": 64,
+        "batch_size": 128,
         "batches_per_epoch": 1,
         "epochs": 300,
-        "alignment_weight": 0.1,
+        "alignment_weight": 1,
     }
     sweep_configuration = {
         "method": "bayes",

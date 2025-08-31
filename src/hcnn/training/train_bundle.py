@@ -64,10 +64,10 @@ class TrainBundle(nnx.Module):
             state_cost_matrix=jnp.array([[1.0, 0.0], [0.0, 1.0]]),
             action_cost_matrix=jnp.array([[10.0]]),
         )
-        state_min = jnp.array([-10.0, -10.0])
+        state_min = jnp.array([1.0, -10.0])
         state_max = jnp.array([+10.0, +10.0])
-        action_min = jnp.array([-2.0])
-        action_max = jnp.array([+2.0])
+        action_min = jnp.array([-3.0])
+        action_max = jnp.array([+3.0])
         sys_constraints = SystemConstraintsBox.factory(
             state_l=state_min,
             state_u=state_max,
@@ -166,9 +166,9 @@ class TrainBundle(nnx.Module):
         # State: [x, y, heading, velocity]
         # Action: [acceleration, steering]
         sys_dynamics = SystemDynamicsBike.factory(
-            wheelbase=0.5,
+            wheelbase=1.0,
             max_steering=0.6,
-            dt=0.25,  # 250 ms
+            dt=0.4,  # 400 ms
         )
         sys_costs = SystemCostsQuadratic.factory(
             state_cost_matrix=jnp.diag(jnp.array([10.0, 10.0, 0.0, 0.0])),
@@ -323,8 +323,8 @@ class TrainBundle(nnx.Module):
         # Build optax metrics
         metrics = nnx.MultiMetric(
             loss=nnx.metrics.Average("loss"),
-            cost=nnx.metrics.Average("cost"),
-            sqr_dst=nnx.metrics.Average("sqr_dst"),
+            trajectory_cost=nnx.metrics.Average("trajectory_cost"),
+            projection_cost=nnx.metrics.Average("projection_cost"),
             primal_residual=nnx.metrics.Average("primal_residual"),
             dual_residual=nnx.metrics.Average("dual_residual"),
             gm_residual=nnx.metrics.Average("gm_residual"),
@@ -333,8 +333,6 @@ class TrainBundle(nnx.Module):
             rho_base_mult=nnx.metrics.Average("rho_base_mult"),
             converged_flag=nnx.metrics.Average("converged_flag"),
             avg_step_size=nnx.metrics.Average("avg_step_size"),
-            state_diff=nnx.metrics.Average("state_diff"),
-            action_diff=nnx.metrics.Average("action_diff"),
         )
 
         return TrainBundle(

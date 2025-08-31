@@ -39,8 +39,7 @@ class StateToRolloutDense(StateToRolloutBase):
         # Output: states, actions, and relaxation variables over horizon
         state_out_feat = state_dim * horizon
         action_out_feat = action_dim * horizon
-        relax_out_feat = constr_dim * horizon
-        rollout_out_feat = state_out_feat + action_out_feat + relax_out_feat
+        rollout_out_feat = state_out_feat + action_out_feat
 
         # Set up output bounds
         rollout_out_min = None
@@ -98,31 +97,34 @@ class StateToRolloutDense(StateToRolloutBase):
             Estimated rollout with states and actions
                 states, shape (..., horizon, state_dim)
                 actions, shape (..., horizon, action_dim)
-                states_relax, shape (..., horizon, state_dim)
         """
         # Get batch dimensions for reshaping
         batch_shape = state.shape[
             :-1
         ]  # All dimensions except the last (state_dim)
 
-        # Get unified rollout prediction
+        # Get unified rollout prediction (outputs states and actions)
         rollout_flat = self.rollout_estimator(state)
 
         # Calculate output dimensions
         state_out_feat = self.state_dim * self.horizon
         action_out_feat = self.action_dim * self.horizon
 
-        # Split the output into states, actions, and relaxation variables
+        # Split the output into states and actions
         states_flat = rollout_flat[..., :state_out_feat]
         action_end_idx = state_out_feat + action_out_feat
         actions_flat = rollout_flat[..., state_out_feat:action_end_idx]
-        relax_flat = rollout_flat[..., action_end_idx:]
 
         # Reshape to proper dimensions
-        states = states_flat.reshape(*batch_shape, self.horizon, self.state_dim)
-        actions = actions_flat.reshape(
-            *batch_shape, self.horizon, self.action_dim
+        states = states_flat.reshape(
+            *batch_shape,
+            self.horizon,
+            self.state_dim,
         )
-        relax = relax_flat.reshape(*batch_shape, self.horizon, self.constr_dim)
+        actions = actions_flat.reshape(
+            *batch_shape,
+            self.horizon,
+            self.action_dim,
+        )
 
         return Rollout(states=states, actions=actions)

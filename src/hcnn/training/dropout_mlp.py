@@ -184,32 +184,58 @@ class DropoutMLP(nnx.Module):
         if self.out_feature_min is None and self.out_feature_max is None:
             return x
 
-        # Apply sigmoid to squash to (0, 1)
-        x_sigmoid = nnx.sigmoid(x)
-
-        # If both min and max are provided, scale from (0, 1) to (min, max)
+        # Handle different cases based on which bounds are provided
         if (
             self.out_feature_min is not None
             and self.out_feature_max is not None
         ):
-            scaled_x = (
-                self.out_feature_min
-                + (self.out_feature_max - self.out_feature_min) * x_sigmoid
-            )
-            return scaled_x
+            # Both min and max are provided - handle per-feature
+            min_vals = self.out_feature_min
+            max_vals = self.out_feature_max
 
-        # If only min is provided, scale from (0, inf) to (min, inf)
+            # Check for infinite bounds per feature
+            has_finite_min = jnp.isfinite(min_vals)
+            has_finite_max = jnp.isfinite(max_vals)
+
+            # Case 1: Both bounds are finite - use sigmoid scaling
+            both_finite = has_finite_min & has_finite_max
+            x_sigmoid = nnx.sigmoid(x)
+            finite_scaled = min_vals + (max_vals - min_vals) * x_sigmoid
+
+            # Case 2: Only min is finite (+inf upper bound) - use softplus
+            only_min_finite = has_finite_min & ~has_finite_max
+            min_scaled = min_vals + nnx.softplus(x)
+
+            # Case 3: Only max is finite (-inf lower bound) - use negative softplus
+            only_max_finite = ~has_finite_min & has_finite_max
+            max_scaled = max_vals - nnx.softplus(-x)
+
+            # Case 4: Both bounds are infinite - no scaling
+            both_infinite = ~has_finite_min & ~has_finite_max
+
+            # Combine results using where clauses
+            result = jnp.where(both_finite, finite_scaled, x)
+            result = jnp.where(only_min_finite, min_scaled, result)
+            result = jnp.where(only_max_finite, max_scaled, result)
+
+            return result
+
+        # If only min is provided
         if self.out_feature_min is not None:
-            # Use log-sigmoid to map to [0, inf), then add min
-            # sigmoid maps to (0, 1), so -log(1/sigmoid - 1) = x maps to
-            # [0, inf) but this is just the original x, so we use softplus
-            scaled_x = self.out_feature_min + nnx.softplus(x)
-            return scaled_x
+            min_vals = self.out_feature_min
+            has_finite_min = jnp.isfinite(min_vals)
 
-        # If only max is provided, scale from (-inf, 0) to (-inf, max)
+            # Only apply scaling where min is finite
+            scaled_x = min_vals + nnx.softplus(x)
+            return jnp.where(has_finite_min, scaled_x, x)
+
+        # If only max is provided
         if self.out_feature_max is not None:
-            # Use negative softplus to map to (-inf, 0], then add max
-            scaled_x = self.out_feature_max - nnx.softplus(-x)
-            return scaled_x
+            max_vals = self.out_feature_max
+            has_finite_max = jnp.isfinite(max_vals)
+
+            # Only apply scaling where max is finite
+            scaled_x = max_vals - nnx.softplus(-x)
+            return jnp.where(has_finite_max, scaled_x, x)
 
         return x

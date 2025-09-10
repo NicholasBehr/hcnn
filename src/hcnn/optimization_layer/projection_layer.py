@@ -23,6 +23,7 @@ class ProjectionLayer:
         sys_dynamics: SystemDynamicsBase,
         sys_constraints: SystemConstraintsBase,
         horizon: int,
+        projection_relaxation_penalty: float,
         sqp_parameters: SQPParameters,
     ) -> "ProjectionLayer":
         return cls(
@@ -30,6 +31,7 @@ class ProjectionLayer:
                 sys_dynamics=sys_dynamics,
                 sys_constraints=sys_constraints,
                 horizon=horizon,
+                projection_relaxation_penalty=projection_relaxation_penalty,
             ),
             sqp_parameters=sqp_parameters,
         )
@@ -61,8 +63,10 @@ class ProjectionLayer:
             proj_optvar.replace(
                 # replace so we get allignment gradients,
                 # even if proj doesnt converge
-                states_diff=proj_optvar.states - rollout.states,
-                actions_diff=proj_optvar.actions - rollout.actions,
+                states_diff=jax.lax.stop_gradient(proj_optvar.states)
+                - rollout.states,
+                actions_diff=jax.lax.stop_gradient(proj_optvar.actions)
+                - rollout.actions,
             )
 
             return proj_optvar, sqp_info

@@ -61,14 +61,15 @@ class SQPParameters:
     rho_equality_mult: float = struct.field(default_factory=lambda: 1e3)
     tol_prim: float = struct.field(default_factory=lambda: 1e-4)
     tol_dual: float = struct.field(default_factory=lambda: 1e-4)
+    tol_osqp: float = struct.field(default_factory=lambda: 1e-5)
     epsilon: float = struct.field(default_factory=lambda: 1e-12)
     max_iter_lin: int = struct.field(default_factory=lambda: 2e3)
     max_iter_nonlin: int = struct.field(default_factory=lambda: 10)
     # Line search parameters
     ls_c1: float = struct.field(default_factory=lambda: 1e-4)
-    ls_rho: float = struct.field(default_factory=lambda: 0.5)
+    ls_rho: float = struct.field(default_factory=lambda: 0.75)
     ls_max_iter: int = struct.field(default_factory=lambda: 20)
-    ls_penalty_weight: float = struct.field(default_factory=lambda: 100.0)
+    ls_penalty_weight: float = struct.field(default_factory=lambda: 100)
 
 
 @struct.dataclass
@@ -281,8 +282,8 @@ def sqp_step(
         sigma=parameters.sigma,
         rho=parameters.rho,
         rho_equality_mult=parameters.rho_equality_mult,
-        tol_prim=parameters.tol_prim,
-        tol_dual=parameters.tol_dual,
+        tol_prim=parameters.tol_osqp,
+        tol_dual=parameters.tol_osqp,
         max_iter=parameters.max_iter_lin,
     )
     osqp_variables = osqp_solve(osqp_problem, osqp_parameters)
@@ -311,13 +312,13 @@ def sqp_step(
         merit_grad_dot_dx,
     )
 
-    jax.debug.print(
-        "SQP iter {}/{} | beta: {:.3e} | lin iters: {}",
-        variables.nonlin_iter + 1,
-        parameters.max_iter_nonlin,
-        beta,
-        osqp_variables.iteration,
-    )
+    # jax.debug.print(
+    #     "SQP iter {}/{} | beta: {:.3e} | lin iters: {}",
+    #     variables.nonlin_iter + 1,
+    #     parameters.max_iter_nonlin,
+    #     beta,
+    #     osqp_variables.iteration,
+    # )
 
     # Update variables with line search step size
     new_x = variables.x + beta * dx
@@ -489,18 +490,19 @@ def sqp_solve_bwd(
         y_plus = jnp.maximum(y_star, 0.0)
         y_minus = jnp.maximum(-y_star, 0.0)
 
-        frac_upper = y_plus / (parameters.tol_prim + problem.upper_bound - h)
-        frac_lower = y_minus / (parameters.tol_prim + h - problem.lower_bound)
+        reg = 10 * parameters.tol_prim
+        frac_upper = y_plus / (reg + problem.upper_bound - h)
+        frac_lower = y_minus / (reg + h - problem.lower_bound)
         frac_sum = frac_upper + frac_lower
 
         def schur_lhs(u1: jax.Array) -> jax.Array:
             return q_plus_s * u1 + h_vjp(frac_sum * h_jvp(u1))[0]
 
-        u1, _ = jax.scipy.sparse.linalg.cg(A=schur_lhs, b=-v1)
+        u1, _ = jax.scipy.sparse.linalg.bicgstab(A=schur_lhs, b=-v1)
 
         jvp_u1 = h_jvp(u1)
-        u2 = jvp_u1 / (parameters.tol_prim + problem.upper_bound - h)
-        u3 = jvp_u1 / (problem.lower_bound - parameters.tol_prim - h)
+        u2 = jvp_u1 / (reg + problem.upper_bound - h)
+        u3 = jvp_u1 / (problem.lower_bound - reg - h)
 
         ## Explicit VJP (step 2)
         grad_problem = jax.tree.map(jnp.zeros_like, problem)  # empty copy

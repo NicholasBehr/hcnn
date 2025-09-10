@@ -354,13 +354,13 @@ def osqp_solve(
         ),
     )
 
-    jax.debug.print(
-        "osqp prim {}, dual {}, iter {}, mult {}, infeas {}",
-        osqp_variables.max_primal_residual,
-        osqp_variables.max_dual_residual,
-        osqp_variables.iteration,
-        osqp_variables.rho_base_mult,
-        osqp_variables.is_infeasible,
-    )
+    # jax.debug.print(
+    #     "osqp prim {}, dual {}, iter {}, mult {}, infeas {}",
+    #     osqp_variables.max_primal_residual,
+    #     osqp_variables.max_dual_residual,
+    #     osqp_variables.iteration,
+    #     osqp_variables.rho_base_mult,
+    #     osqp_variables.is_infeasible,
+    # )
 
     return osqp_variables

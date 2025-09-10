@@ -16,6 +16,7 @@ class ProjectionOptimizationVariable(struct.PyTreeNode):
     # projection distance
     states_diff: jax.Array  # shape (horizon, state_dim)
     actions_diff: jax.Array  # shape (horizon, action_dim)
+    relaxation: jax.Array  # shape (horizon, constraint_dim)
 
 
 @struct.dataclass
@@ -37,11 +38,14 @@ class ProjectionProblem(SQPProblemBase[ProjectionPhi]):
         sys_dynamics: SystemDynamicsBase,
         sys_constraints: SystemConstraintsBase,
         horizon: int,
+        projection_relaxation_penalty: float,
     ):
         state_dim = sys_constraints.state_dim
         action_dim = sys_constraints.action_dim
+        constraint_dim = sys_constraints.constraint_dim
         states_one = jnp.ones((horizon, state_dim))
         actions_one = jnp.ones((horizon, action_dim))
+        constraints_one = jnp.ones((horizon, constraint_dim))
 
         cost_quad_diag = flatten_util.ravel_pytree(
             ProjectionOptimizationVariable(
@@ -49,6 +53,7 @@ class ProjectionProblem(SQPProblemBase[ProjectionPhi]):
                 actions=0 * actions_one,
                 states_diff=2 * states_one,
                 actions_diff=2 * actions_one,
+                relaxation=projection_relaxation_penalty * constraints_one,
             )
         )[0]
         cost_linear = flatten_util.ravel_pytree(
@@ -57,6 +62,7 @@ class ProjectionProblem(SQPProblemBase[ProjectionPhi]):
                 actions=0 * actions_one,
                 states_diff=0 * states_one,
                 actions_diff=0 * actions_one,
+                relaxation=0 * constraints_one,
             )
         )[0]
         phi = ProjectionPhi(
@@ -144,7 +150,9 @@ class ProjectionProblem(SQPProblemBase[ProjectionPhi]):
         optvar: ProjectionOptimizationVariable,
         sys_constraints: SystemConstraintsBase,
     ) -> jax.Array:
-        return sys_constraints(optvar.states, optvar.actions).ravel()
+        return (
+            sys_constraints(optvar.states, optvar.actions) + optvar.relaxation
+        ).ravel()
 
     @staticmethod
     def bounds_sys_constraints(
@@ -172,27 +180,33 @@ class ProjectionProblem(SQPProblemBase[ProjectionPhi]):
     def get_x0(self, phi: ProjectionPhi) -> jax.Array:
         state_dim = self.sys_constraints.state_dim
         action_dim = self.sys_constraints.action_dim
+        constraint_dim = self.sys_constraints.constraint_dim
         states = jnp.empty((self.horizon, state_dim))
         actions = jnp.empty((self.horizon, action_dim))
+        relaxation = jnp.empty((self.horizon, constraint_dim))
         optvar = ProjectionOptimizationVariable(
             states=phi.states_ref,
             actions=phi.actions_ref,
             states_diff=jnp.zeros_like(states),
             actions_diff=jnp.zeros_like(actions),
+            relaxation=jnp.zeros_like(relaxation),
         )
         return flatten_util.ravel_pytree(optvar)[0]
 
     def x_to_optvar(self, x: jax.Array) -> ProjectionOptimizationVariable:
         state_dim = self.sys_constraints.state_dim
         action_dim = self.sys_constraints.action_dim
+        constraint_dim = self.sys_constraints.constraint_dim
         state_template = jnp.empty((self.horizon, state_dim))
         action_template = jnp.empty((self.horizon, action_dim))
+        relax_template = jnp.empty((self.horizon, constraint_dim))
 
         optvar_template = ProjectionOptimizationVariable(
             states=jnp.empty_like(state_template),
             actions=jnp.empty_like(action_template),
             states_diff=jnp.empty_like(state_template),
             actions_diff=jnp.empty_like(action_template),
+            relaxation=jnp.empty_like(relax_template),
         )
         _, unravel_pytree = flatten_util.ravel_pytree(optvar_template)
         return unravel_pytree(x)

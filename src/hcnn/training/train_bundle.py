@@ -106,8 +106,8 @@ class TrainBundle(nnx.Module):
             action_u=action_max,
         )
         ball_constraint = SystemConstraintsBall.factory(
-            center=jnp.array([2, 0]),
-            radius=1.0,
+            center=jnp.array([0, 0]),
+            radius=1.5,
             action_dim=1,
         )
         sys_constraints = SystemConstraintsMulti.factory(
@@ -167,7 +167,6 @@ class TrainBundle(nnx.Module):
         # Action: [acceleration, steering]
         sys_dynamics = SystemDynamicsBike.factory(
             wheelbase=1.0,
-            max_steering=0.6,
             dt=0.4,  # 400 ms
         )
         sys_costs = SystemCostsQuadratic.factory(
@@ -177,8 +176,8 @@ class TrainBundle(nnx.Module):
         state_min = jnp.array([-10, -10, -jnp.inf, -1.0])
         state_max = jnp.array([+10, +10, +jnp.inf, +5.0])
         periodic_states = frozenset({2})  # Bike heading angle
-        action_min = jnp.array([-2.5, -0.5])
-        action_max = jnp.array([+2.5, +0.5])
+        action_min = jnp.array([-2.5, -0.6])
+        action_max = jnp.array([+2.5, +0.6])
         sys_constraints = SystemConstraintsBox.factory(
             state_l=state_min,
             state_u=state_max,
@@ -254,6 +253,7 @@ class TrainBundle(nnx.Module):
             rho_equality_mult=config.rho_equality_mult,
             tol_prim=config.solver_tol_prim,
             tol_dual=config.solver_tol_dual,
+            tol_osqp=config.solver_tol_osqp,
             epsilon=config.solver_epsilon,
             max_iter_lin=config.solver_max_iter_lin,
             max_iter_nonlin=config.solver_max_iter_nonlin,
@@ -269,6 +269,7 @@ class TrainBundle(nnx.Module):
             sys_dynamics=system.sys_dynamics,
             sys_constraints=system.sys_constraints,
             horizon=config.projection_horizon,
+            projection_relaxation_penalty=config.projection_relaxation_penalty,
             sqp_parameters=sqp_parameters,
         )
 

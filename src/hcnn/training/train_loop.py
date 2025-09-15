@@ -268,14 +268,14 @@ if __name__ == "__main__":
 
     # Specify the project name and configuration
     # This can be overridden by wandb.agent when running a sweep
-    project = "double_integrator_ncvx"
+    project = "double_integrator"
 
     config = {
         "system_name": project,
         "seed": 0,
         # Neural Network
         "nn_name": "actions",
-        "nn_hidden_dim": 64,
+        "nn_hidden_dim": 128,
         "nn_hidden_depth": 2,
         "nn_dropout_rate": 0.0,
         "nn_activation": "relu",
@@ -286,20 +286,20 @@ if __name__ == "__main__":
         "solver_sigma": 1e-6,
         "solver_rho_base": 1,
         "rho_equality_mult": 10,
-        "solver_tol_prim": 1e-1,
-        "solver_tol_dual": 1e-1,
-        "solver_tol_osqp": 1e-4,
+        "solver_tol_prim": 1e-2,
+        "solver_tol_dual": 1e-2,
+        "solver_tol_osqp": 1e-3,
         "solver_epsilon": 1e-12,
-        "solver_max_iter_lin": 500,
-        "solver_max_iter_nonlin": 20,
+        "solver_max_iter_lin": 1e3,
+        "solver_max_iter_nonlin": 10,
         # Projection
-        "projection_horizon": 15,
-        "projection_relaxation_penalty": 100,
+        "projection_horizon": 20,
+        "projection_relaxation_penalty": 10,
         # Training parameters
-        "batch_size": 128,
+        "batch_size": 256,
         "batches_per_epoch": 1,
         "epochs": 100,
-        "alignment_weight": 0.1,
+        "alignment_weight": 0,
     }
     sweep_configuration = {
         "method": "bayes",

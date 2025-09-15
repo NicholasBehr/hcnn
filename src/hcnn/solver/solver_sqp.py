@@ -499,6 +499,7 @@ def sqp_solve_bwd(
             return q_plus_s * u1 + h_vjp(frac_sum * h_jvp(u1))[0]
 
         u1, _ = jax.scipy.sparse.linalg.bicgstab(A=schur_lhs, b=-v1)
+        u1 = jnp.where(jnp.isnan(u1), 0.0, u1)
 
         jvp_u1 = h_jvp(u1)
         u2 = jvp_u1 / (reg + problem.upper_bound - h)

@@ -5,6 +5,8 @@ import jax
 import jax.numpy as jnp
 from flax import struct
 
+EPS = 1e-12
+
 
 @struct.dataclass
 class OSQPProblem(struct.PyTreeNode):
@@ -215,14 +217,15 @@ def osqp_step(
 
     ## Infeasibility detection (following OSQP spec) ##
     # For primal infeasibility detection:
-    # Check if ||A^T δy||_∞ <= ε_pinf ||δy||_∞ and u^T (δy)+ + l^T (δy)- <= ε_pinf ||δy||_∞
+    # Check if ||A^T δy||_∞ <= ε_pinf ||δy||_∞
+    # and u^T (δy)+ + l^T (δy)- <= ε_pinf ||δy||_∞
     # where δy = y / ||y||_∞ (normalized y)
 
     y_norm_inf = jnp.max(jnp.abs(variables_after_inner.y))
 
     # Avoid division by zero
     y_normalized = jnp.where(
-        y_norm_inf > 1e-12,
+        y_norm_inf > EPS,
         variables_after_inner.y / y_norm_inf,
         variables_after_inner.y,
     )
@@ -244,12 +247,12 @@ def osqp_step(
 
     # For dual infeasibility detection:
     # Check if ||P δx||_∞ <= ε_dinf ||δx||_∞ and q^T δx <= -ε_dinf ||δx||_∞
-    # where δx = x / ||x||_∞ (normalized x) and constraints are satisfied appropriately
+    # where δx = x / ||x||_∞ (normalized x) and constraints are satisfied
     x_norm_inf = jnp.max(jnp.abs(variables_after_inner.x))
 
     # Avoid division by zero
     x_normalized = jnp.where(
-        x_norm_inf > 1e-12,
+        x_norm_inf > EPS,
         variables_after_inner.x / x_norm_inf,
         variables_after_inner.x,
     )
@@ -269,7 +272,8 @@ def osqp_step(
     # Create masks for different constraint types
     lower_inf = jnp.isinf(problem.lower_bound) & (problem.lower_bound < 0)
     upper_inf = jnp.isinf(problem.upper_bound) & (problem.upper_bound > 0)
-    equality = jnp.abs(problem.upper_bound - problem.lower_bound) < 1e-12
+    eps = 1e-12
+    equality = jnp.abs(problem.upper_bound - problem.lower_bound) < eps
 
     # Check constraint satisfaction
     lower_satisfied = jnp.logical_or(

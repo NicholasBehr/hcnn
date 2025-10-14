@@ -1,5 +1,3 @@
-from typing import Any, List
-
 import jax.numpy as jnp
 from flax import nnx
 
@@ -15,7 +13,7 @@ ACTIVATIONS = {
 class DropoutMLP(nnx.Module):
     """A Multi-Layer Perceptron (MLP) module with Dropout."""
 
-    layers: List[nnx.Linear | nnx.Dropout | Any]
+    layers: nnx.List
     periodic_in_features: frozenset[int]  # indices of 2π periodic states
     out_feature_min: jnp.ndarray | None  # min values for each output feature
     out_feature_max: jnp.ndarray | None  # max values for each output feature
@@ -106,7 +104,7 @@ class DropoutMLP(nnx.Module):
             [transformed_input_size] + hidden_features + [out_features]
         )
 
-        self.layers = []
+        self.layers = nnx.List()
         for i, size in enumerate(layer_sizes[:-1]):
             # Create a Linear layer
             self.layers.append(nnx.Linear(size, layer_sizes[i + 1], rngs=rngs))
@@ -206,12 +204,9 @@ class DropoutMLP(nnx.Module):
             only_min_finite = has_finite_min & ~has_finite_max
             min_scaled = min_vals + nnx.softplus(x)
 
-            # Case 3: Only max is finite (-inf lower bound) - use negative softplus
+            # Case 3: Only max is finite (-inf lower bound) - use neg softplus
             only_max_finite = ~has_finite_min & has_finite_max
             max_scaled = max_vals - nnx.softplus(-x)
-
-            # Case 4: Both bounds are infinite - no scaling
-            both_infinite = ~has_finite_min & ~has_finite_max
 
             # Combine results using where clauses
             result = jnp.where(both_finite, finite_scaled, x)

@@ -42,9 +42,6 @@ class TestSystemConstraintsMulti(TestSystemConstraintsBase):
         assert sys_constraints.state_dim == self.state_dim
         assert sys_constraints.action_dim == self.action_dim
 
-    # Box contributes 3 active constraints; Ball contributes 1; total = 4
-    assert sys_constraints.constraint_dim == 4
-
     def test_eval_shapes(self, sys_constraints: SystemConstraintsMulti):
         state = jnp.zeros((self.state_dim,))
         action = jnp.zeros((self.action_dim,))

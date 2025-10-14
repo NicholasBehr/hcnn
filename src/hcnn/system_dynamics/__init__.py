@@ -3,4 +3,3 @@ from .system_dynamics_bike import SystemDynamicsBike
 from .system_dynamics_continuous import SystemDynamicsContinuous
 from .system_dynamics_double_pendulum import SystemDynamicsDoublePendulum
 from .system_dynamics_linear import SystemDynamicsLinear
-from .system_dynamics_mujoco import SystemDynamicsMuJoCo

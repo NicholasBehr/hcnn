@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import jax.numpy as jnp
 import optax
 from flax import nnx, struct
+from wandb.sdk.wandb_config import Config as WandbConfig
 
 from hcnn.optimization_layer import ProjectionLayer
 from hcnn.sampler import SamplerUniform
@@ -30,7 +31,6 @@ from hcnn.system_dynamics import (
     SystemDynamicsLinear,
 )
 from hcnn.system_dynamics.system_dynamics_bike import SystemDynamicsBike
-from wandb.sdk.wandb_config import Config as WandbConfig
 
 
 @struct.dataclass

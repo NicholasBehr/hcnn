@@ -58,13 +58,11 @@ class SystemDynamicsBike(SystemDynamicsContinuous):
 
     # Physical parameters
     wheelbase: float = 2.5  # Wheelbase length (m) - typical car value
-    max_steering: float = 0.5  # Maximum steering angle (rad) - ~28.6 degrees
 
     @classmethod
     def factory(
         cls,
         wheelbase: float = 2.5,
-        max_steering: float = 0.5,
         dt: float = 0.1,
     ) -> "SystemDynamicsBike":
         """
@@ -72,7 +70,6 @@ class SystemDynamicsBike(SystemDynamicsContinuous):
 
         Args:
             wheelbase: Wheelbase length (m). Typical values: 2.5-3.0m for cars
-            max_steering: Maximum steering angle magnitude (rad)
             dt: Integration timestep (s)
 
         Returns:
@@ -84,7 +81,6 @@ class SystemDynamicsBike(SystemDynamicsContinuous):
         """
         # Validate physical parameters
         assert wheelbase > 0, "Wheelbase length must be positive"
-        assert max_steering > 0, "Maximum steering angle must be positive"
         assert dt > 0, "Timestep must be positive"
 
         return cls(
@@ -92,7 +88,6 @@ class SystemDynamicsBike(SystemDynamicsContinuous):
             action_dim=2,  # [a, δ] - acceleration and steering
             dt=dt,
             wheelbase=wheelbase,
-            max_steering=max_steering,
         )
 
     def _continuous_dynamics(
@@ -122,11 +117,9 @@ class SystemDynamicsBike(SystemDynamicsContinuous):
         theta = state[..., 2]  # Heading angle
         v = state[..., 3]  # Velocity
 
-        # Extract control inputs with saturation
+        # Extract control inputs
         a = action[..., 0]  # Acceleration
-        delta = jnp.clip(
-            action[..., 1], -self.max_steering, self.max_steering
-        )  # Steering angle
+        delta = action[..., 1]  # Steering angle
 
         # Kinematic bike model equations
         x_dot = v * jnp.cos(theta)

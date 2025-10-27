@@ -1,24 +1,57 @@
 import os
 import shutil
 import tempfile
-from functools import partial
 
 import jax
 import jax.numpy as jnp
 import orbax.checkpoint as ocp
+import wandb
 from flax import nnx
 
-import wandb
-from hcnn.training.loss_and_grad import ModelStates
+from hcnn.optimization_layer import MPCLayer, ProjectionLayer
+from hcnn.state_to_rollout import StateToRolloutBase
+from hcnn.system_constraints import SystemConstraintsBox
+from hcnn.system_costs import SystemCostsBase, SystemCostsQuadratic
+from hcnn.system_dynamics import SystemDynamicsLinear
 from hcnn.training.train_bundle import TrainBundle
-from hcnn.training.visualization import visualize_receding_horizon
+from hcnn.training.visualization import (
+    visualize_receding_horizon,
+    visualize_receding_horizon_mpc,
+)
 
 
-@partial(jax.jit, static_argnames=["batches_per_epoch", "train_graphdef"])
+def loss_fn(
+    state_to_rollout: StateToRolloutBase,
+    initial_states: jax.Array,
+    projection_layer: ProjectionLayer,
+    sys_costs: SystemCostsBase,
+    alignment_weight: float = 1.0,
+):
+    """Compute the loss for the training step."""
+    rollout = state_to_rollout(initial_states)
+    proj_optvar, info = projection_layer(rollout, initial_states)
+
+    trajectory_cost = jnp.mean(
+        sys_costs(proj_optvar.states, proj_optvar.actions)
+    )
+    projection_cost = alignment_weight * (
+        jnp.mean(proj_optvar.states_diff**2)
+        + jnp.mean(proj_optvar.actions_diff**2)
+    )
+    loss = trajectory_cost + projection_cost
+
+    # Aggregate SQP info
+    info = jax.tree.map(lambda x: jnp.mean(x.astype(float)), info)
+
+    return loss, (loss, trajectory_cost, projection_cost, info)
+
+
+@jax.jit
 def train_epoch(
     train_graphdef: nnx.GraphDef,
     train_state: nnx.State,
     batches_per_epoch: int = 1,
+    alignment_weight: float = 1e-3,
 ) -> tuple[nnx.State, dict["str", jax.Array]]:
     """
     Train a single epoch of the model.
@@ -42,59 +75,28 @@ def train_epoch(
     def train_step(_, train_state: nnx.State) -> nnx.State:
         train = nnx.merge(train_graphdef, train_state)
 
-        loss, grad, model_states, info = train.loss_and_grad(
-            model_states=ModelStates(
-                policy=nnx.state(train.policy),
-                relax_to_go=nnx.state(train.relax_to_go),
-                cost_to_go=nnx.state(train.cost_to_go),
-            ),
+        grads, aux = nnx.grad(loss_fn, has_aux=True)(
+            state_to_rollout=train.state_to_rollout,
             initial_states=train.sampler(),
+            projection_layer=train.projection_layer,
+            sys_costs=train.system.sys_costs,
+            alignment_weight=alignment_weight,
         )
 
-        # Update model states with more efficient operations
-        nnx.update(train.policy, model_states.policy)
-        nnx.update(train.relax_to_go, model_states.relax_to_go)
-        nnx.update(train.cost_to_go, model_states.cost_to_go)
+        # Apply the gradients to the optimizer
+        train.optimizer.update(train.state_to_rollout, grads)
 
-        # Compute maximum absolute gradient value for monitoring and clipping
-        # Compute gradient statistics for monitoring
-        policy_grad_leaves = jax.tree_util.tree_leaves(grad.policy)
-        cost_grad_leaves = jax.tree_util.tree_leaves(grad.cost_to_go)
+        # Unpack the auxiliary values
+        loss, trajectory_cost, projection_cost, info = aux
 
-        max_policy_gradient = jnp.max(
-            jnp.array([jnp.max(jnp.abs(leaf)) for leaf in policy_grad_leaves])
-        )
-        mean_policy_gradient = jnp.mean(
-            jnp.array([jnp.mean(jnp.abs(leaf)) for leaf in policy_grad_leaves])
-        )
-        max_cost_gradient = jnp.max(
-            jnp.array([jnp.max(jnp.abs(leaf)) for leaf in cost_grad_leaves])
-        )
-        mean_cost_gradient = jnp.mean(
-            jnp.array([jnp.mean(jnp.abs(leaf)) for leaf in cost_grad_leaves])
-        )
-
-        # Update metrics with batched operations
+        # Update metrics
         train.metrics.update(
-            policy_loss=loss.policy,
-            cost_to_go_loss=loss.cost_to_go,
-            relax_to_go_loss=loss.relax_to_go,
-            primal_residual=info.primal_residual,
-            dual_residual=info.dual_residual,
-            residual=info.primal_residual + info.dual_residual,
-            solver_iter_lin=info.iterations_lin,
-            solver_iter_nonlin=info.iterations_nonlin,
-            solver_converged=info.converged_flag,
-            max_policy_gradient=max_policy_gradient,
-            mean_policy_gradient=mean_policy_gradient,
-            max_cost_gradient=max_cost_gradient,
-            mean_cost_gradient=mean_cost_gradient,
+            loss=loss,
+            trajectory_cost=trajectory_cost,
+            projection_cost=projection_cost,
+            gm_residual=jnp.sqrt(info.primal_residual * info.dual_residual),
+            **vars(info),
         )
-
-        # Update optimizers with pre-allocated gradients
-        train.opt_policy.update(grad.policy)
-        train.opt_relax.update(grad.relax_to_go)
-        train.opt_cost.update(grad.cost_to_go)
 
         return nnx.state(train)
 
@@ -197,6 +199,7 @@ def train(project=None, config=None):
                 train_graphdef=train_graphdef,
                 train_state=train_state,
                 batches_per_epoch=config.batches_per_epoch,
+                alignment_weight=config.alignment_weight,
             )
 
             # Print metrics in a nicely formatted table
@@ -212,20 +215,54 @@ def train(project=None, config=None):
 
             # Log to WandB
             wandb.log(step=epoch, data=metrics)
-            if epoch % 25 == 0 or epoch == config.epochs - 1:
+            if (epoch % 25 == 0 and epoch > 0) or epoch == config.epochs - 1:
+                state_dim = train.system.sys_dynamics.state_dim
+                train_bundle = nnx.merge(train_graphdef, train_state)
+
+                # Always visualize the projection layer
                 visualize_receding_horizon(
-                    train_bundle=nnx.merge(train_graphdef, train_state),
+                    train_bundle=train_bundle,
                     steps=50,
-                    initial_state=3 * jnp.ones(train.policy.state_dim),
+                    initial_state=3 * jnp.ones(state_dim),
+                    wandb_step=epoch,
                 )
+
+            if epoch == config.epochs - 1:
                 save_train_state(train_state)
+
+        # Add MPC visualization if system dynamics are linear
+        if (
+            isinstance(train.system.sys_dynamics, SystemDynamicsLinear)
+            and isinstance(train.system.sys_costs, SystemCostsQuadratic)
+            and isinstance(
+                train.system.sys_constraints,
+                SystemConstraintsBox,
+            )
+        ):
+            # Create MPC layer for comparison
+            mpc_layer = MPCLayer.factory(
+                sys_dynamics=train.system.sys_dynamics,
+                sys_constraints=train.system.sys_constraints,
+                sys_costs=train.system.sys_costs,
+                horizon=train.projection_layer.projection_problem.horizon,
+                sqp_parameters=train.projection_layer.sqp_parameters,
+            )
+
+            # Visualize MPC for comparison
+            visualize_receding_horizon_mpc(
+                mpc_layer=mpc_layer,
+                sys_dynamics=train.system.sys_dynamics,
+                steps=50,
+                initial_state=3 * jnp.ones(train.system.sys_dynamics.state_dim),
+                wandb_step=config.epochs - 1,
+            )
 
 
 if __name__ == "__main__":
     print("This is a training loop with Weights & Biases integration.")
 
     # restrict access to one GPU (check availability nvidia-smi)
-    os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "3"
     jax.config.update("jax_debug_nans", False)
     # jax.config.update("jax_platform_name", "cpu")  # Uncomment to run on CPU
 
@@ -236,112 +273,95 @@ if __name__ == "__main__":
     config = {
         "system_name": project,
         "seed": 0,
-        # Policy
-        "policy_name": "dropout_mlp",
-        "policy_hidden_dim": 4,
-        "policy_hidden_depth": 4,
-        "policy_dropout_rate": 0.1,
-        "policy_activation": "leaky_relu",
-        "policy_intervention_cost": 0.1,  # range [0, 1]!
-        # Cost-to-go and Relax-to-go
-        "x_to_go_hidden_dim": 4,
-        "x_to_go_hidden_depth": 4,
-        "x_to_go_dropout_rate": 0.1,
-        "x_to_go_activation": "leaky_relu",
-        # Projection
-        "projection_name": "no_substitution_no_terminal",
-        "projection_horizon": 30,
-        "projection_relaxation_penalty": 1e3,
+        # Neural Network
+        "nn_name": "actions",
+        "nn_hidden_dim": 128,
+        "nn_hidden_depth": 2,
+        "nn_dropout_rate": 0.0,
+        "nn_activation": "relu",
+        # Optimizer
+        "optimizer_learning_rate": 1e-4,
         # Solver
-        "solver_name": "shallow",
         "solver_alpha": 1.6,
-        "solver_sigma": 1e-3,
-        "solver_rho_equality": 0.1,
-        "solver_rho_inequality": 0.05,
-        "solver_max_iter_nonlin": 100,
-        "solver_max_iter_lin": 2e3,
-        "solver_tol": 1e-1,
-        # Optimizers
-        "optimizer_policy_name": "adamw",
-        "optimizer_policy_learning_rate": 1e-4,
-        "optimizer_cost_name": "adamw",
-        "optimizer_cost_learning_rate": 1e-1,
-        "optimizer_relax_name": "adamw",
-        "optimizer_relax_learning_rate": 1e-1,
+        "solver_sigma": 1e-6,
+        "solver_rho_base": 1,
+        "rho_equality_mult": 10,
+        "solver_tol_prim": 1e-2,
+        "solver_tol_dual": 1e-2,
+        "solver_tol_osqp": 1e-3,
+        "solver_epsilon": 1e-12,
+        "solver_max_iter_lin": 1e3,
+        "solver_max_iter_nonlin": 10,
+        # Projection
+        "projection_horizon": 20,
+        "projection_relaxation_penalty": 10,
         # Training parameters
-        "batchsize": 128,
+        "batch_size": 256,
         "batches_per_epoch": 1,
-        "td_gamma": 0.95,
-        "gae_lambda": 0.999,
-        "epochs": 500,
+        "epochs": 100,
+        "alignment_weight": 0,
     }
     sweep_configuration = {
         "method": "bayes",
-        "metric": {"goal": "minimize", "name": "residual"},
-        # "early_terminate": {"type": "hyperband", "min_iter": 20, "eta": 1.5},
+        "metric": {"goal": "minimize", "name": "cost"},
+        "early_terminate": {"type": "hyperband", "min_iter": 20, "eta": 1.5},
         "parameters": {
-            "system_name": {"value": project},
+            "system_name": {"value": "double_integrator"},
             "seed": {"value": 0},
-            # Policy
-            "policy_name": {"value": "dropout_mlp"},
-            "policy_hidden_dim": {"value": 5},
-            "policy_hidden_depth": {"value": 5},
-            "policy_dropout_rate": {"value": 0.15},
-            "policy_activation": {"value": "leaky_relu"},
-            "policy_intervention_cost": {"value": 0.5},
-            # Cost-to-go and Relax-to-go
-            "x_to_go_hidden_dim": {"value": 5},
-            "x_to_go_hidden_depth": {"value": 5},
-            "x_to_go_dropout_rate": {"value": 0.15},
-            "x_to_go_activation": {"value": "leaky_relu"},
-            # Projection
-            "projection_name": {"value": "no_substitution_no_terminal"},
-            "projection_horizon": {"value": 20},
-            "projection_relaxation_penalty": {"value": 1e4},
+            # Neural Network
+            "nn_name": {"value": "scan"},
+            "nn_hidden_dim": {"value": 5},
+            "nn_hidden_depth": {"value": 5},
+            "nn_dropout_rate": {"value": 0.2},
+            "nn_activation": {"value": "leaky_relu"},
+            # Optimizer
+            "optimizer_learning_rate": {
+                "distribution": "log_uniform_values",
+                "max": 1e-1,
+                "min": 1e-4,
+            },
+            "optimizer_b1": {
+                "distribution": "uniform",
+                "max": 0.99,
+                "min": 0.8,
+            },
+            "optimizer_b2": {
+                "distribution": "uniform",
+                "max": 0.999,
+                "min": 0.9,
+            },
+            "optimizer_weight_decay": {
+                "distribution": "log_uniform_values",
+                "max": 1e-1,
+                "min": 1e-4,
+            },
             # Solver
             "solver_name": {"value": "osqp"},
-            "solver_alpha": {
-                "distribution": "uniform",
-                "max": 1.8,
-                "min": 0.2,
-            },
-            "solver_sigma": {
-                "distribution": "log_uniform_values",
-                "max": 1e3,
-                "min": 1e-3,
-            },
-            "solver_rho_equality": {
-                "distribution": "log_uniform_values",
-                "max": 1e3,
-                "min": 1e-3,
-            },
-            "solver_rho_inequality": {
-                "distribution": "log_uniform_values",
-                "max": 1e3,
-                "min": 1e-3,
-            },
+            "solver_alpha": {"value": 1.6},
+            "solver_sigma": {"value": 15},
+            "solver_rho_base": {"value": 100},
+            "solver_rho_eq_mult": {"value": 0.05},
             "solver_max_iter_nonlin": {"value": 1},
-            "solver_max_iter_lin": {"value": 1e3},
-            "solver_tol": {"value": 1e-3},
-            # Optimizers
-            "optimizer_policy_name": {"value": "adamw"},
-            "optimizer_policy_learning_rate": {"value": 1e-3},
-            "optimizer_cost_name": {"value": "adamw"},
-            "optimizer_cost_learning_rate": {"value": 1e-1},
-            "optimizer_relax_name": {"value": "adamw"},
-            "optimizer_relax_learning_rate": {"value": 1e-1},
+            "solver_max_iter_lin": {"value": 5e3},
+            "solver_tol": {"value": 0.05},
+            # Projection
+            "projection_horizon": {"value": 20},
+            "projection_relaxation_penalty": {"value": 1e4},
             # Training parameters
-            "batchsize": {"value": 64},
-            "batches_per_epoch": {"value": 1},
-            "td_gamma": {"value": 0.95},
-            "gae_lambda": {"value": 0.95},
-            "epochs": {"value": 1},
+            "batch_size": {"value": 512},
+            "batches_per_epoch": {"value": 16},
+            "epochs": {"value": 100},
+            "alignment_weight": {
+                "distribution": "log_uniform_values",
+                "max": 1e-1,
+                "min": 1e-4,
+            },
         },
     }
 
     train(project=project, config=config)
 
-    # sweep_id = None  # Replace with your sweep ID if you have one
+    # sweep_id = "ak65u4jx"  # Replace with your sweep ID if you have one
     # if sweep_id is None:
     #     print("No sweep ID provided, creating sweep.")
     #     sweep_id = wandb.sweep(sweep=sweep_configuration, project=project)

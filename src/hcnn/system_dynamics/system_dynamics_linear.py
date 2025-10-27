@@ -10,6 +10,14 @@ class SystemDynamicsLinear(SystemDynamicsBase):
     state_matrix_transp: jax.Array  # float 2d matrix
     action_matrix_transp: jax.Array  # float 2d matrix
 
+    @property
+    def state_matrix(self) -> jax.Array:
+        return self.state_matrix_transp.T
+
+    @property
+    def action_matrix(self) -> jax.Array:
+        return self.action_matrix_transp.T
+
     @classmethod
     def factory(cls, state_matrix: jax.Array, action_matrix: jax.Array):
         # Get JAX's default float type to respect 32/64 bit config
@@ -28,8 +36,8 @@ class SystemDynamicsLinear(SystemDynamicsBase):
         assert jnp.ndim(state_matrix) == two_dim
         assert jnp.ndim(action_matrix) == two_dim
 
-        state_dim = state_matrix.shape[1]
-        action_dim = action_matrix.shape[1]
+        state_dim = int(state_matrix.shape[1])
+        action_dim = int(action_matrix.shape[1])
 
         # verify output dimension
         assert state_matrix.shape == (state_dim, state_dim)

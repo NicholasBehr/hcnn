@@ -19,24 +19,19 @@ class TestSystemDynamicsBike(TestSystemDynamicsBase):
     @pytest.fixture
     def sys_dynamics(self) -> SystemDynamicsBike:
         """Create a bike model instance for testing."""
-        return SystemDynamicsBike.factory(
-            wheelbase=2.5, max_steering=0.5, dt=0.1
-        )
+        return SystemDynamicsBike.factory(wheelbase=2.5, dt=0.1)
 
     def test_factory_creation(self, sys_dynamics: SystemDynamicsBike):
         """Test that factory method creates valid bike model."""
         assert sys_dynamics.state_dim == 4
         assert sys_dynamics.action_dim == 2
         assert sys_dynamics.wheelbase == 2.5
-        assert sys_dynamics.max_steering == 0.5
         assert sys_dynamics.dt == 0.1
 
     def test_factory_validation(self):
         """Test that factory validates parameters."""
         with pytest.raises(AssertionError):
             SystemDynamicsBike.factory(wheelbase=-1.0)
-        with pytest.raises(AssertionError):
-            SystemDynamicsBike.factory(max_steering=-1.0)
         with pytest.raises(AssertionError):
             SystemDynamicsBike.factory(dt=-1.0)
 
@@ -85,22 +80,6 @@ class TestSystemDynamicsBike(TestSystemDynamicsBase):
         expected = jnp.array([5.0, 0.0, 0.0, 2.0])
 
         assert jnp.allclose(state_dot, expected, atol=1e-6)
-
-    def test_steering_saturation(self, sys_dynamics: SystemDynamicsBike):
-        """Test that steering angle is properly saturated."""
-        state = jnp.array([0.0, 0.0, 0.0, 10.0])
-        # Action with excessive steering
-        action = jnp.array([0.0, 1.0])  # 1.0 rad > max_steering=0.5 rad
-
-        state_dot = sys_dynamics._continuous_dynamics(state, action)
-
-        # Should behave as if steering was clipped to max_steering
-        action_clipped = jnp.array([0.0, 0.5])
-        state_dot_expected = sys_dynamics._continuous_dynamics(
-            state, action_clipped
-        )
-
-        assert jnp.allclose(state_dot, state_dot_expected, atol=1e-6)
 
     def test_negative_velocity(self, sys_dynamics: SystemDynamicsBike):
         """Test behavior with negative (reverse) velocity."""

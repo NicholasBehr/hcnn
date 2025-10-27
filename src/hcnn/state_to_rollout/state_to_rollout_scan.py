@@ -1,0 +1,99 @@
+from dataclasses import dataclass
+
+import jax
+import jax.numpy as jnp
+from flax import nnx
+
+from hcnn.optimization_layer import Rollout
+from hcnn.state_to_rollout.state_to_rollout_base import StateToRolloutBase
+from hcnn.system_dynamics import SystemDynamicsBase
+from hcnn.training import DropoutMLP
+
+
+@dataclass(frozen=True)
+class StateToRolloutScan(StateToRolloutBase):
+    action_estimator: DropoutMLP
+    sys_dynamics: SystemDynamicsBase
+
+    @classmethod
+    def factory(
+        cls,
+        state_dim: int,
+        action_dim: int,
+        constr_dim: int,
+        hidden_features: list[int],
+        horizon: int,
+        sys_dynamics: SystemDynamicsBase,
+        *,
+        rngs: nnx.Rngs,
+        activation: str = "leaky_relu",
+        dropout_rate: float = 0.0,
+        periodic_states: frozenset[int] | None = None,
+        action_min: jnp.ndarray | None = None,
+        action_max: jnp.ndarray | None = None,
+    ) -> "StateToRolloutScan":
+        ## ACTION ESTIMATOR ##
+        action_mlp = DropoutMLP(
+            in_features=state_dim,
+            out_features=action_dim,
+            hidden_features=hidden_features,
+            rngs=rngs,
+            activation=activation,
+            dropout_rate=dropout_rate,
+            periodic_in_features=periodic_states,
+            out_feature_min=action_min,
+            out_feature_max=action_max,
+        )
+
+        return StateToRolloutScan(
+            state_dim=state_dim,
+            action_dim=action_dim,
+            constr_dim=constr_dim,
+            horizon=horizon,
+            action_estimator=action_mlp,
+            sys_dynamics=sys_dynamics,
+        )
+
+    def __call__(self, state: jax.Array) -> Rollout:
+        """Estimates the rollout given the current state.
+
+        Args:
+            state (jax.Array): Current state, shape (..., state_dim)
+
+        Returns:
+            Estimated rollout with states and actions
+                states, shape (..., horizon, state_dim)
+                actions, shape (..., horizon, action_dim)
+        """
+        # Current states shape is (..., state_dim)
+        original_shape = state.shape
+        batch_dims = original_shape[:-1]
+
+        # Reshape to (batch_size, state_dim)
+        flat_states = state.reshape(-1, self.state_dim)
+
+        def scan_fn(carry, _):
+            action_est_split, system_state = carry
+            action, action_est_split = nnx.call(action_est_split)(system_state)
+            next_state = self.sys_dynamics(system_state, action)
+
+            carry = (action_est_split, next_state)
+            out = (system_state, action)
+            return carry, out
+
+        (action_est_split, _), out = jax.lax.scan(
+            scan_fn,
+            init=(
+                nnx.split(self.action_estimator),
+                flat_states,
+            ),
+            length=self.horizon,
+        )
+
+        nnx.update(self.action_estimator, action_est_split[1])
+
+        # Reshape back
+        states = out[0].reshape(*batch_dims, self.horizon, self.state_dim)
+        actions = out[1].reshape(*batch_dims, self.horizon, self.action_dim)
+
+        return Rollout(states=states, actions=actions)

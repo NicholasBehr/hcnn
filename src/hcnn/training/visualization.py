@@ -1,10 +1,9 @@
 import jax
 import jax.numpy as jnp
 import plotly.graph_objects as go
+import wandb
 from flax import nnx
 from plotly.subplots import make_subplots
-
-import wandb
 
 from .train_bundle import TrainBundle
 

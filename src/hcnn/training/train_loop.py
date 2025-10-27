@@ -5,9 +5,9 @@ import tempfile
 import jax
 import jax.numpy as jnp
 import orbax.checkpoint as ocp
+import wandb
 from flax import nnx
 
-import wandb
 from hcnn.optimization_layer import MPCLayer, ProjectionLayer
 from hcnn.state_to_rollout import StateToRolloutBase
 from hcnn.system_constraints import SystemConstraintsBox
